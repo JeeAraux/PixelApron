@@ -1,0 +1,83 @@
+name: Windows-Build und Release
+
+# Bei jedem Push auf main: Selbsttest, Windows-Export.
+# Gibt es zur Version in version.txt noch kein Release, wird eins erstellt.
+# Das Spiel findet es über releases/latest und lädt das Update selbst.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Godot aus dem Cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-windows
+
+      - name: Godot und Windows-Vorlagen herunterladen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot && cd ~/godot
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          curl -sSL -o godot.zip $BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip
+          unzip -q godot.zip && rm godot.zip
+          curl -sSL -o t.tpz $BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz
+          D=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p $D
+          unzip -o -j -q t.tpz templates/windows_release_x86_64.exe templates/windows_debug_x86_64.exe templates/version.txt -d $D
+          rm t.tpz
+
+      - name: Version lesen
+        run: |
+          V="$(head -1 version.txt | tr -d '[:space:]')"
+          printf '%s\n%s\n' "$V" "$GODOT_VERSION" > version.txt
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "GODOT=$HOME/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
+
+      - name: Importieren und Selbsttest
+        run: |
+          $GODOT --headless --import || true
+          timeout 900 $GODOT --headless --path . -- --selftest
+
+      - name: Windows exportieren
+        run: |
+          mkdir -p build
+          $GODOT --headless --path . --export-release "Windows Desktop" build/PixelApron.exe
+          test -f build/PixelApron.exe && test -f build/PixelApron.pck
+          cp version.txt build/version.txt
+          cd build && zip -9 -q PixelApron-Windows.zip PixelApron.exe PixelApron.pck
+          ls -la
+
+      - name: Build aufheben
+        uses: actions/upload-artifact@v4
+        with:
+          name: PixelApron-Windows-${{ env.VERSION }}
+          path: build/PixelApron-Windows.zip
+
+      - name: Release erstellen (nur bei neuer Version)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION gibt es schon. Für ein Update version.txt erhöhen."
+            exit 0
+          fi
+          gh release create "v$VERSION" \
+            build/PixelApron-Windows.zip build/PixelApron.pck build/version.txt \
+            --target "$GITHUB_SHA" --title "PixelApron $VERSION" --generate-notes
