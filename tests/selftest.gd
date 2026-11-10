@@ -31,7 +31,7 @@ func run(main: Node) -> void:
 	check(game.supplied(term, "strom") and game.supplied(term, "wasser") and game.supplied(term, "waerme"), "Terminalhalle hat Strom, Wasser und Wärme")
 	check(game.inside_of(term).size() > 20 and game.walls_of(term).size() == 5, "Terminal eingerichtet (%d Teile, %d Wände)" % [game.inside_of(term).size(), game.walls_of(term).size()])
 	check(tb.check() == "", "Terminal betriebsbereit " + tb.check())
-	check(String(hangar0["supply"].get("strom", "")) == "fehlt", "Hangar ohne Kabel hat keinen Strom")
+	check(String(hangar0["supply"].get("strom", "")) == "ok", "Hangar im Startflughafen hat Strom")
 	check(main.flights.check_operation() == "", "Flugbetrieb startklar")
 	# 0.9: Bereiche, Türen, Personal, Garagen und Betriebsstraße im Startflughafen
 	check(game.zones_of(term).size() == 3, "Bereiche angelegt (öffentlich, Sicherheit, Personal)")
@@ -56,6 +56,49 @@ func run(main: Node) -> void:
 		var gg: Array = main.ops._garage(vk, Vector3(-40, 0, -40))
 		check(not gg.is_empty() and main.ops.net.route(gg[2], Vector3(-17, 0, -38)).size() > 3, "Fahrweg von der Garage zum Stand: " + vk)
 	check(main.ops.has_garage("tank") and main.ops.has_garage("catering") and main.ops.has_fire_station(), "Tanklager, Catering und Feuerwache versorgt")
+	# 0.10: Fassadenöffnungen, Brücken an der Wand, Zufahrten, Befeuerung, Rollhalteorte, Kurvenregel
+	check((term.get("cuts", []) as Array).size() == 8, "Eingänge und Brückenköpfe öffnen die Fassade (%d Öffnungen)" % (term.get("cuts", []) as Array).size())
+	var flush_ok := true
+	for br: Dictionary in game.items_of("fluggastbruecke"):
+		var hs: Array = game.hall_side(br["pos"])
+		flush_ok = flush_ok and not hs.is_empty() and absf(float(hs[3]) - float(game.BRIDGE_OFF)) < 0.05
+	check(flush_ok, "Fluggastbrücken stehen bündig an der Fassade")
+	var connected := 0
+	for st: Dictionary in game.stands():
+		if main.ops.stand_connected(st):
+			connected += 1
+	check(connected == game.stands().size(), "Alle Stände haben eine Zufahrt von der Betriebsstraße (%d)" % connected)
+	check(main.flights.runway_lit() and game.items_of("rollhalt").size() == 6 and game.items_of("anflugbefeuerung").size() == 2,
+		"Befeuerungsstation versorgt die Piste, Rollhalteorte und Anflugbefeuerung gebaut")
+	var custom_holds := 0
+	for h: Dictionary in main.flights.graph.holds:
+		if bool(h.get("custom", false)):
+			custom_holds += 1
+	check(custom_holds == 6, "Rollhalteorte gelten im Rollnetz (%d)" % custom_holds)
+	var gr = main.flights.graph
+	var tpath: Array = gr.path(gr.nearest(Vector3(0, 0, -104)), gr.nearest(Vector3(-600, 0, -104)), {}, Vector3(1, 0, 0))
+	var sharp := 0
+	for ti in range(1, tpath.size() - 1):
+		var d0: Vector3 = gr.pos[tpath[ti]] - gr.pos[tpath[ti - 1]]
+		var d1: Vector3 = gr.pos[tpath[ti + 1]] - gr.pos[tpath[ti]]
+		if d0.length() > 0.1 and d1.length() > 0.1 and d0.normalized().dot(d1.normalized()) < -0.01:
+			sharp += 1
+	check(tpath.size() > 3 and sharp == 0, "Flugzeuge wenden ohne Kurven über 90° (%d Knoten)" % tpath.size())
+	var belts: Array = []
+	var gates_t: Array = []
+	for it: Dictionary in game.inside_of(term):
+		if it["id"] == "gepaeckband":
+			belts.append(it)
+		if it["id"] in ["gate", "busgate"]:
+			gates_t.append(it)
+	game.cycle_option(belts[0], "gate", 1)
+	var belt0: Dictionary = game.inside_of(term).filter(func(it: Dictionary) -> bool: return it["id"] == "gepaeckband")[0]
+	var g1: Dictionary = {}
+	for g: Dictionary in gates_t:
+		if tb.gate_number(g) == 1:
+			g1 = g
+	check(not g1.is_empty() and is_same(tb.belt_for(term, g1), belt0) and int(game.opt(belt0, "gate")) == 1, "Gepäckband dem Gate 1 zugeordnet")
+	game.cycle_option(belt0, "gate", -1)
 	var fl = main.flights
 	var m0: int = game.money
 	var seen_states := {}
@@ -80,12 +123,26 @@ func run(main: Node) -> void:
 	var home_seen := false
 	var staff_seen := false
 	var leaf_open := false
+	var bus_door := false
+	var sort_seen := false
+	var belt_run := false
+	var flaps_seen := false
+	var walk_frames := false
 	for i in range(12000):
 		fl.step(0.1)
 		outdoor_pax = maxi(outdoor_pax, main.ops.walkers.size())
 		for dk: String in main.ops.door_open:
 			door_seen = door_seen or float(main.ops.door_open[dk]) > 0.9
 		home_seen = home_seen or not main.ops.returning.is_empty()
+		sort_seen = sort_seen or not main.ops.sorting.is_empty()
+		belt_run = belt_run or (not tb.belt_load.is_empty() and not tb.bags_ready.is_empty())
+		for vv: Dictionary in main.ops.vehicles:
+			bus_door = bus_door or (vv["kind"] == "bus" and float(vv.get("door", 0.0)) > 0.9)
+		for pl: Dictionary in fl.planes:
+			flaps_seen = flaps_seen or float(pl.get("flaps", 0.0)) > 0.5
+		if i % 50 == 0:
+			for per: Dictionary in tb.people:
+				walk_frames = walk_frames or int((per["node"] as Node3D).get_meta("pose", 0)) >= 10
 		for per: Dictionary in tb.people:
 			staff_seen = staff_seen or bool(per.get("staff", false))
 		for d: Array in tb.doors:
@@ -133,6 +190,10 @@ func run(main: Node) -> void:
 	var m1: int = game.money
 	check(min_gap > 20.0, "Rollende Flugzeuge halten Abstand (Reservierung)")
 	check(door_seen, "Rolltore gehen auf, wenn ein Fahrzeug aus der Garage fährt")
+	check(bus_door, "Vorfeldbusse öffnen ihre Türen")
+	check(sort_seen and belt_run, "Gepäckzüge fahren zur Sortierung, die Koffer laufen aufs Band")
+	check(flaps_seen, "Landeklappen fahren aus")
+	check(walk_frames, "Passagiere gehen mit acht Gangphasen")
 	check(home_seen, "Fahrzeuge fahren nach der Abfertigung zurück in die Garage")
 	check(staff_seen and leaf_open, "Mitarbeiter gehen durchs Terminal, Personaltüren öffnen sich")
 	check(crossed == "", "Kein Flugzeug rollt über fremde Stände " + crossed)
@@ -340,6 +401,29 @@ func run(main: Node) -> void:
 	game.build_line("vorfeld", [Vector3(300, 0, 300), Vector3(430, 0, 300)], true)
 	b.on_move(Vector3(365, 0, 300))
 	check(b.reason == "", "Stand auf dem Vorfeld erlaubt " + b.reason + " " + str(b.hover))
+	# Rollhalteort rastet auf dem Rollweg ein, nicht zu nah an der Piste
+	b.set_tool("rollhalt")
+	b.on_move(Vector3(-1277, 0, -176))
+	check(b.reason != "", "Rollhalteort zu nah an einer anderen abgelehnt: " + b.reason)
+	b.on_move(Vector3(-285, 0, -238))
+	check(b.reason != "", "Rollhalteort dicht an der Piste abgelehnt: " + b.reason)
+	var nh: int = game.items_of("rollhalt").size()
+	b.on_move(Vector3(-342, 0, -126))
+	b.on_click(Vector3(-342, 0, -126))
+	check(game.items_of("rollhalt").size() == nh + 1, "Rollhalteort auf den Rollweg gesetzt " + b.reason)
+	game.undo_last()
+	# Fluggastbrücke rastet bündig an der Wand ein und öffnet die Fassade
+	b.set_tool("fluggastbruecke")
+	b.on_move(Vector3(-100, 0, -27))
+	var nb: int = game.items_of("fluggastbruecke").size()
+	b.on_click(Vector3(-100, 0, -27))
+	var newb: Array = game.items_of("fluggastbruecke")
+	var term_b: Dictionary = game.items_of("halle")[0]
+	game.flush_facades()
+	check(newb.size() == nb + 1 and absf((newb[newb.size() - 1]["pos"] as Vector3).z - (-24.0 - float(game.BRIDGE_OFF))) < 0.05
+		and (term_b["cuts"] as Array).size() == 9, "Neue Brücke bündig an der Wand, Fassade geöffnet " + b.reason)
+	game.undo_last()
+	game.flush_facades()
 	b.set_tool("")
 	fl.clear()
 	lines0 = game.lines.size()
@@ -450,6 +534,7 @@ func run(main: Node) -> void:
 	b.on_move(Vector3(900, 0, 900))
 	b.on_click(Vector3(900, 0, 900))
 	check(game.items.size() == items0 + 3 and int(game.items[game.items.size() - 1]["rot"]) == 1, "Gedrehter Hangar gesetzt")
+	check(String((game.items[game.items.size() - 1]["supply"] as Dictionary).get("strom", "")) == "fehlt", "Hangar ohne Kabel hat keinen Strom")
 	b.set_tool("kuebel")
 	b.on_click(Vector3(860.3, 0, 830.2))
 	check(game.items.size() == items0 + 4, "Blumenkübel gesetzt")

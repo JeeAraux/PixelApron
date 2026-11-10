@@ -31,7 +31,8 @@ var dirty := true
 var names: Dictionary = {}          # Linienindex -> Rollwegname
 var stand_numbers: Dictionary = {}  # Instanz-ID des Stand-Knotens -> Nummer
 var wigwag: Array = []              # zwei Gruppen Pistenwarnlichter, abwechselnd an
-var flashers: Array = []            # Lauffeuer der Anflugbefeuerung, zur Schwelle hin geordnet
+var flashers: Array = []            # je Anflugbefeuerung die Lauffeuer, zur Schwelle hin geordnet
+var cur_lit := true                 # beim Bauen: leuchten die Feuer (Befeuerungsstation mit Strom)?
 var socks: Array = []               # Windsäcke
 var t := 0.0
 var _pave: Dictionary = {}          # Raster für "liegt auf einem anderen Belag?"
@@ -81,12 +82,12 @@ func _process(delta: float) -> void:
 		var on := fmod(t, 1.0) < 0.5
 		(wigwag[0] as Node3D).visible = on
 		(wigwag[1] as Node3D).visible = not on
-	if not flashers.is_empty():
+	for group: Array in flashers:
 		# zweimal pro Sekunde läuft ein Blitz zur Schwelle
 		var phase := fmod(t, 0.5) / 0.5
-		var lit := int(phase * float(flashers.size() + 3))
-		for i in range(flashers.size()):
-			(flashers[i] as Node3D).visible = i == lit
+		var lit := int(phase * float(group.size() + 3))
+		for i in range(group.size()):
+			(group[i] as Node3D).visible = i == lit
 	for s: Node3D in socks:
 		if is_instance_valid(s):
 			# zeigt mit dem Wind (vom Wind weg), pendelt leicht; bei wenig Wind hängt er schlaffer
@@ -116,12 +117,13 @@ func rebuild() -> void:
 	socks = []
 	halos = []
 	night_lights = []
-	graph.build(game.lines, game.stands())
+	graph.build(game.lines, game.stands(), game.items_of("rollhalt"))
 	names = taxi_names(game.lines)
 	_index_pavement()
 	var k := Kit.new()       # Masten, Gehäuse, Schilder
 	var km := Kit.new()      # Bodenmarkierungen
 	var lamps := {}          # Farbe -> Kit (leuchtend, unbeleuchtet)
+	var taxi_lit := game.legacy_lights or _any_station()
 	var wa := Kit.new()
 	var wb := Kit.new()
 	for li in range(game.lines.size()):
@@ -129,8 +131,12 @@ func rebuild() -> void:
 		if l["kind"] == "piste":
 			_runway(l, k, lamps)
 		elif l["kind"] == "rollweg" or l["kind"] == "rollweg_breit":
+			cur_lit = taxi_lit
 			_taxi_lights(li, l, k, lamps)
+			cur_lit = true
+	cur_lit = taxi_lit
 	_holds(k, km, lamps, wa, wb)
+	cur_lit = true
 	_junction_signs(k)
 	_stands(k, km, lamps)
 	_add(k, "Flugfeld", false)
@@ -219,6 +225,14 @@ func _lk(lamps: Dictionary, col: Color) -> Kit:
 
 ## Unterflurfeuer (bündig im Belag) oder Überflurfeuer auf einem Knickmast.
 func _lamp(k: Kit, lamps: Dictionary, p: Vector3, col: Color, elevated: bool, top: float = 0.1) -> void:
+	if not cur_lit:
+		# ohne Befeuerungsstation: nur die Gehäuse, dunkel
+		if elevated:
+			k.box(p + Vector3(-0.06, 0.0, -0.06), p + Vector3(0.06, 0.42, 0.06), POST)
+			k.cyl(p + Vector3(0, 0.42, 0), p + Vector3(0, 0.74, 0), 0.17, 0.12, col.darkened(0.6), 8)
+		else:
+			k.cyl(p, p + Vector3(0, top + 0.05, 0), 0.24, 0.24, Color(0.35, 0.36, 0.37), 8)
+		return
 	var kl := _lk(lamps, col)
 	if elevated:
 		k.box(p + Vector3(-0.06, 0.0, -0.06), p + Vector3(0.06, 0.42, 0.06), POST)
@@ -274,6 +288,8 @@ func _runway(l: Dictionary, k: Kit, lamps: Dictionary) -> void:
 	var side := dir.cross(Vector3.UP).normalized()   # rechts in Landerichtung
 	var hw := float(Catalog.LINES["piste"]["width"]) * 0.5
 	var at := func(dv: float, dx: float) -> Vector3: return a + dir * dv + side * dx
+	# Befeuerung leuchtet nur mit einer Befeuerungsstation mit Strom (alte Spielstände: immer)
+	cur_lit = game.legacy_lights or _station_near(a, b)
 	# Randfeuer alle 60 m, die letzten 600 m gelb
 	var v := 0.0
 	while v <= length + 0.1:
@@ -310,48 +326,99 @@ func _runway(l: Dictionary, k: Kit, lamps: Dictionary) -> void:
 			for i in range(3):
 				_lamp(k, lamps, at.call(v, sx * (9.0 + float(i) * 1.5)), LAMP_WHITE, false, 0.09)
 		v += 30.0
-	# Anflugbefeuerung (CAT I): Querbalken alle 30 m über 900 m, Querbalken bei 300 m, Lauffeuer
+	# Anflugbefeuerung und PAPI: selbst gebaut an den Pistenenden (alte Spielstände: an der Schwelle a)
+	for e in range(2):
+		var thr := a if e == 0 else b
+		var inward := dir if e == 0 else -dir
+		if (game.legacy_lights and e == 0) or _marker_at("anflugbefeuerung", thr - inward * 12.0, 30.0):
+			_approach_lights(k, lamps, thr, inward)
+		var aim := 400.0 if length >= 2400.0 else 300.0 if length >= 1500.0 else 250.0
+		var left := Vector3.UP.cross(inward).normalized()
+		if (game.legacy_lights and e == 0) or _marker_at("papi", thr + inward * aim + left * (hw + 28.0), 30.0):
+			_papi(k, lamps, thr + inward * aim, inward, hw)
+	cur_lit = true
+	# Windsäcke an beiden Enden
+	for e: Array in [[300.0, 1.0], [length - 300.0, -1.0]]:
+		var q: Vector3 = at.call(float(e[0]), float(e[1]) * (hw + 75.0))
+		_windsock(k, q)
+
+
+## Steht eine Befeuerungsstation mit Strom höchstens 450 m von der Piste a–b?
+func _station_near(a: Vector3, b: Vector3) -> bool:
+	for st: Dictionary in game.items_of("befeuerungsstation"):
+		if game.supplied(st, "strom") and GameState.seg_dist(st["pos"], a, b) <= 450.0:
+			return true
+	return false
+
+
+func _any_station() -> bool:
+	for st: Dictionary in game.items_of("befeuerungsstation"):
+		if game.supplied(st, "strom"):
+			return true
+	return false
+
+
+func _marker_at(id: String, p: Vector3, r: float) -> bool:
+	for it: Dictionary in game.items_of(id):
+		if Vector2((it["pos"] as Vector3).x - p.x, (it["pos"] as Vector3).z - p.z).length() < r:
+			return true
+	return false
+
+
+## Anflugbefeuerung (CAT I) vor der Schwelle thr: Querbalken alle 30 m über 900 m auf Masten,
+## Querbalken bei 300 m, Lauffeuer zur Schwelle hin.
+func _approach_lights(k: Kit, lamps: Dictionary, thr: Vector3, inward: Vector3) -> void:
+	var side := inward.cross(Vector3.UP).normalized()
+	var at := func(dv: float, dx: float) -> Vector3: return thr + inward * dv + side * dx
 	var order := []
-	v = -30.0
+	var v := -30.0
 	while v >= -900.0:
 		var p0: Vector3 = at.call(v, 0.0)
 		var mast := clampf(-v / 300.0, 0.3, 2.5)
 		for i in range(5):
 			var q: Vector3 = at.call(v, -2.0 + float(i))
 			k.box(q + Vector3(-0.07, 0, -0.07), q + Vector3(0.07, mast, 0.07), Color(0.5, 0.5, 0.5))
-			_lk(lamps, LAMP_WHITE).box(q + Vector3(-0.22, mast, -0.22), q + Vector3(0.22, mast + 0.35, 0.22), LAMP_WHITE)
-		k.box(p0 - side * 2.2 + Vector3(0, mast - 0.1, -0.05) - dir * 0.05, p0 + side * 2.2 + Vector3(0, mast, 0.05) + dir * 0.05, Color(0.5, 0.5, 0.5))
+			if cur_lit:
+				_lk(lamps, LAMP_WHITE).box(q + Vector3(-0.22, mast, -0.22), q + Vector3(0.22, mast + 0.35, 0.22), LAMP_WHITE)
+			else:
+				k.box(q + Vector3(-0.22, mast, -0.22), q + Vector3(0.22, mast + 0.35, 0.22), Color(0.55, 0.55, 0.52))
+		k.box(p0 - side * 2.2 + Vector3(0, mast - 0.1, -0.05) - inward * 0.05, p0 + side * 2.2 + Vector3(0, mast, 0.05) + inward * 0.05, Color(0.5, 0.5, 0.5))
 		if absf(v + 300.0) < 1.0:
 			for i in range(-10, 11):
 				if absi(i) <= 2:
 					continue
-				var q2: Vector3 = at.call(v, float(i) * 1.5)
-				_lamp(k, lamps, q2, LAMP_WHITE, true)
+				_lamp(k, lamps, at.call(v, float(i) * 1.5), LAMP_WHITE, true)
 		if v <= -330.0:
 			order.append(p0 + Vector3(0, mast + 0.9, 0))
 		v -= 30.0
+	if not cur_lit:
+		return
 	order.reverse()   # vom äußersten Feuer zur Schwelle
+	var group := []
 	for q: Vector3 in order:
 		var fk := Kit.new()
 		fk.box(q + Vector3(-0.45, -0.3, -0.45), q + Vector3(0.45, 0.3, 0.45), Color(1, 1, 1))
 		var fl := _add(fk, "Lauffeuer", true)
 		fl.visible = false
-		flashers.append(fl)
-	# PAPI links am Zielpunkt: zwei rot, zwei weiß (auf dem Gleitpfad)
-	var aim := 400.0 if length >= 2400.0 else 300.0 if length >= 1500.0 else 250.0
+		group.append(fl)
+	flashers.append(group)
+
+
+## PAPI links am Zielpunkt: vier Kästen, die zwei inneren rot, die äußeren weiß (auf dem Gleitpfad).
+func _papi(k: Kit, lamps: Dictionary, aim_pt: Vector3, inward: Vector3, hw: float) -> void:
+	var side := inward.cross(Vector3.UP).normalized()
 	for i in range(4):
-		var q: Vector3 = at.call(aim, -(hw + 15.0 + float(i) * 9.0))
+		var q: Vector3 = aim_pt - side * (hw + 15.0 + float(i) * 9.0)
 		k.box(q + Vector3(-0.6, 0, -0.6), q + Vector3(0.6, 0.35, 0.6), Color(0.3, 0.3, 0.3))
 		var box_c := q + Vector3(0, 0.85, 0)
-		k.box(box_c - side * 0.7 - dir * 0.4 + Vector3(0, -0.45, 0), box_c + side * 0.7 + dir * 0.4 + Vector3(0, 0.45, 0), Color(0.9, 0.6, 0.15))
+		k.box(box_c - side * 0.7 - inward * 0.4 + Vector3(0, -0.45, 0), box_c + side * 0.7 + inward * 0.4 + Vector3(0, 0.45, 0), Color(0.9, 0.6, 0.15))
 		var lens := RED if i < 2 else LAMP_WHITE
 		for j in range(3):
-			var lc := box_c - dir * 0.42 + side * (-0.42 + float(j) * 0.42)
-			_lk(lamps, lens).box(lc + Vector3(-0.15, -0.15, -0.15), lc + Vector3(0.15, 0.15, 0.15), lens)
-	# Windsäcke an beiden Enden
-	for e: Array in [[300.0, 1.0], [length - 300.0, -1.0]]:
-		var q: Vector3 = at.call(float(e[0]), float(e[1]) * (hw + 75.0))
-		_windsock(k, q)
+			var lc := box_c - inward * 0.42 + side * (-0.42 + float(j) * 0.42)
+			if cur_lit:
+				_lk(lamps, lens).box(lc + Vector3(-0.15, -0.15, -0.15), lc + Vector3(0.15, 0.15, 0.15), lens)
+			else:
+				k.box(lc + Vector3(-0.15, -0.15, -0.15), lc + Vector3(0.15, 0.15, 0.15), Color(0.35, 0.3, 0.3))
 
 
 func _windsock(k: Kit, q: Vector3) -> void:

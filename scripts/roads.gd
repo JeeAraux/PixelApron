@@ -118,7 +118,14 @@ func _setup_node(ni: int) -> void:
 		wmax = maxf(wmax, float(e["w"]))
 		kinds[e["line"]["kind"]] = true
 	if deg >= 3 or (deg == 2 and kinds.size() > 1):
-		n["radius"] = wmax * 0.5 + 3.0
+		# so weit zurücknehmen, dass sich die Straßenbänder spitzwinkliger Zufahrten nicht überlappen
+		var min_ang := PI
+		for a in range(deg):
+			for b in range(a + 1, deg):
+				var ang := acos(clampf((ends[a]["out"] as Vector3).dot(ends[b]["out"]), -1.0, 1.0))
+				min_ang = minf(min_ang, ang)
+		var need := wmax * 0.5 / maxf(tan(min_ang * 0.5), 0.05) + 2.0
+		n["radius"] = clampf(maxf(wmax * 0.5 + 3.0, need), wmax * 0.5 + 3.0, 32.0)
 	if deg < 3:
 		n["control"] = ""
 		return
@@ -441,23 +448,51 @@ func _build_node_visuals(ni: int) -> void:
 	var n: Dictionary = nodes[ni]
 	var ends: Array = n["ends"]
 	var c: Vector3 = n["pos"]
-	# Kreuzungsfläche aus den Ecken der zurückgenommenen Straßen
-	var corners := []
+	# Kreuzungsfläche aus den Ecken der zurückgenommenen Straßen; zwischen zwei Zufahrten ein
+	# gerundeter Bordstein (Bogen über den Schnittpunkt der Straßenränder) mit Randlinie
+	var arms := []
 	for e: Dictionary in ends:
 		var p := _approach_point(ni, e)
 		var out: Vector3 = e["out"]
-		var side := out.cross(Vector3.UP)
-		var w: float = e["w"]
-		corners.append(p + side * w * 0.5)
-		corners.append(p - side * w * 0.5)
-	corners.sort_custom(func(a: Vector3, b: Vector3) -> bool:
-		return atan2(a.z - c.z, a.x - c.x) < atan2(b.z - c.z, b.x - c.x))
+		var ang := atan2(out.z, out.x)
+		arms.append([ang, p, out, float(e["w"])])
+	arms.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+	var ring := []
+	var curbs := []
+	for i in range(arms.size()):
+		var A: Array = arms[i]
+		var B: Array = arms[(i + 1) % arms.size()]
+		var pa: Vector3 = A[1]
+		var oa: Vector3 = A[2]
+		var pb: Vector3 = B[1]
+		var ob: Vector3 = B[2]
+		# Rand von A, der zu B zeigt, und Rand von B, der zu A zeigt
+		var sa := oa.cross(Vector3.UP)
+		var sb := ob.cross(Vector3.UP)
+		var ea := pa + sa * float(A[3]) * 0.5
+		var eb := pb - sb * float(B[3]) * 0.5
+		var ea2 := pa - sa * float(A[3]) * 0.5
+		ring.append(ea2)
+		ring.append(ea)
+		# Kontrollpunkt: Schnitt der beiden Ränder (sonst die Mitte)
+		var ctrl := (ea + eb) * 0.5
+		var den := oa.x * ob.z - oa.z * ob.x
+		if absf(den) > 0.05:
+			var t := ((eb.x - ea.x) * ob.z - (eb.z - ea.z) * ob.x) / den
+			if t < 0.0 and t > -40.0:
+				ctrl = ea + oa * t
+		var arc := []
+		for j in range(1, 8):
+			var u := float(j) / 8.0
+			arc.append(ea * (1.0 - u) * (1.0 - u) + ctrl * 2.0 * (1.0 - u) * u + eb * u * u)
+		ring.append_array(arc)
+		curbs.append([ea] + arc + [eb])
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var y := 0.07
-	for i in range(corners.size()):
-		var a: Vector3 = corners[i]
-		var b: Vector3 = corners[(i + 1) % corners.size()]
+	for i in range(ring.size()):
+		var a: Vector3 = ring[i]
+		var b: Vector3 = ring[(i + 1) % ring.size()]
 		for v: Vector3 in [Vector3(c.x, y, c.z), Vector3(b.x, y, b.z), Vector3(a.x, y, a.z)]:
 			st.set_normal(Vector3.UP)
 			st.add_vertex(v)
@@ -466,6 +501,31 @@ func _build_node_visuals(ni: int) -> void:
 	patch.material_override = mat_asphalt
 	patch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	visuals.add_child(patch)
+	# Bordstein und weiße Randlinie entlang der Bögen
+	var ck := Kit.new()
+	for cv: Array in curbs:
+		for j in range(cv.size() - 1):
+			var a: Vector3 = cv[j]
+			var b: Vector3 = cv[j + 1]
+			var d := b - a
+			d.y = 0.0
+			if d.length() < 0.05:
+				continue
+			var nrm := d.normalized().cross(Vector3.UP)
+			# Randlinie 0,4 m innen, Bordstein außen
+			var toward_c := Vector3(c.x - a.x, 0, c.z - a.z)
+			if nrm.dot(toward_c) < 0.0:
+				nrm = -nrm
+			var li0 := a + nrm * 0.35
+			var li1 := b + nrm * 0.35
+			ck.quad(Vector3(li0.x, 0.082, li0.z) - nrm * 0.08, Vector3(li1.x, 0.082, li1.z) - nrm * 0.08,
+				Vector3(li1.x, 0.082, li1.z) + nrm * 0.08, Vector3(li0.x, 0.082, li0.z) + nrm * 0.08, Color(0.9, 0.9, 0.86), Vector3(a.x, -5, a.z))
+			ck.quad(Vector3(a.x, 0.16, a.z), Vector3(b.x, 0.16, b.z), Vector3(b.x, 0.16, b.z) - nrm * 0.3, Vector3(a.x, 0.16, a.z) - nrm * 0.3,
+				Color(0.72, 0.72, 0.7), Vector3(a.x, -5, a.z))
+			ck.quad(Vector3(a.x, 0.07, a.z), Vector3(b.x, 0.07, b.z), Vector3(b.x, 0.16, b.z), Vector3(a.x, 0.16, a.z),
+				Color(0.6, 0.6, 0.58), Vector3(a.x, 0.1, a.z) - nrm)
+	if ck.count > 0:
+		visuals.add_child(ck.instance("Bordstein"))
 	if ends.size() < 3:
 		return
 	# Haltelinien, Schilder, Ampeln je Zufahrt

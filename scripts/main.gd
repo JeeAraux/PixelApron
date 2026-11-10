@@ -501,6 +501,14 @@ func _inspect(p: Vector3) -> void:
 		var spaces := 75 * int(game.opt(rec, "etagen")) if rec["id"] == "parkhaus" else 22
 		body = ("Zufahrt: verbunden" if traffic.has_access(rec) else "Keine Zufahrt: vor der Einfahrt muss eine Straße liegen") \
 			+ "\nBelegt: %d von %d Plätzen" % [traffic.parked_count(rec), spaces] + "\n" + body
+	if rec.get("id", "") in ["gate", "busgate"]:
+		body = "Gate %d (Gepäckbänder lassen sich im Infofeld des Bands einem Gate zuordnen)\n" % terminal.gate_number(rec) + body
+	if rec.get("id", "") == "gepaeckband":
+		var fid := int(terminal.belt_load.get((rec["node"] as Node).get_instance_id(), -1))
+		body = ("Band läuft für Flug %s\n" % flights.code_of(fid) if fid >= 0 else "Band steht\n") + body
+	if rec.get("id", "") in ["stand", "stand_aussen", "stand_gross"]:
+		body = ("Zufahrt: an die Betriebsstraße angeschlossen" if ops.stand_connected(rec)
+			else "Keine Zufahrt: am Kopf des Stands (Nasenseite) eine Betriebsstraße bis auf 16 m heranführen") + "\n" + body
 	if rec.get("type", "") == "line" and Catalog.is_road(String(rec["kind"])):
 		var ni: int = roads.nearest_junction(p, 12.0)
 		if ni >= 0:
@@ -626,6 +634,27 @@ func _demo(args: PackedStringArray) -> void:
 	if mode == "karte":
 		_toggle_map()
 		cam_rig.zoom = cam_rig.zoom_goal
+		hud.set_build_open(false)
+	elif mode == "landung":
+		# einem landenden Flugzeug folgen (Klappen, Spoiler, Landescheinwerfer)
+		var zl := float(_arg(args, "--zoom=", "70"))
+		var want := _arg(args, "--phase=", "landung")
+		for i in range(20000):
+			flights.step(0.05)
+			var hit: Dictionary = {}
+			for p: Dictionary in flights.planes:
+				if want == "landung" and p["state"] == "landung" and float(p["speed"]) < 50.0:
+					hit = p
+				elif want == "anflug" and p["state"] == "anflug" and not p.has("approach") and (p["pos"] as Vector3).distance_to(p["td"]) < 700.0:
+					hit = p
+				elif want == "start" and p["state"] == "start" and float(p["alt"]) > 15.0:
+					hit = p
+			if not hit.is_empty():
+				cam_rig.target = Vector3((hit["pos"] as Vector3).x, 0, (hit["pos"] as Vector3).z)
+				flights.set_process(false)
+				break
+		cam_rig.zoom_goal = zl
+		cam_rig.zoom = zl
 		hud.set_build_open(false)
 	elif mode in ["rollhalt", "piste", "vorfeld", "anflug"]:
 		var spots := {"rollhalt": [Vector3(-872, 0, -186), 70.0], "piste": [Vector3(-842, 0, -272), 70.0],

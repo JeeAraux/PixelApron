@@ -4,7 +4,7 @@ extends Node
 ##   Zeiger_h / Zeiger_m  Uhrzeiger nach der Spielzeit (Drehung um die lokale Z-Achse)
 ##   Dreh*                dreht sich langsam um die Hochachse (Meta "speed", Standard 0.3)
 ##   Wipp*                schaukelt um die X-Achse (Meta "amp", "speed")
-##   Hub*                 hebt und senkt sich (Wasserfontänen, Meta "amp", "speed")
+##   Hub*                 hebt und senkt sich (Wasserfontänen, Meta "amp", "speed"; mit Meta "lift" fährt es wie ein Aufzug)
 ##   Blink*               blinkt (Meta "period")
 ##   Schieb*              Schiebetür, fährt um Meta "dx"/"dz" auf und zu
 ##   Schwenk*             pendelt um die Hochachse (Fahnen, Windsäcke; Meta "amp", "speed")
@@ -49,6 +49,11 @@ func _process(dt: float) -> void:
 			n.rotation.y = base_rot.y + t * float(n.get_meta("speed", 0.3))
 		elif nm.begins_with("Wipp"):
 			n.rotation.x = base_rot.x + sin(t * float(n.get_meta("speed", 2.0))) * float(n.get_meta("amp", 0.15))
+		elif nm.begins_with("Hub") and n.has_meta("lift"):
+			# Aufzug: fährt um Meta "lift" Meter hoch, wartet oben und unten
+			var cyc := fmod(t * float(n.get_meta("speed", 0.25)), 2.0)
+			var up := smoothstep(0.15, 0.85, cyc) if cyc < 1.0 else 1.0 - smoothstep(1.15, 1.85, cyc)
+			n.position.y = base_pos.y + float(n.get_meta("lift")) * up
 		elif nm.begins_with("Hub"):
 			var ph := float(n.get_meta("phase", 0.0))
 			n.scale.y = 0.75 + 0.25 * (0.5 + 0.5 * sin(t * float(n.get_meta("speed", 3.0)) + ph))

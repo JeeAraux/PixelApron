@@ -597,8 +597,16 @@ func _drive(m: Dictionary, dt: float) -> void:
 		m["v"] = 0.0
 		m["brake"] = true
 		m["blink"] = 1
+		if m["purpose"] == "bus":
+			# Türen auf, kurz vor der Abfahrt wieder zu
+			var want := 1.0 if float(m["halt"]) > 1.4 else 0.0
+			m["door"] = move_toward(float(m.get("door", 0.0)), want, dt * 1.2)
+			Factory.set_bus_doors(m["node"], float(m["door"]))
 		_place(m, dt)
 		if float(m["halt"]) <= 0.0:
+			if float(m.get("door", 0.0)) > 0.0:
+				m["door"] = 0.0
+				Factory.set_bus_doors(m["node"], 0.0)
 			_rejoin(m)
 		return
 	var gap := _gap_ahead(m)
@@ -915,6 +923,20 @@ func _place(m: Dictionary, _dt: float) -> void:
 	node.position = Vector3((front.x + back.x) * 0.5, y, (front.z + back.z) * 0.5)
 	if dir.length_squared() > 0.0004:
 		node.basis = Basis.looking_at(dir.normalized(), Vector3.UP)   # neigt sich auf Tunnelrampen
+	# Karosserie nickt beim Bremsen und Anfahren, neigt sich in Kurven
+	var body := node.get_node_or_null("Body") as Node3D
+	if body != null and _dt > 0.0:
+		var acc := (float(m["v"]) - float(m.get("pv", m["v"]))) / _dt
+		m["pv"] = m["v"]
+		m["acc"] = lerpf(float(m.get("acc", 0.0)), acc, clampf(_dt * 5.0, 0.0, 1.0))
+		var hd := Vector3(dir.x, 0, dir.z).normalized() if dir.length_squared() > 0.0004 else Vector3.ZERO
+		var turn := 0.0
+		if m.has("ph") and hd != Vector3.ZERO:
+			turn = (m["ph"] as Vector3).cross(hd).y / _dt
+		if hd != Vector3.ZERO:
+			m["ph"] = hd
+		m["roll"] = lerpf(float(m.get("roll", 0.0)), clampf(turn * float(m["v"]) * 0.012, -0.045, 0.045), clampf(_dt * 4.0, 0.0, 1.0))
+		body.rotation = Vector3(clampf(float(m["acc"]) * 0.006, -0.035, 0.035), 0, float(m["roll"]))
 	# Untergeschoss-Ansicht: nur Autos im Tunnel zeigen
 	node.visible = y < -1.0 or not (game.interior_view and game.view_floor < 0)
 	var brake := node.get_node_or_null("Bremslicht") as Node3D
@@ -1175,9 +1197,7 @@ func _step_peds(dt: float) -> void:
 		pd["i"] = i
 		node.position = pos
 		look.y = 0.0
-		if look.length_squared() > 0.0001:
-			node.basis = Basis.looking_at(look.normalized(), Vector3.UP)
-		Factory.set_pose(node, 1 + int(float(pd["walk"]) / 0.32) % 4)
+		Factory.walk(node, float(pd["walk"]), look, dt)
 		if i >= pts.size() - 1:
 			if String(pd["action"]) == "warten":
 				pd["state"] = "wartet"

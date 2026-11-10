@@ -13,7 +13,8 @@ const CELL := 20.0
 const NEAR := 30.0
 const HOLD_DIST := 90.0      # Rollhalteort: Abstand zur Pistenmitte (ICAO, Instrumentenpiste)
 const LEAD_BACK := 24.0      # Zufahrtsknoten so weit hinter der Standmitte
-const MAX_TURN_DOT := -0.35  # schärfer als ~110° wird an einem Knoten nicht abgebogen
+const MAX_TURN_DOT_SOFT := 0.0  # Flugzeuge biegen je Knoten höchstens 90° ab
+const MAX_TURN_DOT := -0.35  # Notfall: bis ~110°, falls es sonst keinen Weg gibt
 
 var pos := PackedVector3Array()
 var kind := PackedStringArray()
@@ -32,7 +33,11 @@ var runways: Array = []              # [Anfang, Ende, Breite] je Piste
 var holds: Array = []                # Rollhalteorte: {"pos", "dir" (zur Piste), "line"}
 
 
-func build(lines: Array, stands: Array) -> void:
+var line_hold: Dictionary = {}       # Linienindex -> Abstand des selbst gesetzten Rollhalteorts zur Pistenmitte
+
+
+func build(lines: Array, stands: Array, markers: Array = []) -> void:
+	line_hold = {}
 	pos = PackedVector3Array()
 	kind = PackedStringArray()
 	line_idx = PackedInt32Array()
@@ -68,7 +73,8 @@ func build(lines: Array, stands: Array) -> void:
 			i = mini(i + STEP, s.size() - 1)
 		line_nodes[li] = ids
 		if k == "rollweg" or k == "rollweg_breit":
-			_find_holds(s, li)
+			if not _custom_holds(s, li, markers):
+				_find_holds(s, li)
 	_cross_links()
 	# Standflächen sperren
 	in_stand.resize(pos.size())
@@ -105,7 +111,11 @@ func build(lines: Array, stands: Array) -> void:
 			_link(lid, n)
 	zone.resize(pos.size())
 	for i in range(pos.size()):
-		zone[i] = 1 if in_zone(pos[i]) else 0
+		var li := line_idx[i]
+		if line_hold.has(li):
+			zone[i] = 1 if _rwy_dist(pos[i]) < float(line_hold[li]) - 0.5 else 0
+		else:
+			zone[i] = 1 if in_zone(pos[i]) else 0
 	_near_lists()
 
 
@@ -129,6 +139,43 @@ func _lead_targets(lp: Vector3, fwd: Vector3) -> Array:
 	for f: Array in list.slice(0, 2 if list == roll else 3):
 		out.append(f[1])
 	return out
+
+
+## Selbst gesetzte Rollhalteorte (Bauteil "rollhalt") auf diesem Rollweg: sie ersetzen den gedachten bei
+## HOLD_DIST, der Pistenschutzbereich des Rollwegs beginnt dort. false = keiner auf dieser Linie.
+func _custom_holds(s: PackedVector3Array, li: int, markers: Array) -> bool:
+	if runways.is_empty():
+		return false
+	var found := false
+	for m: Dictionary in markers:
+		var mp: Vector3 = m["pos"]
+		var bi := -1
+		var bd := 5.0
+		for i in range(s.size()):
+			var d := Vector2(s[i].x - mp.x, s[i].z - mp.z).length()
+			if d < bd:
+				bd = d
+				bi = i
+		if bi < 0:
+			continue
+		var t := s[mini(bi + 3, s.size() - 1)] - s[maxi(bi - 3, 0)]
+		t.y = 0.0
+		t = t.normalized()
+		# Richtung zur Piste: dorthin, wo der Abstand kleiner wird
+		var dd := _rwy_dist(s[mini(bi + 3, s.size() - 1)]) - _rwy_dist(s[maxi(bi - 3, 0)])
+		var toward := -t if dd > 0.0 else t
+		var hd := _rwy_dist(mp)
+		holds.append({"pos": Vector3(s[bi].x, 0.0, s[bi].z), "dir": toward, "line": li, "custom": true})
+		line_hold[li] = maxf(float(line_hold.get(li, 0.0)), hd)
+		found = true
+	return found
+
+
+## Abstand zur Pistenmitte, ab dem Knoten n zum Pistenschutzbereich gehört.
+func hold_limit(n: int) -> float:
+	if n >= 0 and n < line_idx.size() and line_hold.has(line_idx[n]):
+		return float(line_hold[line_idx[n]])
+	return HOLD_DIST
 
 
 ## Wo ein Rollweg den Abstand HOLD_DIST zu einer Pistenmitte unterschreitet, liegt ein Rollhalteort.
@@ -271,14 +318,20 @@ func nearest_taxi(p: Vector3, max_d: float) -> int:
 ## blocked: gemiedene Knoten (z. B. von anderen reserviert). Stände, Zufahrten und Standflächen
 ## nur als Start oder Ziel. heading: Fahrtrichtung am Start (kein Wenden).
 ## wide = Großraumflugzeug (Code E): schmale Rollwege (Code C) sind gesperrt.
+## Flugzeuge biegen höchstens 90° je Knoten ab und wenden nie auf der Stelle; nur wenn es so
+## gar keinen Weg gibt, werden schärfere Kurven erlaubt.
 func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.ZERO, wide: bool = false) -> Array:
-	var out := _search(a, b, blocked, heading, true, wide)
+	var out := _search(a, b, blocked, heading, MAX_TURN_DOT_SOFT, wide)
 	if out.is_empty():
-		out = _search(a, b, blocked, heading, false, wide)
+		out = _search(a, b, blocked, heading, MAX_TURN_DOT, wide)
+	if out.is_empty():
+		out = _search(a, b, blocked, heading, -2.0, wide)
 	return out
 
 
-func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bool, wide: bool) -> Array:
+## A* über gerichtete Kanten (Zustand = Knoten und woher man kommt), damit die Kurvenregel
+## auch Schleifen über Nachbarflächen findet.
+func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, min_dot: float, wide: bool) -> Array:
 	if a < 0 or b < 0:
 		return []
 	var allow := {a: true, b: true}
@@ -286,34 +339,35 @@ func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bo
 		allow[lead_of[b]] = true
 	if lead_of.has(a):
 		allow[lead_of[a]] = true
-	var g := {a: 0.0}
+	var n_all := pos.size() + 1
+	var start := a * n_all + n_all - 1   # Zustand: Knoten * n_all + Vorgänger (n_all-1 = keiner)
+	var g := {start: 0.0}
 	var came := {}
-	var open := [a]
+	var heap: Array = [[pos[a].distance_to(pos[b]), start]]
 	var closed := {}
-	while not open.is_empty():
-		var best_i := 0
-		var best_f := INF
-		for k in range(open.size()):
-			var n: int = open[k]
-			var f: float = float(g[n]) + pos[n].distance_to(pos[b])
-			if f < best_f:
-				best_f = f
-				best_i = k
-		var cur: int = open[best_i]
-		open.remove_at(best_i)
+	var h0 := heading.normalized() if heading.length_squared() > 0.01 else Vector3.ZERO
+	while not heap.is_empty():
+		var top: Array = _heap_pop(heap)
+		var key: int = top[1]
+		if closed.has(key):
+			continue
+		closed[key] = true
+		var cur := key / n_all
+		var prev := key % n_all
 		if cur == b:
 			var out := [b]
-			while came.has(out[0]):
-				out.push_front(came[out[0]])
+			var k := key
+			while came.has(k):
+				k = came[k]
+				out.push_front(k / n_all)
 			return out
-		closed[cur] = true
-		var din := Vector3.ZERO
-		if came.has(cur):
-			din = (pos[cur] - pos[came[cur]]).normalized()
-		elif heading.length_squared() > 0.01:
-			din = heading.normalized()
+		var din := h0
+		if prev != n_all - 1:
+			din = pos[cur] - pos[prev]
+			din.y = 0.0
+			din = din.normalized() if din.length_squared() > 0.0001 else h0
 		for nb: int in adj[cur]:
-			if closed.has(nb):
+			if nb == prev:
 				continue
 			if not allow.has(nb):
 				if kind[nb] == "stand" or kind[nb] == "zufahrt" or in_stand[nb] == 1 or blocked.has(nb):
@@ -321,17 +375,59 @@ func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bo
 			if wide and kind[nb] == "rollweg":
 				continue
 			var step := pos[nb] - pos[cur]
-			if no_uturn and din != Vector3.ZERO and step.length() > 0.01 and din.dot(step.normalized()) < MAX_TURN_DOT:
+			step.y = 0.0
+			var sl := step.length()
+			if sl < 0.01:
+				continue
+			if din != Vector3.ZERO and din.dot(step / sl) < min_dot:
+				continue
+			var nkey := nb * n_all + cur
+			if closed.has(nkey):
 				continue
 			var w := 1.0
 			if kind[nb] == "piste":
 				w = 1.6
 			elif kind[nb] == "vorfeld":
 				w = 1.4
-			var cost := float(g[cur]) + step.length() * w
-			if not g.has(nb) or cost < float(g[nb]):
-				g[nb] = cost
-				came[nb] = cur
-				if not open.has(nb):
-					open.append(nb)
+			# Kurven kosten etwas, damit gerade Wege bevorzugt werden
+			var turn := 0.0 if din == Vector3.ZERO else (1.0 - din.dot(step / sl)) * 6.0
+			var cost := float(g[key]) + sl * w + turn
+			if not g.has(nkey) or cost < float(g[nkey]):
+				g[nkey] = cost
+				came[nkey] = key
+				_heap_push(heap, [cost + pos[nb].distance_to(pos[b]), nkey])
 	return []
+
+
+static func _heap_push(h: Array, e: Array) -> void:
+	h.append(e)
+	var i := h.size() - 1
+	while i > 0:
+		var parent := (i - 1) / 2
+		if float(h[parent][0]) <= float(e[0]):
+			break
+		h[i] = h[parent]
+		i = parent
+	h[i] = e
+
+
+static func _heap_pop(h: Array) -> Array:
+	var top: Array = h[0]
+	var last: Array = h.pop_back()
+	if h.is_empty():
+		return top
+	var i := 0
+	var n := h.size()
+	while true:
+		var l := i * 2 + 1
+		if l >= n:
+			break
+		var c := l
+		if l + 1 < n and float(h[l + 1][0]) < float(h[l][0]):
+			c = l + 1
+		if float(h[c][0]) >= float(last[0]):
+			break
+		h[i] = h[c]
+		i = c
+	h[i] = last
+	return top

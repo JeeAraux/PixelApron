@@ -22,6 +22,14 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.10: Anschlüsse, Befeuerung, Gepäcksortierung und flüssigere Bewegung**
+  - **Brücken und Eingänge sitzen richtig:** Fluggastbrücken rasten bündig an der Fassade auf Höhe des Gates ein, ein gläserner Treppenturm mit Aufzug führt hinunter zum Gate. Eingänge und Brücken öffnen die Außenwand mit Laibung und Sturz.
+  - **Stände mit Zufahrt:** Die Betriebsstraße läuft am Kopf der Stände entlang, die Infoanzeige zeigt, ob ein Stand angeschlossen ist. Straßen dürfen nicht mehr über Stände gehen, Fahrzeuge weichen stehenden Fahrzeugen aus statt durch sie hindurchzufahren.
+  - **Rollhalteorte und Befeuerung selbst bauen:** Rollhalteort (Markierung, Haltebalken, Warnlichter, Schilder) rastet auf dem Rollweg ein, Anflugbefeuerung und PAPI am Pistenende. Die Pistenfeuer leuchten mit einer Befeuerungsstation am Stromnetz. Ohne Befeuerung wird nachts nicht geflogen.
+  - **Flugzeuge:** Höchstens 90° je Abbiegung, kein Wenden auf der Stelle, kein Rückwärtsrollen außer beim Pushback. Landeklappen fahren aus, Spoiler stellen sich beim Aufsetzen auf, Landescheinwerfer leuchten.
+  - **Gepäck:** Gepäckzüge bringen die Koffer zur Sortierung im Gepäckumschlag und holen dort die Koffer für den Abflug ab. Gepäckbänder lassen sich einem Gate zuordnen. Ankommende warten am Band, bis ihre Koffer da sind.
+  - **Menschen und Fahrzeuge:** Menschen mit Gelenken, acht Gangphasen und geglätteten Wegen statt Zickzack. Bustüren schwenken auf, Fahrzeuge nicken beim Bremsen und neigen sich in Kurven, schönere Fahrerhäuser und Gepäckwagen mit Dach.
+  - **Straßenbau:** Kreuzungen mit gerundeten Bordsteinen und Randlinien, spitze Einmündungen überlappen nicht mehr. Neue Straßen richten sich parallel oder rechtwinklig nach der nächsten Straße aus.
 - **Großes Update 0.9: Alles selbst bauen, Fahrzeuge aus der Garage**
   - **Terminal wirklich selbst bauen:** Türen (Automatik, Flügeltür, Personaltür mit Kartenleser) setzt du in Innenwände, sie gehen auf, wenn jemand kommt. Bereiche ziehst du als Bodenfläche auf: öffentlich, Sicherheitsbereich, Personal. Gates müssen im Sicherheitsbereich liegen, Läden dort verdienen mehr, in den Personalbereich kommen nur Mitarbeiter. Personalraum für die Pausen.
   - **Personal:** Personalgebäude mit Platz für 160 Mitarbeiter, Schichtwechsel mit Leuten auf dem Weg zum Terminal. Mitarbeiter gehen durch Personaltüren an ihre Schalter, eine Reinigungskraft schiebt ihren Wagen durch die Halle. Zu wenig Personal verlängert die Abfertigung.

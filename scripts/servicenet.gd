@@ -16,8 +16,12 @@ var line_of := PackedInt32Array()
 var grid: Dictionary = {}
 
 
-func build(lines: Array, with_taxi: bool) -> void:
+var stand_link: Dictionary = {}   # Instanz-ID des Stand-Knotens -> Netzknoten der Zufahrt (oder fehlt)
+
+
+func build(lines: Array, with_taxi: bool, stands: Array = []) -> void:
 	astar.clear()
+	stand_link = {}
 	pos = PackedVector3Array()
 	kinds = PackedStringArray()
 	line_of = PackedInt32Array()
@@ -64,6 +68,31 @@ func build(lines: Array, with_taxi: bool) -> void:
 			var j: int = best[lj][1]
 			if not astar.are_points_connected(i, j):
 				astar.connect_points(i, j)
+	# Stände: Zufahrt vom Kopf des Stands (Nasenseite) zur nächsten Betriebsstraße
+	for st: Dictionary in stands:
+		var node: Node3D = st["node"]
+		if not is_instance_valid(node):
+			continue
+		var fwd := node.global_transform.basis.z
+		fwd.y = 0.0
+		fwd = fwd.normalized()
+		var depth: float = (Catalog.ITEMS[st["id"]]["size"] as Vector2).y
+		var head: Vector3 = (st["pos"] as Vector3) + fwd * (depth * 0.5 - 2.0)
+		var road := -1
+		var bd := 16.0 + 4.0
+		for j in range(pos.size()):
+			if kinds[j] != "betriebsstrasse":
+				continue
+			var d := Vector2(pos[j].x - head.x, pos[j].z - head.z).length()
+			if d < bd:
+				bd = d
+				road = j
+		if road < 0:
+			continue
+		var id := _add(Vector3(head.x, 0.0, head.z), "zufahrt", -1)
+		astar.set_point_weight_scale(id, 1.0)
+		astar.connect_points(id, road)
+		stand_link[node.get_instance_id()] = id
 
 
 func _add(p: Vector3, k: String, li: int) -> int:
@@ -101,7 +130,7 @@ func nearest(p: Vector3, max_d: float = 60.0) -> int:
 			for j: int in grid[key]:
 				var d := Vector2(pos[j].x - p.x, pos[j].z - p.z).length_squared()
 				# Betriebsstraßen bevorzugen
-				if kinds[j] != "betriebsstrasse":
+				if kinds[j] != "betriebsstrasse" and kinds[j] != "zufahrt":
 					d = d * 1.6 + 25.0
 				if d < bd:
 					bd = d

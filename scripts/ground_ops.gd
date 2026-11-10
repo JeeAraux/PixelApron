@@ -68,8 +68,23 @@ static func curve(a: Vector3, ha: Vector3, b: Vector3, hb: Vector3) -> PackedVec
 func _vehicle(kind: String, at: Vector3, heading: Vector3, h: float = 0.0) -> Dictionary:
 	var node := Node3D.new()
 	var mi := MeshInstance3D.new()
+	mi.name = "Body"
 	mi.mesh = Models.stairs_mesh(h) if kind == "treppe" else Models.gse_mesh(kind)
 	node.add_child(mi)
+	if kind == "bus":
+		# Schwenkschiebetüren je Seite: zwei Flügel, die beim Öffnen ausschwenken und auseinandergleiten
+		var li := 0
+		for sx: float in [-1.0, 1.0]:
+			for z: float in Models.APRON_BUS_DOORS:
+				for half: float in [-1.0, 1.0]:
+					var leaf := MeshInstance3D.new()
+					leaf.mesh = Models.bus_door_leaf()
+					leaf.name = "Tuer%d" % li
+					li += 1
+					leaf.position = Vector3(sx * 1.5, 0.55, z + half * 0.45)
+					leaf.set_meta("base", leaf.position)
+					leaf.set_meta("slide", Vector3(sx * 0.14, 0, half * 0.5))
+					mi.add_child(leaf)
 	add_child(node)
 	var v := {"node": node, "pts": PackedVector3Array(), "i": 0, "v": 0.0, "vmax": BUS_V, "rev": false,
 		"pos": at, "heading": heading.normalized(), "moving": false, "len": _length_of(kind), "wait": 0.0, "kind": kind}
@@ -123,7 +138,10 @@ func _drive_to(v: Dictionary, b: Vector3, hb: Vector3, vmax: float) -> void:
 
 
 func _move(v: Dictionary, sim: float) -> void:
+	if v["kind"] == "bus" and _bus_doors(v, sim):
+		return
 	if not bool(v["moving"]):
+		_settle(v, sim)
 		return
 	var pts: PackedVector3Array = v["pts"]
 	var i: int = v["i"]
@@ -132,14 +150,24 @@ func _move(v: Dictionary, sim: float) -> void:
 		left += pts[j].distance_to(pts[j + 1])
 	var vmax: float = v["vmax"]
 	var want := minf(vmax, sqrt(2.0 * 1.2 * maxf(left - 0.2, 0.0)) + 0.3)
-	# Abstand halten: vor anderen Fahrzeugen und rollenden Flugzeugen warten (nach 6 s geht es trotzdem weiter)
+	# Abstand halten: vor anderen Fahrzeugen und rollenden Flugzeugen warten; steht der andere
+	# länger, wird seitlich vorbeigefahren (erst ganz zuletzt notfalls hindurch)
 	if _blocked(v):
 		v["wait"] = float(v.get("wait", 0.0)) + sim
-		if float(v["wait"]) < 6.0:
+		if float(v["wait"]) > 4.0 and not bool(v.get("dodged", false)) and _dodge(v):
+			v["dodged"] = true
+			v["wait"] = 0.0
+			pts = v["pts"]
+			i = v["i"]
+		if float(v["wait"]) < 14.0:
 			want = 0.0
 	else:
 		v["wait"] = 0.0
+		if bool(v.get("dodged", false)) and int(v["i"]) > int(v.get("dodge_end", 0)):
+			v["dodged"] = false
 	var sp := move_toward(float(v["v"]), want, (3.0 if want < float(v["v"]) else 1.5) * sim)
+	# Beschleunigung für das Nicken der Karosserie (bremsen: Nase taucht ein)
+	v["acc"] = lerpf(float(v.get("acc", 0.0)), (sp - float(v["v"])) / maxf(sim, 0.001), clampf(sim * 4.0, 0.0, 1.0))
 	v["v"] = sp
 	var budget := sp * sim
 	var pos: Vector3 = v["pos"]
@@ -167,11 +195,66 @@ func _move(v: Dictionary, sim: float) -> void:
 	_put(v)
 
 
+## Ausweichen: die nächsten Meter der Fahrt seitlich versetzen (zur Seite, auf der mehr Platz ist).
+func _dodge(v: Dictionary) -> bool:
+	var pts: PackedVector3Array = v["pts"]
+	var i: int = v["i"]
+	if i >= pts.size() - 2 or bool(v.get("rev", false)):
+		return false
+	var h: Vector3 = v["heading"]
+	var side := h.cross(Vector3.UP).normalized()
+	var best_side := 0.0
+	for sgn: float in [1.0, -1.0]:
+		var probe: Vector3 = (v["pos"] as Vector3) + side * sgn * 4.5 + h * 8.0
+		var free := true
+		for o: Dictionary in vehicles:
+			if is_same(o, v):
+				continue
+			for q: Vector3 in _points_of(o):
+				if Vector2(q.x - probe.x, q.z - probe.z).length() < 4.0:
+					free = false
+		if free:
+			best_side = sgn
+			break
+	if best_side == 0.0:
+		return false
+	var out := PackedVector3Array()
+	for j in range(pts.size()):
+		out.append(pts[j])
+	var run := 0.0
+	var j0 := i + 1
+	var end := j0
+	for j in range(j0, pts.size() - 1):
+		run += pts[j].distance_to(pts[j - 1])
+		# hinein- und herausschwenken über je 8 m, dazwischen 4,5 m versetzt
+		var f := clampf(run / 8.0, 0.0, 1.0) * clampf((30.0 - run) / 8.0, 0.0, 1.0)
+		out[j] = pts[j] + side * best_side * 4.5 * smoothstep(0.0, 1.0, f)
+		end = j
+		if run > 30.0:
+			break
+	v["pts"] = out
+	v["dodge_end"] = end
+	return true
+
+
 ## Steht vor dem Fahrzeug (in Fahrtrichtung) ein anderes Fahrzeug oder rollt ein Flugzeug heran?
 func _blocked(v: Dictionary) -> bool:
 	var pos: Vector3 = v["pos"]
 	var h: Vector3 = v["heading"]
 	var dirm := -h if bool(v["rev"]) else h
+	# Blickrichtung: zum Wegpunkt etwa 8 m voraus (nach einem Ausweichschwenk zeigt sie am Hindernis vorbei)
+	var pts: PackedVector3Array = v.get("pts", PackedVector3Array())
+	var i0: int = v.get("i", 0)
+	if bool(v.get("moving", false)) and i0 < pts.size() - 1:
+		var run := 0.0
+		var j := i0 + 1
+		while j < pts.size() - 1 and run + pts[j].distance_to(pts[j - 1]) < 8.0:
+			run += pts[j].distance_to(pts[j - 1])
+			j += 1
+		var ahead_pt := pts[j] - pos
+		ahead_pt.y = 0.0
+		if ahead_pt.length() > 1.0:
+			dirm = ahead_pt.normalized()
 	dirm.y = 0.0
 	if dirm.length_squared() < 0.001:
 		return false
@@ -222,9 +305,43 @@ func _put(v: Dictionary) -> void:
 	node.position = Vector3(pos.x, 0.0, pos.z)
 	var h: Vector3 = v["heading"]
 	if h.length_squared() > 0.001:
+		# Karosserie nickt beim Anfahren und Bremsen und neigt sich in Kurven ein wenig
+		var turn := 0.0
+		if v.has("last_h"):
+			turn = (v["last_h"] as Vector3).cross(h).y
+		v["last_h"] = h
+		v["roll"] = lerpf(float(v.get("roll", 0.0)), clampf(turn * float(v["v"]) * 6.0, -0.05, 0.05), 0.15)
+		var pitch := clampf(float(v.get("acc", 0.0)) * 0.012, -0.03, 0.03)
+		if bool(v.get("rev", false)):
+			pitch = -pitch
+		var body := node.get_node_or_null("Body") as Node3D
 		node.basis = Basis.looking_at(h, Vector3.UP)
+		if body != null:
+			body.rotation = Vector3(pitch, 0, float(v["roll"]))
 	if v.has("cars"):
 		_place_cars(v)
+
+
+## Stehendes Fahrzeug: Nicken und Neigung klingen aus.
+func _settle(v: Dictionary, sim: float) -> void:
+	if absf(float(v.get("acc", 0.0))) < 0.01 and absf(float(v.get("roll", 0.0))) < 0.001:
+		return
+	v["acc"] = move_toward(float(v.get("acc", 0.0)), 0.0, sim * 6.0)
+	v["roll"] = move_toward(float(v.get("roll", 0.0)), 0.0, sim * 0.2)
+	_put(v)
+
+
+## Bustüren: öffnen, wenn der Bus eine Weile steht, schließen vor der Abfahrt (der Bus wartet so lange).
+## Rückgabe true = Bus muss noch auf die Türen warten.
+func _bus_doors(v: Dictionary, sim: float) -> bool:
+	var moving := bool(v["moving"])
+	v["still"] = 0.0 if moving else float(v.get("still", 0.0)) + sim
+	var want := 1.0 if (not moving and float(v["still"]) > 1.2) else 0.0
+	var cur := move_toward(float(v.get("door", 0.0)), want, sim * 1.1)
+	if not is_equal_approx(cur, float(v.get("door", 0.0))):
+		v["door"] = cur
+		Factory.set_bus_doors(v["node"], cur)
+	return moving and cur > 0.01
 
 
 func _free(v: Variant) -> void:
@@ -360,8 +477,7 @@ func _walk_to(wd: Dictionary, goal: Vector3, sim: float, speed: float) -> bool:
 	wd["pos"] = pos
 	node.position = pos
 	if d > 0.05:
-		node.basis = Basis.looking_at(to.normalized(), Vector3.UP)
-		Factory.set_pose(node, 1 + int(float(wd["walk"]) / 0.3) % 4)
+		Factory.walk(node, float(wd["walk"]), to, sim)
 	else:
 		Factory.set_pose(node, 0)
 	return done
@@ -510,6 +626,9 @@ func clear() -> void:
 	for v: Dictionary in returning:
 		_free(v)
 	returning.clear()
+	for v: Dictionary in sorting:
+		_free(v)
+	sorting.clear()
 	for m: Dictionary in missions:
 		_free(m.get("v"))
 		var parked: Variant = m.get("parked")
@@ -563,9 +682,7 @@ func _step_walker(wk: Dictionary, sim: float) -> bool:
 	wk["i"] = i
 	node.position = pos
 	look.y = 0.0
-	if look.length_squared() > 0.0001:
-		node.basis = Basis.looking_at(look.normalized(), Vector3.UP)
-	Factory.set_pose(node, 1 + int(float(wk["walk"]) / 0.3) % 4)
+	Factory.walk(node, float(wk["walk"]), look, sim)
 	return i >= pts.size() - 1
 
 
@@ -595,11 +712,15 @@ func _bus_door(bus: Dictionary, ref: Vector3) -> Vector3:
 	return a if a.distance_to(ref) < b.distance_to(ref) else b
 
 
+var sorting: Array = []          # Gepäckzüge an der Sortierung
+
+
 func step(sim: float) -> void:
 	clock += sim
 	if net_dirty:
 		_rebuild_net()
 	_step_returning(sim)
+	_step_sorting(sim)
 	_fire_tick(sim)
 	_animate_doors(sim)
 	for id: int in jobs.keys():
@@ -638,6 +759,15 @@ func _step_job(j: Dictionary, sim: float) -> void:
 		if _door_step(vd):
 			_move(vd, sim)
 		if not vd.has("await_door") and not bool(vd["moving"]):
+			if vd.has("load_then"):
+				# an der Sortierung: Koffer aufladen, dann weiter zum Stand
+				var lt: Dictionary = vd["load_then"]
+				lt["t"] = float(lt["t"]) + sim
+				_set_bags(vd, mini(24, int(float(lt["t"]) * 1.6)))
+				if int(vd["bags"]) >= 24:
+					_go(vd, lt["pts"], GSE_V * 1.4)
+					vd.erase("load_then")
+				continue
 			sv["phase"] = "bereit"
 	if bool(j.get("turn_over", false)):
 		for sv: Dictionary in j.get("svc", []):
@@ -806,6 +936,11 @@ func turn_start(p: Dictionary) -> void:
 	j["plan"] = plan
 	if not j.has("svc"):
 		j["svc"] = _make_svc(plan)
+	var train := false
+	for sv: Dictionary in j["svc"]:
+		train = train or (sv["kind"] == "zug" and not bool(sv.get("full", false)) and sv.get("v") is Dictionary)
+	if not train and terminal != null:
+		terminal.bags_arrived(int(p["id"]), 90.0)
 	_props(p, j, plan)
 	j["crew"] = []
 
@@ -1009,6 +1144,9 @@ func _arrive(p: Dictionary, sv: Dictionary) -> void:
 		way[0] = v["pos"]
 		h0 = v["heading"]
 		v.erase("door_key")
+		if v.has("load_then"):
+			v.erase("load_then")
+			_set_bags(v, 24)
 	else:
 		v = _spawn_kind(sv, home, h0)
 	v["flight"] = int(p["id"])
@@ -1359,8 +1497,8 @@ func _hose(a: Vector3, b: Vector3, r: float, col: Color) -> Node3D:
 
 func _rebuild_net() -> void:
 	net_dirty = false
-	net.build(game.lines, false)
-	fire_net.build(game.lines, true)
+	net.build(game.lines, false, game.stands())
+	fire_net.build(game.lines, true, game.stands())
 	unconnected = []
 	for id: String in ["vorfelddepot", "tanklager", "busgarage", "catering", "feuerwache"]:
 		for rec: Dictionary in game.items_of(id):
@@ -1389,6 +1527,13 @@ func _spots(rec: Dictionary) -> Array:
 
 
 ## Gibt es eine versorgte Garage für diese Fahrzeugart?
+## Hat der Stand eine Zufahrt von der Betriebsstraße?
+func stand_connected(st: Dictionary) -> bool:
+	if net_dirty:
+		_rebuild_net()
+	return net.stand_link.has((st["node"] as Node).get_instance_id())
+
+
 func has_garage(kind: String) -> bool:
 	for gid: String in Catalog.garages_for(kind):
 		for rec: Dictionary in game.items_of(gid):
@@ -1475,6 +1620,23 @@ func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
 	sv["v"] = v
 	sv["phase"] = "anreise"
 	var pts := _route(way, h0, hend.normalized() if hend.length() > 0.1 else h0)
+	# Abflugzug holt die Koffer erst an der Sortierung ab
+	if kind == "zug" and bool(sv.get("full", false)):
+		var sp := sort_spot(g[2])
+		if not sp.is_empty():
+			var r1 := net.route(g[2], sp[0], 60.0)
+			var r2 := net.route(sp[0], home, 60.0)
+			if r1.size() >= 2 and r2.size() >= 2:
+				var w1 := [g[1]]
+				for q: Vector3 in r1:
+					w1.append(q)
+				var side := (sp[1] as Vector3).cross(Vector3.UP)
+				pts = _route(w1, h0, side)
+				var w2 := []
+				for q: Vector3 in r2:
+					w2.append(q)
+				v["load_then"] = {"t": 0.0, "pts": _route(w2, side, hend.normalized() if hend.length() > 0.1 else side)}
+				_set_bags(v, 0)
 	_leave_garage(v, g, pts)
 
 
@@ -1492,11 +1654,124 @@ func _leave_garage(v: Dictionary, g: Array, pts: PackedVector3Array) -> void:
 		_go(v, pts, float(v.get("vmax", GSE_V)))
 
 
+## Sortierstelle für die Gepäckzüge: vor dem Gepäckumschlag, sonst draußen an der Hallenwand
+## bei der Gepäckanlage. Rückgabe [Punkt, Blickrichtung zum Gebäude, Gepäckumschlag?] oder leer.
+func sort_spot(near: Vector3) -> Array:
+	var best: Array = []
+	var bd := INF
+	for rec: Dictionary in game.items_of("gepaeckumschlag"):
+		if not game.supplied(rec, "strom"):
+			continue
+		var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
+		var size: Vector2 = Catalog.ITEMS["gepaeckumschlag"]["size"]
+		# Rolltore liegen auf der Vorfeldseite (-Z)
+		var pt: Vector3 = (rec["pos"] as Vector3) + b * Vector3(0, 0, -(size.y * 0.5 + 5.0))
+		var d := pt.distance_to(near)
+		if d < bd:
+			bd = d
+			best = [pt, b * Vector3(0, 0, 1), true]
+	if not best.is_empty():
+		return best
+	for h: Dictionary in game.items_of("halle"):
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] != "gepaeckanlage" or GameState.floor_of(it) != 0:
+				continue
+			var r: Rect2 = h["rect"]
+			var q := Vector2((it["pos"] as Vector3).x, (it["pos"] as Vector3).z)
+			var c := Vector2(clampf(q.x, r.position.x, r.end.x), clampf(q.y, r.position.y, r.end.y))
+			var dl := [q.x - r.position.x, r.end.x - q.x, q.y - r.position.y, r.end.y - q.y]
+			var m := 0
+			for i in range(4):
+				if float(dl[i]) < float(dl[m]):
+					m = i
+			var n: Vector3 = [Vector3(-1, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 0, 1)][m]
+			match m:
+				0:
+					c.x = r.position.x
+				1:
+					c.x = r.end.x
+				2:
+					c.y = r.position.y
+				3:
+					c.y = r.end.y
+			var pt := Vector3(c.x, 0, c.y) + n * 6.0
+			var d := pt.distance_to(near)
+			if d < bd:
+				bd = d
+				best = [pt, -n, false]
+	return best
+
+
+## Ankunftszug fährt zur Sortierung, lädt dort ab und fährt dann heim. false = keine Sortierung erreichbar.
+func _to_sorting(v: Dictionary) -> bool:
+	var sp := sort_spot(v["pos"])
+	if sp.is_empty():
+		return false
+	var road := net.route(v["pos"], sp[0], 60.0)
+	if road.size() < 2:
+		return false
+	var way := []
+	for q: Vector3 in road:
+		way.append(q)
+	var side := (sp[1] as Vector3).cross(Vector3.UP)
+	v["rev"] = false
+	v["vmax"] = GSE_V * 1.3
+	v.erase("then")
+	_go(v, _route(way, v["heading"], side), GSE_V * 1.3)
+	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2])}
+	sorting.append(v)
+	return true
+
+
+## Gepäckzüge an der Sortierung: anhalten, Koffer abladen (Ankunft) bzw. aufladen (Abflug).
+func _step_sorting(sim: float) -> void:
+	for v: Dictionary in sorting.duplicate():
+		if not is_instance_valid(v.get("node")):
+			sorting.erase(v)
+			continue
+		if bool(v["moving"]):
+			_move(v, sim)
+			continue
+		var st: Dictionary = v["sort"]
+		st["t"] = float(st["t"]) + sim
+		var n := int(v.get("bags", 0))
+		var want := maxi(0, 24 - int(float(st["t"]) * 1.6))
+		if want < n:
+			_set_bags(v, want)
+		if want == 0:
+			sorting.erase(v)
+			v.erase("sort")
+			v["sorted"] = true
+			if terminal != null and v.has("flight"):
+				# über die Sortierung und das Förderband dauert es noch einen Moment bis zum Band
+				terminal.bags_arrived(int(v["flight"]), 25.0 if bool(st["via_hall"]) else 10.0)
+			_send_home(v, "zug")
+
+
+## Koffer auf den Wagen eines Zugs zeigen (n von 24).
+func _set_bags(v: Dictionary, n: int) -> void:
+	v["bags"] = n
+	var i := 0
+	for car: Node3D in v.get("cars", []):
+		var ld := car.get_node_or_null("Ladung")
+		if ld == null:
+			continue
+		for b: Node in ld.get_children():
+			(b as Node3D).visible = i < n
+			i += 1
+
+
 ## Fertig am Stand: zurück in die Garage (Tor geht vorher auf), sonst verschwindet es am Rand.
 func _send_home(v: Dictionary, kind: String) -> void:
 	if not is_instance_valid(v.get("node")):
 		_free(v)
 		return
+	if kind == "zug" and int(v.get("bags", 0)) > 0 and not v.has("sorted"):
+		if _to_sorting(v):
+			return
+		v["sorted"] = true
+		if terminal != null and v.has("flight"):
+			terminal.bags_arrived(int(v["flight"]), 30.0)
 	var g := _garage(kind, v["pos"])
 	if g.is_empty():
 		_free(v)

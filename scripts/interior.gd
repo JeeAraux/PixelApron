@@ -252,6 +252,11 @@ static func _entrance(n: Node3D, k: Kit, tuer: String) -> void:
 			fk.box(Vector3(-side * 0.6 - 0.03, -1.25, -0.06), Vector3(-side * 0.6 + 0.03, 1.25, 0.06), STEEL)
 			fk.box(Vector3(-0.2, 0.0, 0.06), Vector3(0.2, 0.03, 0.07), Color(0.9, 0.3, 0.2))
 			leaf.add_child(fk.instance("Rahmen"))
+	# Laibung bis zur Fassade (Wand bei z = +1): Seitenwangen und Sturz, die Halle hat dort eine Öffnung
+	for x: float in [-3.0, 3.0]:
+		k.box(Vector3(x - 0.08, 0, 0.18), Vector3(x + 0.08, 3.35, 1.05), Color(0.3, 0.33, 0.35))
+	k.box(Vector3(-3.08, 3.35, -0.2), Vector3(3.08, 3.5, 1.05), Color(0.3, 0.33, 0.35))
+	k.box(Vector3(-2.9, 0, 0.18), Vector3(2.9, 0.025, 1.0), Color(0.24, 0.24, 0.26))
 	# Vordach außen (+Z)
 	k.box(Vector3(-3.7, 3.5, 0.9), Vector3(3.7, 3.72, 4.0), Color(0.82, 0.83, 0.84))
 	k.box(Vector3(-3.75, 3.72, 0.9), Vector3(3.75, 3.78, 4.05), STEEL)

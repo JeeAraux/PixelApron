@@ -109,7 +109,7 @@ func step(sim: float) -> void:
 
 func _rebuild() -> void:
 	dirty = false
-	graph.build(game.lines, game.stands())
+	graph.build(game.lines, game.stands(), game.items_of("rollhalt"))
 	reserved.clear()
 	for p: Dictionary in planes.duplicate():
 		var st: Dictionary = p["stand"]
@@ -198,6 +198,9 @@ func _try_spawn() -> void:
 	if reason != "":
 		return
 	if runway_owner != -1:
+		return
+	if game.night > 0.5 and not runway_lit():
+		reason = "Nachts keine Landungen: die Piste hat keine Befeuerung (Befeuerungsstation mit Strom bauen)"
 		return
 	for p: Dictionary in planes:
 		if p["state"] == "wartet":
@@ -420,6 +423,12 @@ func _followers(p: Dictionary) -> Dictionary:
 	return out
 
 
+## Flugnummer zu einer ID (oder "?").
+func code_of(id: int) -> String:
+	var q := _plane_by_id(id)
+	return String(q.get("code", "?"))
+
+
 func _plane_by_id(id: int) -> Dictionary:
 	for q: Dictionary in planes:
 		if int(q["id"]) == id:
@@ -621,7 +630,7 @@ func _update(p: Dictionary, sim: float) -> void:
 
 ## Hat das gelandete Flugzeug den Pistenschutzbereich verlassen?
 func _vacated(p: Dictionary) -> bool:
-	return graph.runway_distance(p["pos"]) > Airside.HOLD_DIST + 20.0
+	return graph.runway_distance(p["pos"]) > graph.hold_limit(graph.nearest(p["pos"])) + 20.0
 
 
 ## Ist ein landendes Flugzeug so nah, dass kein Start mehr dazwischen passt?
@@ -637,6 +646,20 @@ func _arrival_close() -> bool:
 				remaining = float(ap["total"]) - float(q.get("as", 0.0)) + 2600.0
 			if remaining < 5500.0:
 				return true
+	return false
+
+
+## Leuchtet die Befeuerung der Betriebspiste (Befeuerungsstation mit Strom in der Nähe)?
+func runway_lit() -> bool:
+	if game.legacy_lights:
+		return true
+	var rwy := _runway()
+	if rwy.is_empty():
+		return false
+	var sm: PackedVector3Array = rwy["samples"]
+	for st: Dictionary in game.items_of("befeuerungsstation"):
+		if game.supplied(st, "strom") and GameState.seg_dist(st["pos"], sm[0], sm[sm.size() - 1]) <= 450.0:
+			return true
 	return false
 
 
@@ -1213,7 +1236,7 @@ func _hold_s(p: Dictionary, kk: int) -> float:
 	var s0 := node_s[kk - 1]
 	var d0 := graph.runway_distance(graph.pos[nodes[kk - 1]])
 	var d1 := graph.runway_distance(graph.pos[nodes[kk]])
-	var f := clampf((d0 - Airside.HOLD_DIST) / maxf(d0 - d1, 0.01), 0.0, 1.0)
+	var f := clampf((d0 - graph.hold_limit(nodes[kk])) / maxf(d0 - d1, 0.01), 0.0, 1.0)
 	var line := lerpf(s0, s1, f)
 	var nose_ahead := float(Catalog.PLANES[p["kind"]]["nose"]) - float(p["ng"])
 	return line - nose_ahead - 2.0
@@ -1538,6 +1561,37 @@ func _animate(p: Dictionary, sim: float) -> void:
 		gear.visible = g > 0.03
 		gear.scale = Vector3(1.0, maxf(g, 0.03), 1.0)
 		gear.position = Vector3(0, belly * (1.0 - g), 0)
+	# Landeklappen: im Endanflug und bei der Landung ganz, zum Start halb, sonst eingefahren
+	var flap_want := 0.0
+	match state:
+		"anflug":
+			flap_want = 1.0 if (p["pos"] as Vector3).distance_to(p["td"]) < 2600.0 and not p.has("approach") else (0.5 if p.has("approach") else 0.0)
+		"landung":
+			flap_want = 1.0
+		"rollt_aus", "wartet":
+			flap_want = 0.45
+		"start":
+			flap_want = 0.45 if float(p["alt"]) < 150.0 else 0.0
+	var fl := move_toward(float(p.get("flaps", 0.0)), flap_want, sim / 9.0)
+	var spo_want := 1.0 if state == "landung" and float(p["speed"]) > 18.0 else 0.0
+	var sp := move_toward(float(p.get("spoilers", 0.0)), spo_want, sim / 1.2)
+	if not is_equal_approx(fl, float(p.get("flaps", 0.0))) or not is_equal_approx(sp, float(p.get("spoilers", 0.0))) or not p.has("flaps"):
+		p["flaps"] = fl
+		p["spoilers"] = sp
+		var e := smoothstep(0.0, 1.0, fl)
+		for nm: String in ["KlappeLi", "KlappeLa", "KlappeRi", "KlappeRa"]:
+			var f := node.get_node_or_null(nm) as Node3D
+			if f != null:
+				var ax: Vector3 = f.get_meta("axis")
+				f.basis = Basis(ax, e * 0.62)
+				f.position = (f.get_meta("hinge") as Vector3) + Vector3(0, -0.12 * e, float(f.get_meta("chord")) * 0.16 * e)
+		for nm: String in ["SpoilerL", "SpoilerR"]:
+			var spn := node.get_node_or_null(nm) as Node3D
+			if spn != null:
+				spn.basis = Basis(spn.get_meta("axis") as Vector3, -smoothstep(0.0, 1.0, sp) * 0.85)
+	var land := node.get_node_or_null("Landelicht") as Node3D
+	if land != null:
+		land.visible = state in ["anflug", "landung", "start"] or (game.night > 0.4 and state in ["rollt_ein", "rollt_aus", "wartet"])
 	var beacon := node.get_node_or_null("Beacon") as Node3D
 	if beacon != null:
 		var on := rate > 2.0 or state == "pushback"
@@ -1637,6 +1691,23 @@ func _satisfaction(sim: float) -> void:
 			factors.append(["%d Garage(n) ohne Betriebsstraße zum Vorfeld" % ops.unconnected.size(), -2])
 			if hint == "":
 				hint = "%s mit einer Betriebsstraße ans Vorfeld anschließen" % Catalog.label(String((ops.unconnected[0] as Dictionary)["id"]))
+		if not runway_lit():
+			target -= 4.0
+			factors.append(["Piste ohne Befeuerung: nachts keine Flüge", -4])
+			if hint == "":
+				hint = "Befeuerungsstation nahe der Piste bauen und ans Stromnetz anschließen"
+		elif not game.legacy_lights and (game.items_of("anflugbefeuerung").is_empty() or game.items_of("papi").is_empty()):
+			target -= 1.0
+			factors.append(["Ohne Anflugbefeuerung und PAPI landen Flugzeuge bei Nacht unpünktlicher", -1])
+		var loose := 0
+		for st: Dictionary in game.stands():
+			if not ops.stand_connected(st):
+				loose += 1
+		if loose > 0:
+			target -= 1.5
+			factors.append(["%d Stand/Stände ohne Zufahrt von der Betriebsstraße: Fahrzeuge kreuzen das Vorfeld" % loose, -1.5])
+			if hint == "":
+				hint = "Eine Betriebsstraße am Kopf der Stände entlangführen"
 	var parking := false
 	var any_parking := false
 	for ph: Dictionary in game.items_of("parkhaus"):

@@ -18,7 +18,7 @@ const SNAP_DIST := 7.0
 const SNAP_GROUPS := {"strasse": ["strasse", "strasse4", "einbahn"], "strasse4": ["strasse", "strasse4", "einbahn"],
 	"einbahn": ["strasse", "strasse4", "einbahn"], "gehweg": ["gehweg", "strasse", "strasse4", "einbahn"],
 	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"], "rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
-	"vorfeld": ["vorfeld", "rollweg", "rollweg_breit"], "piste": ["piste"]}
+	"vorfeld": ["vorfeld", "rollweg", "rollweg_breit"], "piste": ["piste"], "betriebsstrasse": ["betriebsstrasse"]}
 const ANGLE_STEP := 15.0
 ## Zeichenarten für Straßen, Rollwege und Vorfeld (wie in Städtebauspielen)
 const MODES := ["gerade", "kurve", "frei"]
@@ -125,8 +125,9 @@ func is_drawing() -> bool:
 
 
 func set_tool(id: String) -> void:
-	if Catalog.is_door(tool) and not Catalog.is_door(id):
-		rot = 0   # Türen drehen sich selbst nach der Wand
+	var self_turning := func(t: String) -> bool: return Catalog.ITEMS.has(t) and (Catalog.is_door(t) or Catalog.is_marker(t) or bool(Catalog.ITEMS[t].get("bridge", false)))
+	if self_turning.call(tool) and not self_turning.call(id):
+		rot = 0   # Türen und Brücken drehen sich selbst nach der Wand
 	points.clear()
 	_clear_highlight()
 	if ghost != null:
@@ -433,6 +434,16 @@ func _snap(p: Vector3) -> Vector3:
 		var dp := _snap_door(p)
 		if dp != Vector3.INF:
 			return dp
+	if is_item_tool() and Catalog.is_marker(tool):
+		var ms: Array = game.marker_snap(tool, p)
+		if not ms.is_empty():
+			rot = int(ms[1])
+			return ms[0]
+	if is_item_tool() and bool(Catalog.ITEMS[tool].get("bridge", false)):
+		var bs: Array = game.bridge_snap(p)
+		if not bs.is_empty():
+			rot = int(bs[1])
+			return bs[0]
 	if is_item_tool():
 		var g: float = Catalog.ITEMS[tool]["grid"]
 		var s: Vector2 = Catalog.ITEMS[tool]["size"]
@@ -545,12 +556,37 @@ func _snap_line(p: Vector3) -> Vector3:
 				ref = start_tan
 			elif points.size() == 1 and ref_dir != Vector3.ZERO:
 				ref = ref_dir
+			elif points.size() == 1:
+				# frei begonnen: an der Richtung des nächsten Weges ausrichten (parallel, rechtwinklig)
+				var nd := _nearby_dir(last, 90.0)
+				if nd != Vector3.ZERO:
+					ref = nd
 			elif points.size() >= 2:
 				var pr: Vector3 = points[points.size() - 2]
 				ref = Vector3(last.x - pr.x, 0.0, last.z - pr.z).normalized()
 			return _snap_dir(last, ref, p)
 		return _snap_dir(last, Vector3.RIGHT, p)
 	return Vector3(snappedf(p.x, 0.5), 0.0, snappedf(p.z, 0.5))
+
+
+## Richtung des nächsten Weges derselben Art in der Nähe (oder Null).
+func _nearby_dir(p: Vector3, max_d: float) -> Vector3:
+	var group: Array = SNAP_GROUPS.get(tool, [tool])
+	var best := max_d
+	var dir := Vector3.ZERO
+	for l: Dictionary in game.lines:
+		if not (l["kind"] in group):
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		for i in range(0, sm.size(), 2):
+			var d := Vector2(sm[i].x - p.x, sm[i].z - p.z).length()
+			if d < best:
+				best = d
+				var t := sm[mini(i + 2, sm.size() - 1)] - sm[maxi(i - 2, 0)]
+				t.y = 0.0
+				if t.length() > 0.01:
+					dir = t.normalized()
+	return dir
 
 
 ## Richtung ab base: rastet weich auf 15-Grad-Stufen zur Bezugsrichtung ein, Länge auf halbe Meter.

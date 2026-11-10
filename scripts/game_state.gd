@@ -46,7 +46,7 @@ const OPTIONS := {
 	"hangar": [["farbe", "Farbe", ["grau", "blau", "weiss"]]],
 	"cafe": [["stil", "Laden", ["cafe", "baeckerei", "bar", "restaurant"]]],
 	"shop": [["stil", "Laden", ["kiosk", "dutyfree", "buecher", "elektronik", "apotheke", "mode"]]],
-	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]]],
+	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]], ["gate", "Für Gate", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]]],
 	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
@@ -115,6 +115,7 @@ func earn(amount: int, why: String) -> void:
 
 ## Spielzeit weiterlaufen lassen; um Mitternacht werden die laufenden Kosten abgebucht.
 var night := 0.0       # 0 Tag, 1 Nacht (main.gd setzt es nach der Spieluhr)
+var legacy_lights := false   # Spielstand von vor 0.10: Pistenbefeuerung ohne Befeuerungsstation
 var wind_dir := 250.0   # Wind kommt aus dieser Richtung (Grad, 0 = Norden = -z)
 var wind_kt := 9.0
 var _wind_goal := 250.0
@@ -370,7 +371,7 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 	# Gebäude und Deko
 	for it: Dictionary in items:
 		var id: String = it["id"]
-		if Catalog.is_inside(id):
+		if Catalog.is_inside(id) or Catalog.is_marker(id):
 			continue
 		if String(Catalog.ITEMS[id].get("on", "")) == kind:
 			continue
@@ -640,6 +641,8 @@ func options_of(rec: Dictionary) -> Array:
 	for e: Array in OPTIONS.get(String(rec.get("id", "")), []):
 		var v: Variant = opt(rec, e[0])
 		var txt: String = str(v) if typeof(v) == TYPE_INT else String(OPTION_TEXT.get(v, str(v)))
+		if e[0] == "gate":
+			txt = "alle Gates" if int(v) == 0 else "Gate %d" % int(v)
 		if typeof(v) == TYPE_BOOL:
 			txt = "ja" if bool(v) else "nein"
 		out.append([e[0], e[1], txt])
@@ -655,6 +658,8 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 	if values.is_empty():
 		return ""
 	var cur: Variant = opt(rec, key)
+	if typeof(cur) == TYPE_FLOAT and typeof(values[0]) == TYPE_INT:
+		cur = int(cur)
 	var i := values.find(cur)
 	var v: Variant = values[(i + dir + values.size()) % values.size()]
 	var cost := 0
@@ -699,7 +704,8 @@ func _rebuild_node(rec: Dictionary) -> void:
 	var node: Node3D
 	if rec["id"] == "halle":
 		var r: Rect2 = rec["rect"]
-		node = Factory.make_hall(r.size.x, r.size.y, rec.get("opts", {}))
+		rec["cuts"] = facade_cuts(rec)
+		node = Factory.make_hall(r.size.x, r.size.y, rec.get("opts", {}), rec["cuts"])
 	else:
 		node = Factory.make_item(String(rec["id"]), rec.get("opts", {}))
 	node.transform = old.transform
@@ -832,6 +838,177 @@ func hall_side(p: Vector3) -> Array:
 	return best
 
 
+const BRIDGE_OFF := 4.8   # Mitte der Rotunde vor der Fassade (Treppenturm liegt dazwischen)
+
+## Fluggastbrücke einrasten: bündig vor die nächste Außenwand, auf Höhe eines Gates innen,
+## sonst im 1-m-Raster. Rückgabe [Lage, Drehung] oder leer.
+func bridge_snap(p: Vector3) -> Array:
+	var hs := hall_side(p)
+	if hs.is_empty():
+		return []
+	var hall: Dictionary = hs[0]
+	var n: Vector3 = hs[1]
+	var c: Vector3 = hs[2]
+	var r: Rect2 = hall["rect"]
+	var along := Vector3(-n.z, 0, n.x)
+	var t := snappedf(c.dot(along), 1.0)
+	var best := 9.0
+	for g: Dictionary in inside_of(hall):
+		if not (g["id"] in ["gate", "busgate"]) or floor_of(g) != 0:
+			continue
+		var gp: Vector3 = g["pos"]
+		if Vector2(gp.x - c.x, gp.z - c.z).dot(Vector2(n.x, n.z)) < -16.0:
+			continue
+		var d := absf(gp.dot(along) - c.dot(along))
+		if d < best:
+			best = d
+			t = gp.dot(along)
+	# auf der Wand bleiben (Ecken frei lassen)
+	var lo: float
+	var hi: float
+	if absf(n.x) > 0.5:
+		lo = r.position.y + 3.0
+		hi = r.end.y - 3.0
+	else:
+		lo = r.position.x + 3.0
+		hi = r.end.x - 3.0
+	var sgn := along.x + along.z
+	t = clampf(t * sgn, lo, hi) * sgn
+	var wall_pt := c - along * c.dot(along) + along * t
+	return [Vector3(wall_pt.x, 0, wall_pt.z) + n * BRIDGE_OFF, rot_for_normal(n)]
+
+
+## Pisten als [Anfang, Ende] (Mittellinie).
+func runway_list() -> Array:
+	var out := []
+	for l: Dictionary in lines:
+		if l["kind"] == "piste":
+			var sm: PackedVector3Array = l["samples"]
+			out.append([Vector3(sm[0].x, 0, sm[0].z), Vector3(sm[sm.size() - 1].x, 0, sm[sm.size() - 1].z)])
+	return out
+
+
+static func seg_dist(p: Vector3, a: Vector3, b: Vector3) -> float:
+	var ab := Vector2(b.x - a.x, b.z - a.z)
+	var ap := Vector2(p.x - a.x, p.z - a.z)
+	var t := clampf(ap.dot(ab) / maxf(ab.length_squared(), 0.0001), 0.0, 1.0)
+	return (ap - ab * t).length()
+
+
+func runway_dist(p: Vector3) -> float:
+	var best := INF
+	for r: Array in runway_list():
+		best = minf(best, seg_dist(p, r[0], r[1]))
+	return best
+
+
+## Befeuerung und Markierungen einrasten. Rückgabe [Lage, Drehung] oder leer.
+## pistenende: 12 m vor einer Schwelle in Pistenrichtung. papi: links neben dem Aufsetzpunkt.
+## rollweg: auf die Mittellinie des nächsten Rollwegs.
+func marker_snap(id: String, p: Vector3) -> Array:
+	var mode := String(Catalog.ITEMS[id].get("marker", ""))
+	var hw := float(Catalog.LINES["piste"]["width"]) * 0.5
+	if mode == "pistenende" or mode == "papi":
+		var best: Array = []
+		var bd := 700.0 if mode == "pistenende" else 400.0
+		for r: Array in runway_list():
+			for e in range(2):
+				var thr: Vector3 = r[e]
+				var other: Vector3 = r[1 - e]
+				var inward := (other - thr).normalized()
+				var q: Vector3
+				if mode == "pistenende":
+					q = thr - inward * 12.0
+				else:
+					var length := thr.distance_to(other)
+					var aim := 400.0 if length >= 2400.0 else 300.0 if length >= 1500.0 else 250.0
+					var left := Vector3.UP.cross(inward).normalized()
+					q = thr + inward * aim + left * (hw + 28.0)
+				var d := Vector2(q.x - p.x, q.z - p.z).length()
+				if d < bd:
+					bd = d
+					best = [q, rot_for_normal(-inward if mode == "pistenende" else inward)]
+		return best
+	if mode == "rollweg":
+		var best2: Array = []
+		var bd2 := 14.0
+		for l: Dictionary in lines:
+			if not (l["kind"] in ["rollweg", "rollweg_breit"]):
+				continue
+			var sm: PackedVector3Array = l["samples"]
+			for i in range(sm.size()):
+				var d := Vector2(sm[i].x - p.x, sm[i].z - p.z).length()
+				if d < bd2:
+					bd2 = d
+					var t := sm[mini(i + 1, sm.size() - 1)] - sm[maxi(i - 1, 0)]
+					t.y = 0.0
+					best2 = [Vector3(sm[i].x, 0, sm[i].z), rot_for_normal(t.normalized())]
+		return best2
+	return []
+
+
+## Öffnungen in der Außenwand einer Halle (Erdgeschoss): Eingänge und Brückenköpfe.
+## Je Öffnung [Mitte lokal (Vector2), Breite, Höhe].
+func facade_cuts(hall: Dictionary) -> Array:
+	var out := []
+	var hr: Rect2 = hall["rect"]
+	var cen := hr.get_center()
+	for it: Dictionary in inside_of(hall):
+		if it["id"] != "eingang" or floor_of(it) != 0:
+			continue
+		var r: Rect2 = it["rect"]
+		var d := [r.position.x - hr.position.x, hr.end.x - r.end.x, r.position.y - hr.position.y, hr.end.y - r.end.y]
+		var m := 0
+		for i in range(4):
+			if float(d[i]) < float(d[m]):
+				m = i
+		var rc := r.get_center() - cen
+		match m:
+			0:
+				out.append([Vector2(-hr.size.x * 0.5, rc.y), r.size.y - 0.2, 3.35])
+			1:
+				out.append([Vector2(hr.size.x * 0.5, rc.y), r.size.y - 0.2, 3.35])
+			2:
+				out.append([Vector2(rc.x, -hr.size.y * 0.5), r.size.x - 0.2, 3.35])
+			3:
+				out.append([Vector2(rc.x, hr.size.y * 0.5), r.size.x - 0.2, 3.35])
+	for b: Dictionary in items_of("fluggastbruecke"):
+		var hs := hall_side(b["pos"])
+		if hs.is_empty() or not is_same(hs[0], hall):
+			continue
+		var c: Vector3 = hs[2]
+		out.append([Vector2(c.x - cen.x, c.z - cen.y), 3.4, 6.4])
+	return out
+
+
+var _facade_queue: Array = []
+
+## Fassade einer Halle neu bauen, wenn sich Eingänge oder Brücken geändert haben (gesammelt am Bildende).
+func queue_facade(hall: Dictionary) -> void:
+	if _facade_queue.is_empty():
+		call_deferred("flush_facades")
+	for h: Dictionary in _facade_queue:
+		if is_same(h, hall):
+			return
+	_facade_queue.append(hall)
+
+
+func flush_facades() -> void:
+	var todo := _facade_queue.duplicate()
+	_facade_queue = []
+	var changed := false
+	for hall: Dictionary in todo:
+		if not (hall in items):
+			continue
+		var cuts := facade_cuts(hall)
+		if str(cuts) == str(hall.get("cuts", [])):
+			continue
+		_rebuild_node(hall)
+		changed = true
+	if changed:
+		items_changed.emit()
+
+
 ## Drehung (0–3), bei der die lokale +Z-Achse in Richtung n zeigt.
 static func rot_for_normal(n: Vector3) -> int:
 	if n.x > 0.5:
@@ -846,10 +1023,39 @@ static func rot_for_normal(n: Vector3) -> int:
 ## Leerer Text = darf gebaut werden, sonst der Grund.
 func can_place(id: String, pos: Vector3, rot: int) -> String:
 	if bool(Catalog.ITEMS[id].get("bridge", false)):
-		var hs := hall_side(pos)
-		if hs.is_empty() or float(hs[3]) > 4.5:
+		var bs := bridge_snap(pos)
+		if bs.is_empty():
 			return "Direkt vor die Außenwand einer Terminalhalle setzen"
-		rot = rot_for_normal(hs[1])
+		pos = bs[0]
+		rot = bs[1]
+		for other: Dictionary in items_of("fluggastbruecke"):
+			if (other["pos"] as Vector3).distance_to(pos) < 7.0:
+				return "Hier steht schon eine Fluggastbrücke"
+	if Catalog.is_marker(id):
+		var ms := marker_snap(id, pos)
+		if ms.is_empty():
+			match String(Catalog.ITEMS[id]["marker"]):
+				"rollweg":
+					return "Auf einen Rollweg setzen"
+				"papi":
+					return "Neben eine Piste setzen (links vom Aufsetzpunkt)"
+				_:
+					return "An ein Pistenende setzen"
+		var mp: Vector3 = ms[0]
+		if id == "rollhalt":
+			var rd := runway_dist(mp)
+			if rd < 60.0 or rd > 250.0:
+				return "Rollhalteorte 60 bis 250 m vor der Pistenmitte setzen (hier %d m)" % int(rd)
+		for other: Dictionary in items_of(id):
+			if (other["pos"] as Vector3).distance_to(mp) < (20.0 if id == "rollhalt" else 100.0):
+				return "Hier ist schon eine " + Catalog.label(id)
+		if not on_map(mp):
+			return "Außerhalb der Karte"
+		if int(Catalog.ITEMS[id]["cost"]) > money:
+			return "Nicht genug Geld"
+		return ""
+	if id == "befeuerungsstation" and runway_dist(pos) > 450.0:
+		return "Höchstens 450 m von einer Piste entfernt bauen"
 	var def: Dictionary = Catalog.ITEMS[id]
 	var on: String = def.get("on", "")
 	var r := footprint(id, pos, rot)
@@ -982,9 +1188,15 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 		toast.emit("Nicht genug Geld")
 		return {}
 	if bool(Catalog.ITEMS[id].get("bridge", false)):
-		var hs := hall_side(pos)
-		if not hs.is_empty():
-			rot = rot_for_normal(hs[1])
+		var bs := bridge_snap(pos)
+		if not bs.is_empty():
+			pos = bs[0]
+			rot = bs[1]
+	if Catalog.is_marker(id):
+		var ms := marker_snap(id, pos)
+		if not ms.is_empty():
+			pos = ms[0]
+			rot = ms[1]
 	var f := 0
 	if Catalog.is_inside(id):
 		f = view_floor if floor == -99 else floor
@@ -998,6 +1210,12 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 		rec["hall"] = hall_for_rect(rec["rect"])
 		rec["floor"] = f
 		_apply_floor(rec)
+	if id == "eingang" and rec.has("hall"):
+		queue_facade(rec["hall"])
+	elif bool(Catalog.ITEMS[id].get("bridge", false)):
+		var hsb := hall_side(rec["pos"])
+		if not hsb.is_empty():
+			queue_facade(hsb[0])
 	items.append(rec)
 	history.append(rec)
 	if Catalog.is_door(id) and not (rec["hall"] as Dictionary).is_empty():
@@ -1468,9 +1686,18 @@ func remove(rec: Dictionary, refund: float = 0.5) -> void:
 		any_line = any_line or not walls.is_empty()
 		for inner: Dictionary in inside_of(rec) + walls:
 			_remove_one(inner, refund)
+	var facade_hall: Dictionary = {}
+	if rec.get("id", "") == "eingang":
+		facade_hall = rec.get("hall", {})
+	elif rec.get("id", "") == "fluggastbruecke":
+		var hsr := hall_side(rec["pos"])
+		if not hsr.is_empty():
+			facade_hall = hsr[0]
 	_remove_one(rec, refund)
 	if Catalog.is_door(String(rec.get("id", ""))) and not (rec.get("hall", {}) as Dictionary).is_empty():
 		refresh_walls(rec["hall"], floor_of(rec))
+	if not facade_hall.is_empty() and facade_hall in items:
+		queue_facade(facade_hall)
 	evaluate_supply()
 	if any_line:
 		network_changed.emit()
@@ -1539,7 +1766,7 @@ func clear_all() -> void:
 # ---------------------------------------------------------------- Speichern und Laden
 
 func save_game(quiet: bool = false) -> void:
-	var data := {"version": 6, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
+	var data := {"version": 7, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
 		"wind": [wind_dir, wind_kt]}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
@@ -1582,6 +1809,7 @@ func load_game() -> bool:
 		return false
 	var data: Dictionary = parsed
 	clear_all()
+	legacy_lights = int(data.get("version", 0)) < 7
 	# Hallen zuerst, damit Wände und Einrichtung ihre Halle finden
 	for it: Dictionary in data.get("items", []):
 		if String(it["id"]) == "halle":
@@ -1638,7 +1866,24 @@ func load_game() -> bool:
 
 # ---------------------------------------------------------------- Startflughafen
 
+## Stellen, an denen ein Rollweg den Abstand d zur Pistenmitte unterschreitet (für Rollhalteorte).
+func _auto_holds(d: float) -> Array:
+	var out := []
+	for l: Dictionary in lines:
+		if not (l["kind"] in ["rollweg", "rollweg_breit"]):
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		var prev := runway_dist(sm[0])
+		for i in range(1, sm.size()):
+			var cur := runway_dist(sm[i])
+			if (prev >= d) != (cur >= d):
+				out.append(Vector3(sm[i].x, 0, sm[i].z))
+			prev = cur
+	return out
+
+
 func load_starter() -> void:
+	legacy_lights = false
 	var V := func(x: float, z: float) -> Vector3: return Vector3(x, 0.0, z)
 	# Vorfeld bis zum Terminal, dahinter der Parallelrollweg A (Abstand Pistenmitte 168 m nach ICAO,
 	# Rollhalteorte 90 m vor der Pistenmitte), an den Enden Zurollwege, dazwischen zwei Schnellabrollwege.
@@ -1657,24 +1902,25 @@ func load_starter() -> void:
 		build_line("rollweg", [V.call(x, -272), V.call(x - 70, -260), V.call(x - 125, -238), V.call(x - 160, -205),
 			V.call(x - 178, -165), V.call(x - 184, -130), V.call(x - 185, -104)], true)
 	# Betriebsstraße vor den Ständen (unter den Brücken durch), um den Großraum-Stand herum zu den Garagen
-	build_line("betriebsstrasse", [V.call(-176, -32), V.call(110, -32), V.call(121, -25), V.call(128, -12), V.call(140, -7),
-		V.call(204, -7), V.call(216, -12), V.call(223, -26), V.call(234, -32), V.call(372, -32)], true)
+	build_line("betriebsstrasse", [V.call(-176, -35), V.call(110, -35), V.call(121, -27), V.call(128, -12), V.call(140, -7),
+		V.call(204, -7), V.call(216, -12), V.call(223, -27), V.call(234, -35), V.call(372, -35)], true)
 	build_line("strasse", [V.call(430, 60), V.call(260, 60), V.call(170, 40), V.call(60, 30),
 		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true)
 	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true)
 	build_line("gehweg", [V.call(-36, 20), V.call(36, 20)], true)
 	_starter_terminal(V)
 	# Kontaktstände mit Brücke vor den Gates, Außenpositionen mit Bus und Treppe an den Enden
+	# Kontaktstände hinter der Betriebsstraße (z = -35), Brücken bündig an der Fassade
 	for x: float in [-85.0, -40.0, 5.0, 50.0]:
-		build_item("stand", V.call(x, -55), 0, true)
+		build_item("stand", V.call(x, -63), 0, true)
 	for x: float in [-130.0, 95.0]:
-		build_item("stand_aussen", V.call(x, -55), 0, true)
+		build_item("stand_aussen", V.call(x, -63), 0, true)
 	for x: float in [-67.0, -22.0, 11.0, 56.0]:
-		build_item("fluggastbruecke", V.call(x, -26.5), 0, true)
+		build_item("fluggastbruecke", V.call(x, -28.8), 0, true)
 	build_item("stand_gross", V.call(165, -50), 0, true)
-	build_item("bushalt", V.call(123.5, -45), 1, true)
-	for x: float in [-107.5, -62.5, -17.5, 27.5, 72.5, 129.5]:
-		build_item("flutlicht", V.call(x, -48), 0, true)
+	build_item("bushalt", V.call(123.5, -62), 1, true)
+	for x: float in [-107.5, -62.5, -17.5, 27.5, 72.5]:
+		build_item("flutlicht", V.call(x, -52), 0, true)
 	build_item("tower", V.call(262, 22), 0, true)
 	build_item("hangar", V.call(-200, -48), 0, true)
 	build_item("parkhaus", V.call(-40, 62), 0, true)
@@ -1693,6 +1939,15 @@ func load_starter() -> void:
 	build_item("feuerwache", V.call(345, -52), 0, true)
 	build_item("gepaeckumschlag", V.call(295, -10), 0, true)
 	build_item("personalgebaeude", V.call(150, 14), 0, true)
+	# Befeuerung: Station mit Strom, Anflugbefeuerung und PAPI an beiden Pistenenden, Rollhalteorte
+	build_item("befeuerungsstation", V.call(-192, -12), 0, true)
+	build_line("stromkabel", [V.call(-160, 3), V.call(-192, 3), V.call(-192, -9)], true)
+	build_line("stromkabel", [V.call(-185, 3), V.call(-212, 3), V.call(-212, -29)], true)
+	for e: Vector3 in [V.call(-1300, -272), V.call(1300, -272)]:
+		build_item("anflugbefeuerung", e, 0, true)
+		build_item("papi", e, 0, true)
+	for hp: Vector3 in _auto_holds(90.0):
+		build_item("rollhalt", hp, 0, true)
 	# Sicherheitszaun zwischen Landseite und Luftseite, Grünanlagen am Terminal
 	build_line("zaun", [V.call(-142, 4), V.call(-232, 4)], true)
 	build_line("zaun", [V.call(108, 4), V.call(322, 4)], true)
