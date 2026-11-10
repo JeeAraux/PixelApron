@@ -130,6 +130,8 @@ func run(main: Node) -> void:
 	var belt_run := false
 	var flaps_seen := false
 	var walk_frames := false
+	# feste Zufallsfolge: derselbe Verlauf lokal und im Build (Stände werden zufällig vergeben)
+	seed(20261110)
 	for i in range(12000):
 		fl.step(0.1)
 		outdoor_pax = maxi(outdoor_pax, main.ops.walkers.size())
