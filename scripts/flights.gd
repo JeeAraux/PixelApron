@@ -355,25 +355,69 @@ func _plan_approach(p: Dictionary) -> void:
 
 # ---------------------------------------------------------------- Reservierungen
 
-func _free_for(n: int, id: int) -> bool:
+## Ist Knoten n für Flugzeug id frei? Reservierungen der Flugzeuge in `ignore` (Folgeverkehr hinter uns) zählen nicht.
+func _free_for(n: int, id: int, ignore: Dictionary = {}) -> bool:
 	if n < 0:
 		return true
-	if reserved.has(n) and int(reserved[n]) != id:
+	if reserved.has(n) and int(reserved[n]) != id and not ignore.has(int(reserved[n])):
 		return false
 	for m: int in graph.near[n]:
-		if reserved.has(m) and int(reserved[m]) != id:
+		if reserved.has(m) and int(reserved[m]) != id and not ignore.has(int(reserved[m])):
 			return false
 	return true
 
 
 ## Wer blockiert Knoten n für Flugzeug id (Besitzer der Reservierung, sonst -1)?
-func _blocker(n: int, id: int) -> int:
-	if reserved.has(n) and int(reserved[n]) != id:
+func _blocker(n: int, id: int, ignore: Dictionary = {}) -> int:
+	if reserved.has(n) and int(reserved[n]) != id and not ignore.has(int(reserved[n])):
 		return int(reserved[n])
 	for m: int in graph.near[n]:
-		if reserved.has(m) and int(reserved[m]) != id:
+		if reserved.has(m) and int(reserved[m]) != id and not ignore.has(int(reserved[m])):
 			return int(reserved[m])
 	return -1
+
+
+## Liegt q in Fahrtrichtung von p vor ihm (auf derselben Linie, höchstens 25 m seitlich)?
+func _in_front(p: Dictionary, q: Dictionary, min_ahead: float = 0.0) -> bool:
+	var h: Vector3 = p["heading"]
+	h.y = 0.0
+	if h.length_squared() < 0.01:
+		return false
+	h = h.normalized()
+	var d: Vector3 = (q["pos"] as Vector3) - (p["pos"] as Vector3)
+	d.y = 0.0
+	return d.dot(h) > min_ahead and absf(d.dot(h.cross(Vector3.UP))) < 25.0
+
+
+## Steht oder rollt ein anderes Flugzeug am Boden so nah, dass sich die Rümpfe überdecken?
+func _overlapping(p: Dictionary) -> bool:
+	for q: Dictionary in planes:
+		if is_same(q, p) or not (q["state"] in ["rollt_ein", "rollt_aus", "wartet", "pushback"]):
+			continue
+		if (q["pos"] as Vector3).distance_to(p["pos"]) < 42.0:
+			return true
+	return false
+
+
+## Flugzeuge, die hinter p in dieselbe Richtung rollen. Der Vordere hat Vorrang: was ein Folgendes
+## vor ihm schon reserviert hat, darf er trotzdem befahren (sonst warten beide aufeinander).
+func _followers(p: Dictionary) -> Dictionary:
+	var out := {}
+	var h: Vector3 = p["heading"]
+	h.y = 0.0
+	if h.length_squared() < 0.01:
+		return out
+	h = h.normalized()
+	for q: Dictionary in planes:
+		if is_same(q, p) or not (q["state"] in ["rollt_ein", "rollt_aus", "wartet"]):
+			continue
+		var qh: Vector3 = q["heading"]
+		qh.y = 0.0
+		if qh.length_squared() < 0.01 or qh.normalized().dot(h) < 0.8:
+			continue
+		if _in_front(q, p, 15.0):
+			out[int(q["id"])] = true
+	return out
 
 
 func _plane_by_id(id: int) -> Dictionary:
@@ -868,7 +912,12 @@ func _drive(p: Dictionary, sim: float) -> String:
 	var rs: float = p["rs"]
 	var ghost := float(p["ghost"]) > 0.0
 	if ghost:
-		p["ghost"] = float(p["ghost"]) - sim
+		var g := float(p["ghost"]) - sim
+		# Notlösung erst beenden, wenn wir am anderen ganz vorbei sind
+		if g <= 0.0 and _overlapping(p):
+			g = 0.5
+		p["ghost"] = g
+	var foll := {} if ghost else _followers(p)
 	# Freigabe voraus: Knoten reservieren, bis einer belegt ist oder die Piste nicht frei
 	var limit := total
 	var why := ""
@@ -895,15 +944,15 @@ func _drive(p: Dictionary, sim: float) -> String:
 				limit = minf(limit, _hold_s(p, kk))
 				why = "piste"
 				break
-		if not ghost and not _free_for(n, id):
+		if not ghost and not _free_for(n, id, foll):
 			limit = minf(limit, node_s[kk] - CLEAR)
 			why = "belegt"
-			p["blocked_by"] = _blocker(n, id)
+			p["blocked_by"] = _blocker(n, id, foll)
 			break
 		# Blocksicherung: einen Rollwegabschnitt bis zur nächsten Kreuzung nur befahren,
 		# wenn er ganz frei ist (sonst stehen sich zwei Flugzeuge Nase an Nase gegenüber)
 		if not ghost and int(reserved.get(n, -1)) != id:
-			var blk := _block_ahead(nodes, node_s, kk, id)
+			var blk := _block_ahead(nodes, node_s, kk, id, foll)
 			if int(blk[0]) >= 0:
 				limit = minf(limit, node_s[kk] - CLEAR - 14.0)
 				why = "belegt"
@@ -993,7 +1042,11 @@ func _drive(p: Dictionary, sim: float) -> String:
 		elif float(p["wait"]) > 40.0 and _deadlocked(p):
 			# Notlösung gegen gegenseitiges Blockieren: nur einer von beiden fährt durch
 			var q := _plane_by_id(int(p.get("blocked_by", -1)))
-			if q.is_empty() or float(q.get("ghost", 0.0)) <= 0.0 and (int(q.get("blocked_by", -1)) != int(p["id"]) or int(p["id"]) > int(q["id"])):
+			var go := q.is_empty() or float(q.get("ghost", 0.0)) <= 0.0 and (int(q.get("blocked_by", -1)) != int(p["id"]) or int(p["id"]) > int(q["id"]))
+			# Steht der andere vor uns, wir aber nicht vor ihm, fährt er zuerst (nicht durch ihn hindurch)
+			if not q.is_empty() and float(q.get("ghost", 0.0)) <= 0.0 and _in_front(p, q) != _in_front(q, p):
+				go = not _in_front(p, q)
+			if go:
 				p["ghost"] = 15.0
 				p["wait"] = 0.0
 		return "belegt"
@@ -1112,7 +1165,7 @@ func _yield_point(p: Dictionary, nodes: Array, node_s: PackedFloat32Array, k: in
 
 ## Abschnitt ab Index kk bis einschließlich der nächsten Kreuzung: [Blockierer oder -1, Knoten].
 ## Im Pistenschutzbereich endet die Prüfung (dort gilt die Pistenfreigabe).
-func _block_ahead(nodes: Array, node_s: PackedFloat32Array, kk: int, id: int) -> Array:
+func _block_ahead(nodes: Array, node_s: PackedFloat32Array, kk: int, id: int, ignore: Dictionary = {}) -> Array:
 	var out := []
 	var j := kk
 	var start_s := node_s[kk]
@@ -1124,8 +1177,8 @@ func _block_ahead(nodes: Array, node_s: PackedFloat32Array, kk: int, id: int) ->
 		if graph.in_stand[n] == 1:
 			break
 		var deg: int = (graph.adj[n] as Array).size()
-		if not _free_for(n, id):
-			return [_blocker(n, id), out]
+		if not _free_for(n, id, ignore):
+			return [_blocker(n, id, ignore), out]
 		out.append(n)
 		if deg == 2:
 			seen_line = true
