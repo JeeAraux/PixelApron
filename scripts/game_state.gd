@@ -1102,7 +1102,8 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 				return "Hier steht schon etwas"
 		if on != "" and not _on_kind(pos, on):
 			return "Muss auf dem " + Catalog.label(on) + " liegen"
-		var on_line := _rect_on_lines(r, on)
+		# Brücken stehen mit der Rotunde auf dem Vorfeld
+		var on_line := _rect_on_lines(r, "vorfeld" if bool(def.get("bridge", false)) else on)
 		if on_line != "":
 			return on_line
 	var cost: int = def["cost"]

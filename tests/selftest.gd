@@ -70,6 +70,8 @@ func run(main: Node) -> void:
 	check(connected == game.stands().size(), "Alle Stände haben eine Zufahrt von der Betriebsstraße (%d)" % connected)
 	check(main.flights.runway_lit() and game.items_of("rollhalt").size() == 6 and game.items_of("anflugbefeuerung").size() == 2,
 		"Befeuerungsstation versorgt die Piste, Rollhalteorte und Anflugbefeuerung gebaut")
+	if bool(main.flights.dirty):
+		main.flights._rebuild()
 	var custom_holds := 0
 	for h: Dictionary in main.flights.graph.holds:
 		if bool(h.get("custom", false)):
