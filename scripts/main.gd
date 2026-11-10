@@ -282,6 +282,8 @@ func _connect() -> void:
 	builder.hint.connect(hud.set_hint)
 	hud.draw_mode_selected.connect(builder.set_mode)
 	hud.snap_toggled.connect(builder.set_snapping)
+	hud.side_selected.connect(builder.set_side)
+	builder.side_changed.connect(hud.show_side)
 	builder.steps.connect(hud.set_steps)
 	hud.ops_ref = betrieb
 	hud.clearance_requested.connect(_on_clearance)
@@ -647,6 +649,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				builder.finish()
 			KEY_TAB:
 				builder.cycle_mode()
+			KEY_V:
+				builder.cycle_side()
 			KEY_G:
 				builder.set_snapping(not builder.snapping)
 				hud.show_snapping(builder.snapping)
@@ -967,6 +971,35 @@ func _demo(args: PackedStringArray) -> void:
 		builder.on_move(Vector3(-215, 0, 110))
 		builder.on_click(Vector3(-215, 0, 110))
 		builder.on_move(Vector3(-235, 0, 200))
+	elif mode == "strassen":
+		# Straßenraum: Allee vor dem Terminal mit Bushaltestelle, Radweg an der Querstraße
+		var at := Vector3(-30, 0, 34)
+		var zz := 70.0
+		for a in args:
+			if a.begins_with("--zoom="):
+				zz = float(a.substr(7))
+			if a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				at = Vector3(float(xz[0]), 0, float(xz[1]))
+			if a.begins_with("--yaw="):
+				cam_rig.yaw = float(a.substr(6))
+				cam_rig.yaw_goal = cam_rig.yaw
+		cam_rig.target = at
+		cam_rig.zoom_goal = zz
+		cam_rig.zoom = zz
+		hud.set_build_open(false)
+		if "--szene" in args:
+			# freie Kreuzung: Radweg-Straße, Allee, 4-spurige Straße mit Gehweg, Bus- und Taxibucht
+			game.build_line("strasse", [Vector3(400, 0, 300), Vector3(520, 0, 300)], true, false, "rad")
+			game.build_line("strasse", [Vector3(520, 0, 300), Vector3(640, 0, 300)], true, false, "rad")
+			game.build_line("strasse", [Vector3(520, 0, 180), Vector3(520, 0, 300)], true, false, "allee")
+			game.build_line("strasse4", [Vector3(520, 0, 300), Vector3(520, 0, 420)], true, false, "gehweg")
+			for sp: Array in [["haltestelle", Vector3(462, 0, 288)], ["taxistand", Vector3(585, 0, 312)], ["haltestelle", Vector3(532, 0, 360)]]:
+				var snap: Array = game.stop_snap(String(sp[0]), sp[1])
+				if not snap.is_empty():
+					game.build_item(String(sp[0]), snap[0], int(snap[1]), true)
+		for i in range(400):
+			traffic.step(0.1)
 	elif mode == "ersetzen":
 		# Ersetzen: Bestandsstraße unter dem Zeiger wird zur 4-spurigen
 		cam_rig.target = Vector3(-200, 0, 120)

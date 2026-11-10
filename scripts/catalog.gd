@@ -121,7 +121,7 @@ const ITEMS := {
 		"desc": "Halle am Vorfeld, in der die Koffer auf Gepäckwagen verladen werden. Mit einem Gepäckförderband zur Terminalhalle verbinden: Dann starten die Gepäckzüge hier und jede Abfertigung geht 10 % schneller."},
 	"haltestelle": {"name": "Bushaltestelle", "size": Vector2(16, 4), "h": 3.2, "cost": 30000, "grid": 1.0,
 		"access": {"halt": Vector2(0, -4.5)},
-		"desc": "Haltestelle für Linienbusse an einer Straße (Pfeil zeigt zur Straße). Busse bringen Fluggäste aus der Stadt und nehmen andere mit. Hebt die Zufriedenheit."},
+		"desc": "Haltestelle für Linienbusse an einer Straße. Rastet am Straßenrand ein, davor entsteht eine Haltebucht. Busse bringen Fluggäste aus der Stadt und nehmen andere mit. Hebt die Zufriedenheit."},
 	"trafo": {"name": "Trafostation", "size": Vector2(10, 7), "h": 3.7, "cost": 180000, "grid": 1.0,
 		"supply": {"strom": 630}, "desc": "Liefert 630 kW Strom über Kabel."},
 	"wasseranschluss": {"name": "Wasseranschluss", "size": Vector2(4, 4), "h": 1.6, "cost": 25000, "grid": 1.0,
@@ -143,10 +143,10 @@ const ITEMS := {
 		"desc": "Bahnhof mit Bahnsteig unter Glasdach. Alle paar Minuten hält eine S-Bahn, Fahrgäste gehen zum Terminal. Höchstens 300 m vom Terminal entfernt bauen. Weniger Autos, zufriedenere Fluggäste."},
 	"taxistand": {"name": "Taxistand", "size": Vector2(24, 5), "h": 3.0, "cost": 30000, "grid": 1.0,
 		"access": {"halt": Vector2(0, -4.5)},
-		"desc": "Warteschlange für Taxis an einer Straße (Pfeil zeigt zur Straße), nah am Terminal. Taxis bringen und holen Fluggäste."},
+		"desc": "Warteschlange für Taxis an einer Straße. Rastet am Straßenrand ein, davor entsteht eine Haltebucht, nah am Terminal. Taxis bringen und holen Fluggäste."},
 	"kissandfly": {"name": "Kiss & Fly", "size": Vector2(30, 5), "h": 3.0, "cost": 40000, "grid": 1.0,
 		"access": {"halt": Vector2(0, -4.5)},
-		"desc": "Kurzzeit-Haltezone zum Bringen und Abholen (Pfeil zeigt zur Straße). Weniger Gedränge vor dem Terminal."},
+		"desc": "Kurzzeit-Haltezone zum Bringen und Abholen, rastet am Straßenrand ein (mit Haltebucht). Weniger Gedränge vor dem Terminal."},
 	"mietwagen": {"name": "Mietwagenzentrum", "size": Vector2(36, 26), "h": 5.0, "cost": 900000, "grid": 2.0,
 		"needs": {"strom": 10}, "access": {"ein": Vector2(-7, -13.5), "aus": Vector2(7, -13.5)}, "spaces": 30,
 		"desc": "Schalterpavillon mehrerer Vermieter und Stellplätze mit Mietwagen. Zufahrt (Pfeil) an einer Straße. Bringt Gebühren je Fluggast."},
@@ -416,6 +416,25 @@ const TUNNEL_COVER := -5.4
 
 static func is_road(kind: String) -> bool:
 	return kind in ROADS
+
+
+## Querschnitt neben der Fahrbahn (je Seite): Breite in Metern, Aufpreis je Meter Straße
+const SIDES := {
+	"ohne": {"name": "Nur Fahrbahn", "short": "Fahrbahn", "w": 0.0, "cost_m": 0,
+		"desc": "Landstraße ohne Bordstein und Gehweg."},
+	"gehweg": {"name": "Mit Gehweg", "short": "Gehweg", "w": 2.8, "cost_m": 140,
+		"desc": "Hochbord und gepflasterter Gehweg auf beiden Seiten, Straßenleuchten."},
+	"rad": {"name": "Gehweg und Radweg", "short": "Radweg", "w": 5.0, "cost_m": 260,
+		"desc": "Sicherheitsstreifen, roter Radweg und Gehweg auf beiden Seiten. Radfahrer sind unterwegs."},
+	"allee": {"name": "Allee", "short": "Allee", "w": 5.0, "cost_m": 300,
+		"desc": "Grünstreifen mit Straßenbäumen und Gehweg auf beiden Seiten. Hebt die Zufriedenheit leicht."},
+}
+const SIDE_ORDER := ["ohne", "gehweg", "rad", "allee"]
+
+
+## Straßen mit wählbarem Querschnitt (Tunnel haben eigene Wände)
+static func has_sides(kind: String) -> bool:
+	return kind == "strasse" or kind == "strasse4" or kind == "einbahn"
 
 
 static func is_inside(id: String) -> bool:

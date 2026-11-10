@@ -14,6 +14,7 @@ const GameState = preload("res://scripts/game_state.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const Roads = preload("res://scripts/roads.gd")
 const Models = preload("res://scripts/models.gd")
+const Streetscape = preload("res://scripts/streetscape.gd")
 
 const CARS_PER_MOVEMENT := 5
 const MIN_GAP := 2.2
@@ -41,6 +42,10 @@ var bus_timer := 6.0
 var peds: Array = []               # Fußgänger auf der Landseite (Bus, Parkhaus, Vorfahrt → Terminal)
 var entrances: Array = []          # Punkte vor den Terminal-Eingängen (außen)
 var stop_timer := 0.0
+var bikes: Array = []              # Radfahrer auf Radwegen: {node, rider, path, s, len, speed}
+var life_timer := 1.0
+const BIKE_MAX := 14
+const STROLL_MAX := 18
 
 
 func setup(g: GameState, r: Roads) -> void:
@@ -542,6 +547,7 @@ func step(dt: float) -> void:
 	_staff_shift(dt)
 	_trains(dt)
 	_step_peds(dt)
+	_street_life(dt)
 
 
 func _spawn_tick() -> void:
@@ -1308,6 +1314,16 @@ func landside_factors() -> Array:
 		if game.supplied(it, "strom") and access.has((it["node"] as Node).get_instance_id()):
 			out.append(["Mietwagenzentrum", 2])
 			break
+	# Straßenraum: Bäume und Radwege machen die Anreise angenehmer
+	var meters := {"allee": 0.0, "rad": 0.0}
+	for l: Dictionary in roads.roads():
+		var sd := String(l.get("side", ""))
+		if meters.has(sd):
+			meters[sd] = float(meters[sd]) + Spline.length(l["samples"] as PackedVector3Array)
+	if float(meters["allee"]) >= 150.0:
+		out.append(["Alleen an der Zufahrt", 1])
+	if float(meters["rad"]) >= 150.0:
+		out.append(["Radwege zum Flughafen", 1])
 	return out
 
 
@@ -1352,3 +1368,94 @@ func _trains(dt: float) -> void:
 			continue
 		z.visible = true
 		z.position.x = x
+
+# ---------------------------------------------------------------- Leben auf Gehwegen und Radwegen
+
+## Spaziergänger auf Gehwegen und Radfahrer auf Radwegen (je nach Querschnitt der Straßen).
+func _street_life(dt: float) -> void:
+	life_timer -= dt
+	if life_timer <= 0.0:
+		life_timer = 2.5
+		_spawn_street_life()
+	var hide := game.interior_view and game.view_floor < 0
+	for b: Dictionary in bikes.duplicate():
+		var node: Node3D = b["node"]
+		if not is_instance_valid(node):
+			bikes.erase(b)
+			continue
+		b["s"] = float(b["s"]) + float(b["speed"]) * dt
+		if float(b["s"]) >= float(b["len"]):
+			node.queue_free()
+			bikes.erase(b)
+			continue
+		var path: PackedVector3Array = b["path"]
+		var p := _path_at(path, float(b["s"]))
+		var ahead := _path_at(path, float(b["s"]) + 1.0)
+		node.position = p
+		node.visible = not hide
+		Factory.face(node, ahead - p, dt)
+		var frame := int(fposmod(float(b["s"]) * 0.9, 1.35) / 1.35 * float(Models.WALK_FRAMES)) % Models.WALK_FRAMES
+		Factory.set_pose(b["rider"], 10 + frame)
+
+
+func _path_at(path: PackedVector3Array, s: float) -> Vector3:
+	var run := 0.0
+	for i in range(1, path.size()):
+		var seg := path[i].distance_to(path[i - 1])
+		if run + seg >= s:
+			return path[i - 1].lerp(path[i], (s - run) / maxf(seg, 0.001))
+		run += seg
+	return path[path.size() - 1]
+
+
+func _spawn_street_life() -> void:
+	var walk_roads := []
+	var bike_roads := []
+	for l: Dictionary in roads.roads():
+		var side := String(l.get("side", "ohne"))
+		if side == "ohne" or not Catalog.has_sides(String(l["kind"])):
+			continue
+		if Spline.length(l["samples"] as PackedVector3Array) < 40.0:
+			continue
+		walk_roads.append(l)
+		if side == "rad":
+			bike_roads.append(l)
+	var quiet := 0.5 if game.night > 0.6 else 1.0
+	var strollers := 0
+	for pd: Dictionary in peds:
+		if bool(pd.get("stroll", false)):
+			strollers += 1
+	if not walk_roads.is_empty() and strollers < int(float(mini(STROLL_MAX, walk_roads.size() * 3)) * quiet):
+		var l: Dictionary = walk_roads[randi() % walk_roads.size()]
+		var w: float = Catalog.LINES[l["kind"]]["width"]
+		var v := Streetscape.width_of(String(l["side"]))
+		var sg := 1 if randf() < 0.5 else -1
+		var path := roads.side_path(l, sg, w * 0.5 + v - 1.25)
+		if path.size() >= 2:
+			if randf() < 0.5:
+				path.reverse()
+			var pd := _ped(path, "")
+			if not pd.is_empty():
+				pd["stroll"] = true
+				pd["speed"] = WALK * randf_range(0.7, 1.0)
+	if not bike_roads.is_empty() and bikes.size() < int(float(mini(BIKE_MAX, bike_roads.size() * 4)) * quiet):
+		var l: Dictionary = bike_roads[randi() % bike_roads.size()]
+		var w: float = Catalog.LINES[l["kind"]]["width"]
+		var sg := 1 if randf() < 0.5 else -1
+		var path := roads.side_path(l, sg, w * 0.5 + 1.8)
+		if path.size() < 2:
+			return
+		if sg < 0:
+			path.reverse()   # Rechtsverkehr auch auf dem Radweg
+		var node := Node3D.new()
+		var cols := [Color(0.15, 0.3, 0.6), Color(0.7, 0.12, 0.1), Color(0.1, 0.1, 0.1), Color(0.85, 0.85, 0.82), Color(0.15, 0.45, 0.25)]
+		var bm := MeshInstance3D.new()
+		bm.mesh = Streetscape.bike_mesh(cols[randi() % cols.size()])
+		node.add_child(bm)
+		var rider := Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
+		rider.position = Vector3(0, 0.06, 0.12)
+		node.add_child(rider)
+		add_child(node)
+		node.position = path[0]
+		bikes.append({"node": node, "rider": rider, "path": path, "s": 0.0, "len": Spline.length(path),
+			"speed": randf_range(4.0, 6.0)})

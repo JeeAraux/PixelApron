@@ -11,12 +11,16 @@ const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
 const GameState = preload("res://scripts/game_state.gd")
+const Streetscape = preload("res://scripts/streetscape.gd")
 
 const LINK := 2.5
 const CONTROLS := ["rechts", "vorfahrt", "ampel"]
 const CONTROL_NAMES := {"rechts": "Rechts vor links", "vorfahrt": "Vorfahrtsstraße", "ampel": "Ampel", "": "Keine Regelung"}
 ## Ampelzyklus in Sekunden: Grün A, Gelb A, Rot alle, Grün B, Gelb B, Rot alle
 const PHASES := [14.0, 3.0, 2.0, 14.0, 3.0, 2.0]
+## Haltebuchten vor Bauteilen: [Bauteil, Aufschrift, Beginn, Ende] in Metern relativ zum Haltepunkt
+## auf der Spur (so wie traffic.gd die Fahrzeuge in die Bucht lenkt)
+const BAY_SPECS := [["haltestelle", "BUS", -17.0, 14.0], ["taxistand", "TAXI", -3.0, 22.0], ["kissandfly", "KISS FLY", -3.0, 22.0]]
 
 var game: GameState
 var nodes: Array = []          # je Knoten: {pos, ends, control, major, radius, lamps, timer}
@@ -27,11 +31,15 @@ var visuals: Node3D
 var mat_asphalt: StandardMaterial3D
 var lamp_mats: Dictionary = {}
 var dirty := true
+var bays: Dictionary = {}      # Instanz-ID der Straße -> [[Seite, s0, s1, Tiefe, Aufschrift]] entlang der zurückgenommenen Mitte
+var verge_dirty := false
+var _bay_sig := ""
 
 
 func setup(g: GameState) -> void:
 	game = g
 	game.network_changed.connect(func() -> void: dirty = true)
+	game.items_changed.connect(_check_bays)
 	visuals = Node3D.new()
 	visuals.name = "Kreuzungen"
 	add_child(visuals)
@@ -68,6 +76,82 @@ static func iid(l: Dictionary) -> int:
 func ensure() -> void:
 	if dirty:
 		rebuild()
+	elif verge_dirty:
+		verge_dirty = false
+		_compute_bays()
+		for l: Dictionary in roads():
+			_trim_mesh(l)
+
+
+## Auch bei Pause sofort neu zeichnen (neue Straße, neue Haltestelle).
+func _process(_dt: float) -> void:
+	if dirty or verge_dirty:
+		ensure()
+
+
+## Haltestellen, Taxistände, Kiss & Fly verändert? Dann die Buchten neu legen.
+func _check_bays() -> void:
+	var sig := ""
+	for spec: Array in BAY_SPECS:
+		for it: Dictionary in game.items_of(String(spec[0])):
+			var p: Vector3 = it["pos"]
+			sig += "%s%d,%d,%d;" % [spec[0], roundi(p.x), roundi(p.z), int(it["rot"])]
+	if sig != _bay_sig:
+		_bay_sig = sig
+		verge_dirty = true
+
+
+## Buchten aus den Haltepunkten der Bauteile (nächste rechte Spur wie in traffic.gd).
+func _compute_bays() -> void:
+	bays = {}
+	for spec: Array in BAY_SPECS:
+		for it: Dictionary in game.items_of(String(spec[0])):
+			var xf := (it["node"] as Node3D).transform
+			var hp: Vector3 = xf * Vector3(0, 0, -4.5)
+			var best: Array = []
+			var bd := 14.0
+			for l: Dictionary in roads():
+				if not Catalog.has_sides(String(l["kind"])):
+					continue
+				if not (l["bounds"] as Rect2).grow(14.0).has_point(Vector2(hp.x, hp.z)):
+					continue
+				for d: int in [1, -1]:
+					var n := lanes(l, d)
+					if n == 0:
+						continue
+					var path := lane_path(l, d, n - 1)
+					var run := 0.0
+					for i in range(path.size()):
+						if i > 0:
+							run += path[i].distance_to(path[i - 1])
+						var dd := Vector2(path[i].x - hp.x, path[i].z - hp.z).length()
+						if dd < bd and run > 3.0 and run < Spline.length(path) - 3.0:
+							bd = dd
+							best = [l, d, n - 1, run]
+			if best.is_empty():
+				continue
+			var l: Dictionary = best[0]
+			var d: int = best[1]
+			var k: int = best[2]
+			var pos: float = best[3]
+			var w: float = Catalog.LINES[l["kind"]]["width"]
+			var n2 := lanes(l, d)
+			var other := lanes(l, -d)
+			var lw := w / float(maxi(n2 + other, 1))
+			var off := lw * (float(k) + 0.5) if other > 0 else lw * (float(k) + 0.5 - float(n2) * 0.5)
+			var shift := 3.2 if spec[0] == "haltestelle" else 3.0
+			var depth := clampf(off + shift + 1.4 - w * 0.5, 1.5, 4.0)
+			var s0 := pos + float(spec[2])
+			var s1 := pos + float(spec[3])
+			var s_len := Spline.length(lane_path(l, d, k))
+			if d < 0:
+				var t := s0
+				s0 = s_len - s1
+				s1 = s_len - t
+			var key := iid(l)
+			if not bays.has(key):
+				bays[key] = []
+			(bays[key] as Array).append([d, s0, s1, depth, String(spec[1])])
 
 
 func rebuild() -> void:
@@ -94,6 +178,9 @@ func rebuild() -> void:
 		line_nodes[iid(l)] = ids
 	for ni in range(nodes.size()):
 		_setup_node(ni)
+	_check_bays()
+	verge_dirty = false
+	_compute_bays()
 	for l: Dictionary in roads():
 		_trim_mesh(l)
 	for ni in range(nodes.size()):
@@ -181,6 +268,16 @@ func _trim_mesh(l: Dictionary) -> void:
 		sm.set_shader_parameter("len", Spline.length(sub))
 		sm.set_shader_parameter("mark", int(Catalog.LINES[l["kind"]]["mark"]))
 		sm.set_shader_parameter("flip", 1 if bool(l.get("flip", false)) else 0)
+	# Gehweg, Radweg, Bäume, Laternen und Haltebuchten
+	var old := mi.get_node_or_null("Seitenraum")
+	if old != null:
+		mi.remove_child(old)
+		old.queue_free()
+	var side := String(l.get("side", "ohne"))
+	var my_bays: Array = bays.get(iid(l), [])
+	if Catalog.has_sides(String(l["kind"])) and (side != "ohne" or not my_bays.is_empty()):
+		var verge := Streetscape.build(sub, w, side, float(l.get("y", 0.06)) - mi.position.y, my_bays)
+		mi.add_child(verge)
 
 
 # ---------------------------------------------------------------- Spuren
@@ -241,6 +338,23 @@ func lane_path(l: Dictionary, d: int, k: int) -> PackedVector3Array:
 		t = t.normalized()
 		out.append(sub[i] + t.cross(Vector3.UP) * off)
 	lane_cache[key] = out
+	return out
+
+
+## Weg im Seitenraum (Gehweg, Radweg): Mitte der Straße zwischen den Kreuzungen, um off Meter zur
+## Seite sg versetzt, auf Gehweghöhe.
+func side_path(l: Dictionary, sg: int, off: float) -> PackedVector3Array:
+	var s: PackedVector3Array = l["samples"]
+	var tr := trims(l)
+	var sub := Spline.sub(s, float(tr[0]) + 1.5, Spline.length(s) - float(tr[1]) - 1.5)
+	var out := PackedVector3Array()
+	for i in range(sub.size()):
+		var t := sub[mini(i + 1, sub.size() - 1)] - sub[maxi(i - 1, 0)]
+		t.y = 0.0
+		if t.length() < 0.001:
+			continue
+		var q := sub[i] + t.normalized().cross(Vector3.UP) * float(sg) * off
+		out.append(Vector3(q.x, Streetscape.TOP + sub[i].y, q.z))
 	return out
 
 
@@ -455,7 +569,7 @@ func _build_node_visuals(ni: int) -> void:
 		var p := _approach_point(ni, e)
 		var out: Vector3 = e["out"]
 		var ang := atan2(out.z, out.x)
-		arms.append([ang, p, out, float(e["w"])])
+		arms.append([ang, p, out, float(e["w"]), String((e["line"] as Dictionary).get("side", "ohne"))])
 	arms.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
 	var ring := []
 	var curbs := []
@@ -487,6 +601,25 @@ func _build_node_visuals(ni: int) -> void:
 			arc.append(ea * (1.0 - u) * (1.0 - u) + ctrl * 2.0 * (1.0 - u) * u + eb * u * u)
 		ring.append_array(arc)
 		curbs.append([ea] + arc + [eb])
+		# Gehwegecke entlang des Bogens
+		var wa := Streetscape.width_of(String(A[4]))
+		var wb := Streetscape.width_of(String(B[4]))
+		if wa > 0.0 or wb > 0.0:
+			var cv: Array = [ea] + arc + [eb]
+			var outs := []
+			for j in range(cv.size()):
+				var tj: Vector3 = (cv[mini(j + 1, cv.size() - 1)] as Vector3) - (cv[maxi(j - 1, 0)] as Vector3)
+				tj.y = 0.0
+				var oj := tj.normalized().cross(Vector3.UP) if tj.length() > 0.001 else Vector3.ZERO
+				var away := (cv[j] as Vector3) - c
+				away.y = 0.0
+				if oj.dot(away) < 0.0:
+					oj = -oj
+				outs.append(oj)
+			var cside := String(A[4]) if String(A[4]) == String(B[4]) else "gehweg"
+			var cm := Streetscape.corner(cv, outs, wa, wb, cside, Streetscape.TOP)
+			if cm != null:
+				visuals.add_child(cm)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var y := 0.07
@@ -530,6 +663,20 @@ func _build_node_visuals(ni: int) -> void:
 		return
 	# Haltelinien, Schilder, Ampeln je Zufahrt
 	var k := Kit.new()
+	# Fußgängerüberwege an Zufahrten mit Gehweg (zwischen Haltelinie und Kreuzungsmitte)
+	for e: Dictionary in ends:
+		if String((e["line"] as Dictionary).get("side", "ohne")) == "ohne":
+			continue
+		var zo: Vector3 = e["out"]
+		var zr := zo.cross(Vector3.UP)
+		var zp := _approach_point(ni, e)
+		var zw: float = e["w"]
+		var x := -zw * 0.5 + 0.35
+		while x + 0.5 <= zw * 0.5 - 0.3:
+			var q0 := zp + zr * (x + 0.25) - zo * 0.5
+			var q1 := zp + zr * (x + 0.25) - zo * 3.0
+			_flat_bar(k, q0, q1, zr, 0.5)
+			x += 1.0
 	var ctrl: String = n["control"]
 	var lamps := []
 	for ei in range(ends.size()):

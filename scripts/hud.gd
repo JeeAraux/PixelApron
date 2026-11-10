@@ -20,6 +20,7 @@ signal floor_step(dir: int)
 signal option_changed(key: String, dir: int)
 signal draw_mode_selected(mode: String)
 signal snap_toggled(on: bool)
+signal side_selected(side: String)
 signal clearance_requested(id: int)
 signal atc_toggled(on: bool)
 signal contract_requested(code: String)
@@ -108,6 +109,9 @@ var line_title: Label
 var step_label: Label
 var step_text := ""
 var snap_button: Button
+var side_box: HBoxContainer
+var side_buttons: Dictionary = {}
+var road_side := "gehweg"
 var modes_shown := false
 var current_tool := ""
 var top_row: HBoxContainer
@@ -1129,6 +1133,23 @@ func _build_line_bar() -> void:
 	snap_button.toggled.connect(func(on: bool) -> void: snap_toggled.emit(on))
 	mode_box.add_child(snap_button)
 	mode_box.add_child(_dock_sep())
+	# Querschnitt der Straße: Fahrbahn, Gehweg, Radweg, Allee
+	side_box = HBoxContainer.new()
+	side_box.add_theme_constant_override("separation", 3)
+	row.add_child(side_box)
+	var sg := ButtonGroup.new()
+	for key: String in Catalog.SIDE_ORDER:
+		var sd: Dictionary = Catalog.SIDES[key]
+		var b := _button(String(sd["short"]), true)
+		b.button_group = sg
+		b.custom_minimum_size = Vector2(0, 34)
+		b.tooltip_text = "%s (+%s/m)\n%s\nV wechselt" % [String(sd["name"]), GameState.fmt_money(int(sd["cost_m"])), String(sd["desc"])]
+		b.add_theme_color_override("font_pressed_color", Color(0.62, 0.9, 1.0))
+		b.pressed.connect(func() -> void: side_selected.emit(key))
+		side_box.add_child(b)
+		side_buttons[key] = b
+	side_box.add_child(_dock_sep())
+	(side_buttons[road_side] as Button).set_pressed_no_signal(true)
 	step_label = _label("", 14, Color(0.62, 0.9, 1.0))
 	step_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(step_label)
@@ -1140,6 +1161,13 @@ func show_draw_modes(mode: String, shown: bool, upgrade: bool = false) -> void:
 	(mode_buttons["ersetzen"] as Control).visible = upgrade
 	for key: String in mode_buttons:
 		(mode_buttons[key] as Button).set_pressed_no_signal(key == mode)
+	_update_line_bar()
+
+
+func show_side(side: String) -> void:
+	road_side = side
+	for key: String in side_buttons:
+		(side_buttons[key] as Button).set_pressed_no_signal(key == side)
 	_update_line_bar()
 
 
@@ -1158,7 +1186,11 @@ func _update_line_bar() -> void:
 	var on := step_text != "" and Catalog.LINES.has(current_tool)
 	line_bar.visible = on
 	if on:
-		line_title.text = Catalog.label(current_tool) + "  ·  " + _price(current_tool)
+		var price := _price(current_tool)
+		if Catalog.has_sides(current_tool):
+			price = "%d €/m" % (int(Catalog.LINES[current_tool]["cost_m"]) + int(Catalog.SIDES[road_side]["cost_m"]))
+		line_title.text = Catalog.label(current_tool) + "  ·  " + price
+		side_box.visible = Catalog.has_sides(current_tool)
 	_queue_layout()
 
 

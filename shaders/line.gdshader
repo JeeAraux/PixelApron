@@ -3,13 +3,14 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 base_color : source_color = vec3(0.2, 0.2, 0.19);
-uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband, 10 Betriebsstraße
+uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband, 10 Betriebsstraße, 11 geführter Rollweg, 12 Seitenraum
 uniform float width = 7.5;
 uniform float len = 100.0;
 uniform int flip = 0;
 uniform int num_a = 9;    // Pistenkennzahl am Anfang (Richtung Anfang → Ende)
 uniform int num_b = 27;   // Kennzahl am Ende
 uniform float core = 0.0; // Schulter: Breite der tragfähigen Fläche in der Mitte
+uniform int side_kind = 1; // Seitenraum (mark 12): 1 Gehweg, 2 Radweg + Gehweg, 3 Allee
 
 // Ziffern 5 × 7, je Zeile 5 Bit (links = höchstes Bit)
 const int DIGITS[70] = {
@@ -221,6 +222,48 @@ void fragment() {
 		vec2 o = g - vec2(hash(cell + 3.1), hash(cell + 7.7));
 		if (hash(cell + 1.3) > 0.93 && dot(o, o) < 0.03) {
 			col *= 0.78;
+		}
+	} else if (mark == 12) {
+		// Seitenraum: UV.x Abstand von der Fahrbahnkante, UV2 = (Abstand Innenkante, Abstand Außenkante)
+		float d = UV.x;
+		float din = UV2.x;
+		float dout = UV2.y;
+		// Gehwegpflaster 30 × 30 cm, im Läuferverband
+		float row = floor(v / 0.3);
+		float cx = fract((d + mod(row, 2.0) * 0.15) / 0.3);
+		col = base_color * (0.94 + 0.1 * hash(vec2(row, floor((d + mod(row, 2.0) * 0.15) / 0.3))));
+		if (fract(v / 0.3) < 0.08 || cx < 0.08) {
+			col *= 0.86;
+		}
+		if (side_kind == 2) {
+			if (d > 0.3 && d < 0.9) {
+				col = vec3(0.68, 0.67, 0.63) * (0.95 + 0.08 * hash(floor(wpos.xz * 3.0)));
+			} else if (d >= 0.9 && d < 2.7) {
+				col = vec3(0.58, 0.25, 0.2) * (0.92 + 0.12 * hash(floor(wpos.xz * 2.0)));
+				if (abs(d - 2.62) < 0.06) {
+					col = vec3(0.88, 0.87, 0.82);
+				}
+				// Fahrradsymbol alle 40 m
+				float sv = mod(v, 40.0) - 20.0;
+				vec2 pp = vec2(d - 1.8, sv);
+				float r1 = abs(length(pp - vec2(0.0, -0.5)) - 0.3);
+				float r2 = abs(length(pp - vec2(0.0, 0.5)) - 0.3);
+				float fr = abs(pp.x) < 0.05 && abs(pp.y) < 0.5 ? 0.0 : 1.0;
+				if (r1 < 0.05 || r2 < 0.05 || fr < 0.5) {
+					col = vec3(0.9, 0.89, 0.85);
+				}
+			}
+		} else if (side_kind == 3) {
+			if (d > 0.3 && d < 2.5) {
+				col = vec3(0.3, 0.42, 0.19) * (0.85 + 0.25 * hash(floor(wpos.xz * 1.7)));
+			}
+		}
+		// Hochbord innen, dunklere Kante außen
+		if (din < 0.3) {
+			col = vec3(0.72, 0.72, 0.69) * (0.96 + 0.06 * hash(floor(vec2(v * 1.0, 3.0))));
+		}
+		if (dout < 0.12) {
+			col *= 0.8;
 		}
 	} else if (mark == 9) {
 		// Gepäckförderband: Gummiband mit Querrillen, das sich bewegt; seitlich Stahlrahmen

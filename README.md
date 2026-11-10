@@ -22,6 +22,11 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.15: Schönere Straßen**
+  - **Querschnitte:** Jede Straße wahlweise als reine Fahrbahn, mit Gehweg, mit Gehweg und rotem Radweg oder als Allee mit Grünstreifen und Bäumen. Hochbord, Pflaster, Straßenleuchten mit Lichtkreisen in der Nacht. Wahl in der Wegebau-Leiste oder mit V, Ersetzen baut bestehende Straßen um.
+  - **Kreuzungen:** Gehwegecken um die Bordsteinbögen und Zebrastreifen an allen Zufahrten mit Gehweg.
+  - **Haltebuchten:** Bushaltestelle, Taxistand und Kiss & Fly rasten am Straßenrand ein; davor entsteht eine Bucht mit Zickzacklinie und Aufschrift, in die Busse und Taxis einfahren.
+  - **Leben:** Spaziergänger auf den Gehwegen, Radfahrer auf den Radwegen. Alleen und Radwege heben die Zufriedenheit etwas.
 - **Update 0.14: Neue Bauleiste und Wegebau wie in Städtebauspielen**
   - **Bauleiste:** Dock mit Kategorie-Bildern, zuletzt benutzten Bauteilen, Blaupause, Zurück und Abriss. Darüber die Ablage mit Abschnitten als Sprungmarken, Suche über alle Bauteile (Strg+F) und einem Streifen, der waagrecht blättert (Mausrad, Pfeile) und nie über den Bildschirmrand ragt. Die Kopfzeile verdichtet sich bei kleinen Fenstern.
   - **Wegebau-Leiste:** Gerade, Kurve, Freihand und Ersetzen, Einrasten an/aus (G) und immer der nächste Schritt im Klartext.
@@ -186,6 +191,7 @@ Beim ersten Öffnen legt Godot den Ordner `.godot/` an. Den musst du nicht siche
 | F5 / F9 | Speichern / Laden |
 | Tab | Zeichenart beim Wegebau wechseln (Gerade, Kurve, Freihand, Ersetzen) |
 | G | Einrasten von Winkel und Länge an/aus (Shift kehrt es kurz um) |
+| V | Querschnitt neuer Straßen wechseln (Fahrbahn, Gehweg, Radweg, Allee) |
 | B | Ablage der Bauleiste ein-/ausklappen |
 | Alt+1 … Alt+7 | Kategorie der Bauleiste öffnen |
 | Strg+F | Bauteil suchen, Enter wählt den ersten Treffer |

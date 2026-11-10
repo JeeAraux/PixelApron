@@ -611,6 +611,35 @@ func run(main: Node) -> void:
 	hud._apply_search("")
 	check(hud.chip_buttons.size() >= 2, "Sprungmarken der Abschnitte")
 
+	# 0.15: Straßenraum mit Gehweg, Radweg, Allee, Haltebuchten und Radfahrern
+	var rd2 = main.roads
+	var m_side: int = game.money
+	var rad_road: Dictionary = game.build_line("strasse", [Vector3(700, 0, 520), Vector3(820, 0, 520)], false, false, "rad")
+	check(String(rad_road.get("side", "")) == "rad", "Straße mit Gehweg und Radweg gebaut")
+	check(m_side - game.money > game.line_cost("strasse", rad_road["samples"]), "Radweg kostet Aufpreis")
+	var stop_s: Array = game.stop_snap("haltestelle", Vector3(760, 0, 531))
+	check(not stop_s.is_empty() and int(stop_s[1]) == 0 and absf((stop_s[0] as Vector3).z - 528.75) < 0.01,
+		"Haltestelle rastet am Straßenrand ein " + str(stop_s))
+	var stop_rec: Dictionary = {}
+	if not stop_s.is_empty():
+		stop_rec = game.build_item("haltestelle", stop_s[0], int(stop_s[1]))
+	rd2.ensure()
+	check((rad_road["node"] as Node).get_node_or_null("Seitenraum") != null, "Seitenraum mit Gehweg und Radweg gezeichnet")
+	check((rd2.bays.get(rd2.iid(rad_road), []) as Array).size() == 1, "Haltebucht vor der Haltestelle")
+	var allee_ok := false
+	for l: Dictionary in game.lines:
+		allee_ok = allee_ok or String(l.get("side", "")) == "allee"
+	check(allee_ok, "Startflughafen hat eine Allee")
+	game.road_side = "ohne"
+	check(game.upgrade_line(rad_road, "strasse", false, "allee") == "" and String(rad_road["side"]) == "allee", "Ersetzen: Radweg zur Allee")
+	game.road_side = "gehweg"
+	for i in range(14):
+		main.traffic.step(0.5)
+	check(main.traffic.bikes.size() > 0, "Radfahrer auf Radwegen (%d)" % main.traffic.bikes.size())
+	if not stop_rec.is_empty():
+		game.remove(stop_rec, 1.0)
+	game.remove(rad_road, 1.0)
+
 	# Rollführungslinie: nur auf Belag
 	var nl0: int = game.lines.size()
 	var grass_why := String(game.check_line("rolllinie", PackedVector3Array([Vector3(300, 0, 500), Vector3(320, 0, 500), Vector3(340, 0, 500)]))["why"])
@@ -798,6 +827,10 @@ func run(main: Node) -> void:
 	b.set_tool("")
 
 	# Speichern und Laden
+	var sides_before := 0
+	for l: Dictionary in game.lines:
+		if String(l.get("side", "")) == "allee":
+			sides_before += 1
 	game.save_game()
 	var nl: int = game.lines.size()
 	var ni: int = game.items.size()
@@ -807,6 +840,11 @@ func run(main: Node) -> void:
 	await get_tree().process_frame
 	game.load_game()
 	check(game.lines.size() == nl and game.items.size() == ni and game.money == nm, "Spielstand wieder geladen")
+	var sides_after := 0
+	for l: Dictionary in game.lines:
+		if String(l.get("side", "")) == "allee":
+			sides_after += 1
+	check(sides_after == sides_before and sides_after > 0, "Querschnitte im Spielstand (%d Alleen)" % sides_after)
 	check((game.extra as Dictionary).has("betrieb") and (game.extra as Dictionary).has("wetter"), "Wetter, Statistik und Verträge im Spielstand")
 	var term2: Dictionary = game.items_of("halle")[0]
 	check(game.walls_of(term2).size() == 5 and game.inside_of(term2).size() > 20 and tb.check() == "", "Terminal mit Wänden und Einrichtung geladen " + tb.check())

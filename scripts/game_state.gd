@@ -65,6 +65,7 @@ var satisfaction := 75.0
 var satisfaction_factors: Array = []
 var extra: Dictionary = {}       # Zustand weiterer Systeme (Wetter, Betrieb, Flotte) für den Spielstand
 var atc_manual := false          # Lotsenmodus: Freigaben gibt der Spieler
+var road_side := "gehweg"        # Querschnitt neuer Straßen (Catalog.SIDES)
 var traffic_demand := 0      # Landungen und Starts in der letzten Spielstunde
 var day_income := 0
 var last_day := 0
@@ -164,7 +165,7 @@ func upkeep_per_day() -> int:
 	for it: Dictionary in items:
 		total += float(item_value(it)) * Catalog.UPKEEP_ITEMS
 	for l: Dictionary in lines:
-		total += float(line_cost(String(l["kind"]), l["samples"])) * Catalog.UPKEEP_LINES
+		total += float(line_cost(String(l["kind"]), l["samples"], String(l.get("side", "")))) * Catalog.UPKEEP_LINES
 	return roundi(total / 10.0) * 10
 
 
@@ -208,20 +209,24 @@ func clock_text() -> String:
 
 # ---------------------------------------------------------------- Wege
 
-func line_cost(kind: String, samples: PackedVector3Array) -> int:
+func line_cost(kind: String, samples: PackedVector3Array, side: String = "") -> int:
 	var cpm: int = Catalog.LINES[kind]["cost_m"]
+	if side != "" and Catalog.has_sides(kind):
+		cpm += int(Catalog.SIDES[side]["cost_m"])
 	return roundi(Spline.length(samples) * float(cpm) / 100.0) * 100
 
 
 ## Baut einen Weg durch die Klickpunkte. Prüft Kollisionen, räumt Bäume und Deko weg und legt
 ## bei Straßen Kreuzungen an (beide Straßen werden am Kreuzungspunkt geteilt).
 ## plain: ohne Prüfung und ohne Kreuzungen (Laden von Spielständen).
-func build_line(kind: String, points: Array, free: bool = false, plain: bool = false) -> Dictionary:
+func build_line(kind: String, points: Array, free: bool = false, plain: bool = false, side: String = "") -> Dictionary:
 	var def: Dictionary = Catalog.LINES[kind]
 	var samples := line_samples(kind, points)
 	if samples.size() < 2:
 		return {}
-	var cost := 0 if free else line_cost(kind, samples)
+	if Catalog.has_sides(kind) and not Catalog.SIDES.has(side):
+		side = road_side
+	var cost := 0 if free else line_cost(kind, samples, side)
 	if cost > money:
 		toast.emit("Nicht genug Geld: " + fmt_money(cost) + " nötig")
 		return {}
@@ -236,6 +241,8 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	if not (check["decor"] as Array).is_empty():
 		items_changed.emit()
 	var rec := _make_line(kind, points, samples, cost)
+	if Catalog.has_sides(kind):
+		rec["side"] = side
 	if Catalog.is_wall(kind):
 		rec["floor"] = view_floor
 		(rec["node"] as Node3D).position.y = float(view_floor) * Catalog.FLOOR_H
@@ -267,6 +274,7 @@ static func line_samples(kind: String, points: Array) -> PackedVector3Array:
 
 ## Spuren-Werkzeug: Straßentyp wechseln (2-spurig, 4-spurig, Einbahn, Einbahn umgekehrt).
 func cycle_road(rec: Dictionary) -> String:
+	var keep_side := String(rec.get("side", ""))
 	var kind: String = rec["kind"]
 	var flip := bool(rec.get("flip", false))
 	var order := [["strasse", false], ["strasse4", false], ["einbahn", false], ["einbahn", true]]
@@ -275,7 +283,7 @@ func cycle_road(rec: Dictionary) -> String:
 		if order[i][0] == kind and bool(order[i][1]) == flip:
 			idx = i
 	var nxt: Array = order[(idx + 1) % order.size()]
-	return upgrade_line(rec, String(nxt[0]), bool(nxt[1]))
+	return upgrade_line(rec, String(nxt[0]), bool(nxt[1]), keep_side)
 
 
 ## Welche Wegarten sich ineinander umbauen lassen (Ersetzen-Werkzeug wie in Städtebauspielen)
@@ -284,20 +292,25 @@ const UPGRADE_FAMILY := {"strasse": "strasse", "strasse4": "strasse", "einbahn":
 
 
 ## Kosten des Umbaus (positiv: zahlen, negativ: Erstattung der halben Differenz).
-func upgrade_cost(rec: Dictionary, new_kind: String) -> int:
+func upgrade_cost(rec: Dictionary, new_kind: String, side: String = "") -> int:
 	var samples: PackedVector3Array = rec["samples"]
-	var diff := line_cost(new_kind, samples) - line_cost(String(rec["kind"]), samples)
+	var old_side := String(rec.get("side", ""))
+	if side == "":
+		side = old_side
+	var diff := line_cost(new_kind, samples, side) - line_cost(String(rec["kind"]), samples, old_side)
 	return diff if diff > 0 else -int(float(-diff) * 0.5)
 
 
 ## Prüft, ob ein Weg zu new_kind umgebaut werden kann ("" = ja, sonst der Grund).
-func can_upgrade(rec: Dictionary, new_kind: String, flip: bool = false) -> String:
+func can_upgrade(rec: Dictionary, new_kind: String, flip: bool = false, side: String = "") -> String:
 	var kind: String = rec.get("kind", "")
 	if not UPGRADE_FAMILY.has(kind) or UPGRADE_FAMILY.get(new_kind, "") != UPGRADE_FAMILY[kind]:
 		return "Lässt sich nicht in " + Catalog.label(new_kind) + " umbauen"
-	if kind == new_kind and flip == bool(rec.get("flip", false)):
+	if side == "" or not Catalog.has_sides(new_kind):
+		side = String(rec.get("side", ""))
+	if kind == new_kind and flip == bool(rec.get("flip", false)) and side == String(rec.get("side", "")):
 		return "Ist schon " + Catalog.label(kind)
-	var extra := upgrade_cost(rec, new_kind)
+	var extra := upgrade_cost(rec, new_kind, side)
 	if extra > money:
 		return "Nicht genug Geld: " + fmt_money(extra) + " nötig"
 	# breiterer Weg darf nicht in Gebäude ragen (Deko wird weggeräumt)
@@ -320,12 +333,14 @@ func can_upgrade(rec: Dictionary, new_kind: String, flip: bool = false) -> Strin
 
 
 ## Baut einen Weg an Ort und Stelle um (andere Spuren, Breite oder Richtung), Verlauf und Anschlüsse bleiben.
-func upgrade_line(rec: Dictionary, new_kind: String, flip: bool = false) -> String:
-	var why := can_upgrade(rec, new_kind, flip)
+func upgrade_line(rec: Dictionary, new_kind: String, flip: bool = false, side: String = "") -> String:
+	var why := can_upgrade(rec, new_kind, flip, side)
 	if why != "":
 		return why
+	if side == "" or not Catalog.has_sides(new_kind):
+		side = String(rec.get("side", ""))
 	var samples: PackedVector3Array = rec["samples"]
-	var extra := upgrade_cost(rec, new_kind)
+	var extra := upgrade_cost(rec, new_kind, side)
 	var w: float = Catalog.LINES[new_kind]["width"]
 	var removed := false
 	for it: Dictionary in items.duplicate():
@@ -347,6 +362,8 @@ func upgrade_line(rec: Dictionary, new_kind: String, flip: bool = false) -> Stri
 	rec["node"] = mesh
 	rec["kind"] = new_kind
 	rec["flip"] = flip
+	if Catalog.has_sides(new_kind):
+		rec["side"] = side
 	rec["bounds"] = Spline.bounds(samples, w * 0.5)
 	rec["cost"] = maxi(0, int(rec["cost"]) + extra)
 	_spend(extra)
@@ -573,6 +590,10 @@ func _split_at(l: Dictionary, p: Vector3) -> Array:
 	_remove_one(l, 0.0)
 	var ra := _make_line(String(l["kind"]), Array(a), a, ca, true)
 	var rb := _make_line(String(l["kind"]), Array(b), b, cost - ca, true)
+	for key: String in ["flip", "side"]:
+		if l.has(key):
+			ra[key] = l[key]
+			rb[key] = l[key]
 	if in_history:
 		history.append([ra, rb])
 	return [ra, rb]
@@ -977,6 +998,58 @@ func runway_dist(p: Vector3) -> float:
 	for r: Array in runway_list():
 		best = minf(best, seg_dist(p, r[0], r[1]))
 	return best
+
+
+## Haltestelle, Taxistand, Kiss & Fly: an den Straßenrand einrasten, Vorderseite zur Straße, so dass
+## die Haltebucht vor dem Bauteil liegt. Nur an geraden, achsparallelen Stellen (Bauteile drehen in
+## 90-Grad-Schritten). Gibt [Mitte, Drehung] oder [] zurück.
+func stop_snap(id: String, p: Vector3) -> Array:
+	var best_d := 26.0
+	var hit: Array = []
+	for l: Dictionary in lines:
+		var kind: String = l["kind"]
+		if not Catalog.has_sides(kind):
+			continue
+		if not (l["bounds"] as Rect2).grow(26.0).has_point(Vector2(p.x, p.z)):
+			continue
+		var smp: PackedVector3Array = l["samples"]
+		for i in range(1, smp.size() - 1):
+			var d := Vector2(smp[i].x - p.x, smp[i].z - p.z).length()
+			if d < best_d:
+				best_d = d
+				hit = [l, i]
+	if hit.is_empty():
+		return []
+	var rec: Dictionary = hit[0]
+	var smp: PackedVector3Array = rec["samples"]
+	var i: int = hit[1]
+	var t := smp[mini(i + 2, smp.size() - 1)] - smp[maxi(i - 2, 0)]
+	t.y = 0.0
+	if t.length() < 0.01:
+		return []
+	t = t.normalized()
+	var nrm := t.cross(Vector3.UP)
+	var q := smp[i] + t * (p - smp[i]).dot(t)
+	if (p - q).dot(nrm) < 0.0:
+		nrm = -nrm
+	var best_r := -1
+	var best_dot := 0.94
+	for r in range(4):
+		var front := Basis(Vector3.UP, float(r) * PI * 0.5) * Vector3(0, 0, -1)
+		var dt := front.dot(-nrm)
+		if dt > best_dot:
+			best_dot = dt
+			best_r = r
+	if best_r < 0:
+		return []
+	var depth: float = (Catalog.ITEMS[id]["size"] as Vector2).y
+	var hw: float = float(Catalog.LINES[rec["kind"]]["width"]) * 0.5
+	var c := q + nrm * (hw + 3.0 + depth * 0.5)
+	# entlang der Straße auf ganze Meter, quer exakt an der Bucht
+	var axis := Vector3(1, 0, 0) if absf(t.x) > absf(t.z) else Vector3(0, 0, 1)
+	var along := snappedf(c.dot(axis), 1.0)
+	c = Vector3(along if axis.x > 0.5 else c.x, 0.0, along if axis.z > 0.5 else c.z)
+	return [c, best_r]
 
 
 ## Befeuerung und Markierungen einrasten. Rückgabe [Lage, Drehung] oder leer.
@@ -1723,7 +1796,9 @@ func details(rec: Dictionary) -> String:
 	if rec.get("type", "") == "line":
 		var kind: String = rec["kind"]
 		out.append(String(Catalog.LINES[kind].get("desc", "")))
-		var cost := line_cost(kind, rec["samples"])
+		if Catalog.SIDES.has(String(rec.get("side", ""))):
+			out.append("Querschnitt: " + String(Catalog.SIDES[rec["side"]]["name"]))
+		var cost := line_cost(kind, rec["samples"], String(rec.get("side", "")))
 		out.append("Unterhalt %s pro Tag" % fmt_money(roundi(float(cost) * Catalog.UPKEEP_LINES)))
 		return "\n".join(out)
 	var def: Dictionary = Catalog.ITEMS[rec["id"]]
@@ -1857,7 +1932,7 @@ func save_game(quiet: bool = false) -> void:
 			for p: Vector3 in (l["samples"] as PackedVector3Array):
 				pts.append([snappedf(p.x, 0.01), snappedf(p.z, 0.01)])
 		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"], "raw": bool(l.get("raw", false)), "flip": bool(l.get("flip", false)),
-			"floor": floor_of(l)})
+			"floor": floor_of(l), "side": String(l.get("side", ""))})
 	var its: Array = data["items"]
 	for it: Dictionary in items:
 		var p: Vector3 = it["pos"]
@@ -1912,6 +1987,10 @@ func load_game() -> bool:
 		if not rec.is_empty():
 			rec["cost"] = int(l.get("cost", 0))
 			rec["flip"] = bool(l.get("flip", false))
+			if Catalog.has_sides(String(l["kind"])):
+				# vor 0.15 gespeicherte Straßen bekommen Gehwege
+				var sd := String(l.get("side", "gehweg"))
+				rec["side"] = sd if Catalog.SIDES.has(sd) else "gehweg"
 	for it: Dictionary in data.get("items", []):
 		if not Catalog.ITEMS.has(String(it["id"])) or String(it["id"]) == "halle":
 			continue
@@ -1988,8 +2067,8 @@ func load_starter() -> void:
 	build_line("betriebsstrasse", [V.call(-176, -35), V.call(110, -35), V.call(121, -27), V.call(128, -12), V.call(140, -7),
 		V.call(204, -7), V.call(216, -12), V.call(223, -27), V.call(234, -35), V.call(372, -35)], true)
 	build_line("strasse", [V.call(430, 60), V.call(260, 60), V.call(170, 40), V.call(60, 30),
-		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true)
-	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true)
+		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true, false, "allee")
+	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true, false, "rad")
 	build_line("gehweg", [V.call(-36, 20), V.call(36, 20)], true)
 	_starter_terminal(V)
 	# Kontaktstände mit Brücke vor den Gates, Außenpositionen mit Bus und Treppe an den Enden
@@ -2010,10 +2089,10 @@ func load_starter() -> void:
 	build_item("trafo", V.call(60, 50), 0, true)
 	build_item("trafo", V.call(205, 14), 0, true)
 	build_item("trafo", V.call(-70, 55), 0, true)
-	build_item("wasseranschluss", V.call(40, 22), 0, true)
+	build_item("wasseranschluss", V.call(40, 18), 0, true)
 	build_item("wasseranschluss", V.call(219, -5), 0, true)
 	build_item("heizzentrale", V.call(92, 60), 0, true)
-	build_item("haltestelle", V.call(-48, 22), 2, true)
+	build_item("haltestelle", V.call(-48, 21.25), 2, true)
 	# Luftseite: Gerätehalle im Westen, Catering, Tanklager, Busgarage und Feuerwache im Osten
 	build_item("vorfelddepot", V.call(-160, -10), 2, true)
 	build_item("catering", V.call(240, -12), 2, true)
@@ -2057,7 +2136,7 @@ func load_starter() -> void:
 	build_line("stromkabel", [V.call(-74, 51), V.call(-120, 34), V.call(-160, 12), V.call(-160, -1)], true)
 	# Wasser: Anschluss 1 fürs Terminal und die Heizzentrale, Anschluss 2 für Catering, Feuerwache, Personal
 	build_line("wasserrohr", [V.call(40, 20), V.call(40, 15)], true)
-	build_line("wasserrohr", [V.call(42, 23), V.call(82, 57)], true)
+	build_line("wasserrohr", [V.call(42, 19), V.call(82, 57)], true)
 	build_line("wasserrohr", [V.call(220, -4), V.call(226, -4)], true)
 	build_line("wasserrohr", [V.call(254, -20), V.call(258, -26), V.call(338, -26), V.call(338, -43)], true)
 	build_line("wasserrohr", [V.call(219, -3), V.call(200, 6), V.call(163, 10)], true)

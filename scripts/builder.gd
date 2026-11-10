@@ -6,6 +6,7 @@ signal info(title: String, body: String, state: int)  # state: 0 neutral, 1 gut,
 signal tool_changed(id: String)
 signal inspect_requested(p: Vector3)
 signal mode_changed(mode: String, shown: bool, upgrade: bool)
+signal side_changed(side: String)
 signal steps(text: String)   # kurzer Arbeitsschritt für die Wegebau-Leiste ("1 Startpunkt klicken")
 signal hint(text: String)   # kurzer Text am Mauszeiger (Länge, Winkel, Radius)
 
@@ -13,6 +14,7 @@ const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
 const Factory = preload("res://scripts/factory.gd")
 const GameState = preload("res://scripts/game_state.gd")
+const Streetscape = preload("res://scripts/streetscape.gd")
 
 const SNAP_DIST := 7.0
 ## An welche Wege ein neuer Weg einrastet
@@ -372,7 +374,7 @@ func _commit(pts: Array) -> void:
 	var attached := snap_kind != ""
 	var last: Vector3 = pts[pts.size() - 1]
 	var prev: Vector3 = pts[pts.size() - 2]
-	game.build_line(tool, pts)
+	game.build_line(tool, pts, false, false, game.road_side if Catalog.has_sides(tool) else "")
 	points.clear()
 	start_tan = Vector3.ZERO
 	ref_dir = Vector3.ZERO
@@ -466,7 +468,7 @@ func finish() -> void:
 		return
 	var st := _line_state(points)
 	if bool(st["ok"]):
-		game.build_line(tool, points)
+		game.build_line(tool, points, false, false, game.road_side if Catalog.has_sides(tool) else "")
 		points.clear()
 	else:
 		game.toast.emit(String(st["why"]))
@@ -493,6 +495,13 @@ func _snap(p: Vector3) -> Vector3:
 		if not ms.is_empty():
 			rot = int(ms[1])
 			return ms[0]
+	if is_item_tool() and (Catalog.ITEMS[tool].get("access", {}) as Dictionary).has("halt"):
+		var ss: Array = game.stop_snap(tool, p)
+		if not ss.is_empty():
+			rot = int(ss[1])
+			snap_kind = "bucht"
+			return ss[0]
+		snap_kind = ""
 	if is_item_tool() and bool(Catalog.ITEMS[tool].get("bridge", false)):
 		var bs: Array = game.bridge_snap(p)
 		if not bs.is_empty():
@@ -688,7 +697,7 @@ func _line_state(pts: Array) -> Dictionary:
 	var minr := INF if straight else Spline.min_radius(samples)
 	var need: float = def["min_r"]
 	var min_len: float = def["min_len"]
-	var cost := game.line_cost(tool, samples)
+	var cost := game.line_cost(tool, samples, game.road_side if Catalog.has_sides(tool) else "")
 	var why := ""
 	var check := {"why": "", "decor": [], "junctions": []}
 	if Catalog.is_wall(tool) and pts.size() >= 2:
@@ -753,6 +762,9 @@ func _refresh_line() -> void:
 	var def: Dictionary = Catalog.LINES[tool]
 	var title := String(def["name"]) + " bauen"
 	var per_m := GameState.fmt_money(int(def["cost_m"])) + " pro Meter"
+	if Catalog.has_sides(tool):
+		var sd: Dictionary = Catalog.SIDES[game.road_side]
+		per_m = "%s · %s pro Meter (V wechselt den Querschnitt)" % [String(sd["name"]), GameState.fmt_money(int(def["cost_m"]) + int(sd["cost_m"]))]
 	var modes := uses_modes() and draw_mode != "frei"
 	for i in range(points.size()):
 		_marker(points[i], 1.6 if i == 0 else 1.1, mat_mark)
@@ -802,6 +814,8 @@ func _refresh_line() -> void:
 	else:
 		# Vorschau im echten Aussehen des Weges, getönt
 		var look := Factory.make_line(tool, flat, y + 0.12)
+		if Catalog.has_sides(tool) and game.road_side != "ohne":
+			look.add_child(Streetscape.build(flat, w, game.road_side, y + 0.12, [], 0.12))
 		_tint(look, mat_tint_ok if ok else mat_tint_bad)
 		marker_root.add_child(look)
 	var length: float = st["length"]
@@ -968,6 +982,8 @@ func _refresh_item() -> void:
 	reason = game.can_place(tool, hover, rot)
 	_paint(ghost, mat_ok if reason == "" else mat_bad)
 	var body := head + _supply_text(def) + "\nR dreht um 90 Grad"
+	if snap_kind == "bucht":
+		body += "\nRastet am Straßenrand ein, davor entsteht eine Haltebucht"
 	if reason != "":
 		body += "\n" + reason
 	info.emit(title, body, 1 if reason == "" else 2)
@@ -998,7 +1014,30 @@ func _replace_target() -> Dictionary:
 
 
 func _replace_flip(rec: Dictionary) -> bool:
-	return tool == "einbahn" and String(rec["kind"]) == "einbahn" and not bool(rec.get("flip", false))
+	if tool != "einbahn" or String(rec["kind"]) != "einbahn":
+		return false
+	if String(rec.get("side", "")) != game.road_side:
+		return bool(rec.get("flip", false))   # nur Querschnitt ändern
+	return not bool(rec.get("flip", false))
+
+
+func _replace_side() -> String:
+	return game.road_side if Catalog.has_sides(tool) else ""
+
+
+## Querschnitt neuer Straßen wählen (Fahrbahn, Gehweg, Radweg, Allee).
+func set_side(side: String) -> void:
+	if not Catalog.SIDES.has(side):
+		return
+	game.road_side = side
+	side_changed.emit(side)
+	_refresh()
+
+
+func cycle_side() -> void:
+	if Catalog.has_sides(tool):
+		var order: Array = Catalog.SIDE_ORDER
+		set_side(order[(order.find(game.road_side) + 1) % order.size()])
 
 
 func _refresh_replace() -> void:
@@ -1011,11 +1050,11 @@ func _refresh_replace() -> void:
 		hint.emit("")
 		return
 	var flip := _replace_flip(rec)
-	var why := game.can_upgrade(rec, tool, flip)
+	var why := game.can_upgrade(rec, tool, flip, _replace_side())
 	target = rec
 	_highlight(rec, mat_upgrade if why == "" else mat_overlay)
-	var cost := game.upgrade_cost(rec, tool)
-	var what := "%s → %s" % [_road_name(rec), Catalog.label(tool) + (" (umgedreht)" if flip else "")]
+	var cost := game.upgrade_cost(rec, tool, _replace_side())
+	var what := "%s → %s" % [_road_name(rec), Catalog.label(tool) + (" (umgedreht)" if flip else "") + _side_suffix(_replace_side())]
 	var price := ("Kosten " + GameState.fmt_money(cost)) if cost > 0 else ("Erstattung " + GameState.fmt_money(-cost) if cost < 0 else "kostenlos")
 	if why == "":
 		info.emit(title, what + "\n" + price + "\nKlick: umbauen", 1)
@@ -1035,7 +1074,7 @@ func _click_replace() -> void:
 	_clear_highlight()
 	var flip := _replace_flip(rec)
 	var before := _road_name(rec)
-	var why := game.upgrade_line(rec, tool, flip)
+	var why := game.upgrade_line(rec, tool, flip, _replace_side())
 	game.toast.emit(why if why != "" else "%s → %s" % [before, _road_name(rec)])
 	_refresh()
 
@@ -1045,7 +1084,13 @@ func _road_name(rec: Dictionary) -> String:
 	var name := Catalog.label(kind)
 	if kind == "einbahn" and bool(rec.get("flip", false)):
 		name += " (umgedreht)"
-	return name
+	return name + _side_suffix(String(rec.get("side", "")))
+
+
+static func _side_suffix(side: String) -> String:
+	if not Catalog.SIDES.has(side) or side == "gehweg":
+		return ""
+	return ", " + String(Catalog.SIDES[side]["short"])
 
 
 func _supply_text(def: Dictionary) -> String:
@@ -1196,7 +1241,7 @@ func _capture(r: Rect2) -> Dictionary:
 			var pts := []
 			for q: Vector3 in l["points"]:
 				pts.append(q - origin)
-			lines.append({"kind": l["kind"], "points": pts})
+			lines.append({"kind": l["kind"], "points": pts, "side": String(l.get("side", ""))})
 	var items := []
 	for it: Dictionary in game.items:
 		var id := String(it["id"])
@@ -1250,7 +1295,7 @@ func _paste(at: Vector3) -> void:
 		var pts := []
 		for q: Vector3 in l["points"]:
 			pts.append(q + at)
-		if not game.build_line(String(l["kind"]), pts).is_empty():
+		if not game.build_line(String(l["kind"]), pts, false, false, String(l.get("side", ""))).is_empty():
 			ok += 1
 	for e: Dictionary in clip["items"]:
 		total += 1
