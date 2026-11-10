@@ -880,7 +880,7 @@ func _kind_v(k: String) -> float:
 			return V_RWY
 		"rollweg", "rollweg_breit":
 			return V_TAXI
-		"vorfeld":
+		"vorfeld", "rolllinie":
 			return V_APRON
 	return V_LEAD
 

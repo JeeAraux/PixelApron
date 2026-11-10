@@ -86,6 +86,7 @@ func run(main: Node) -> void:
 		if d0.length() > 0.1 and d1.length() > 0.1 and d0.normalized().dot(d1.normalized()) < -0.01:
 			sharp += 1
 	check(tpath.size() > 3 and sharp == 0, "Flugzeuge wenden ohne Kurven über 90° (%d Knoten)" % tpath.size())
+	check(not gr.guided.is_empty(), "Gezeichnete Rollführungslinie führt die Flugzeuge auf dem Vorfeld")
 	var belts: Array = []
 	var gates_t: Array = []
 	for it: Dictionary in game.inside_of(term):
@@ -130,6 +131,9 @@ func run(main: Node) -> void:
 	var belt_run := false
 	var flaps_seen := false
 	var walk_frames := false
+	var line_used := false
+	var riders_seen := false
+	var car_gap := INF
 	# feste Zufallsfolge: derselbe Verlauf lokal und im Build (Stände werden zufällig vergeben)
 	seed(20261110)
 	for i in range(12000):
@@ -145,6 +149,17 @@ func run(main: Node) -> void:
 		for pl: Dictionary in fl.planes:
 			flaps_seen = flaps_seen or float(pl.get("flaps", 0.0)) > 0.5
 		if i % 50 == 0:
+			for pl: Dictionary in fl.planes:
+				for n: int in pl.get("path", []):
+					if n >= 0 and n < fl.graph.kind.size() and fl.graph.kind[n] == "rolllinie":
+						line_used = true
+			for vv: Dictionary in main.ops.vehicles:
+				riders_seen = riders_seen or not (vv.get("riders", []) as Array).is_empty()
+				var cps: Array = vv.get("car_pos", [])
+				if cps.size() >= 2:
+					for ci in range(1, cps.size()):
+						car_gap = minf(car_gap, (cps[ci] as Vector3).distance_to(cps[ci - 1]))
+					car_gap = minf(car_gap, (cps[0] as Vector3).distance_to(vv["pos"]))
 			for per: Dictionary in tb.people:
 				walk_frames = walk_frames or int((per["node"] as Node3D).get_meta("pose", 0)) >= 10
 		for per: Dictionary in tb.people:
@@ -195,6 +210,9 @@ func run(main: Node) -> void:
 	check(min_gap > 20.0, "Rollende Flugzeuge halten Abstand (Reservierung)")
 	check(door_seen, "Rolltore gehen auf, wenn ein Fahrzeug aus der Garage fährt")
 	check(bus_door, "Vorfeldbusse öffnen ihre Türen")
+	check(riders_seen, "Passagiere steigen in den Bus ein und fahren darin mit")
+	check(car_gap < INF and car_gap > 3.0, "Gepäckwagen hängen mit Abstand hintereinander (%.1f m)" % car_gap)
+	check(line_used, "Flugzeuge rollen auf der gezeichneten Linie")
 	check(sort_seen and belt_run, "Gepäckzüge fahren zur Sortierung, die Koffer laufen aufs Band")
 	check(flaps_seen, "Landeklappen fahren aus")
 	check(walk_frames, "Passagiere gehen mit acht Gangphasen")
@@ -444,6 +462,21 @@ func run(main: Node) -> void:
 	var road_s: PackedVector3Array = game.lines[game.lines.size() - 1]["samples"]
 	var road_mid: Vector3 = road_s[road_s.size() / 2]
 	check(game.money < money0, "Baukosten abgezogen (%d €)" % (money0 - game.money))
+
+	# Rollführungslinie: nur auf Belag
+	var nl0: int = game.lines.size()
+	var grass_why := String(game.check_line("rolllinie", PackedVector3Array([Vector3(300, 0, 500), Vector3(320, 0, 500), Vector3(340, 0, 500)]))["why"])
+	check(grass_why != "", "Rolllinie auf der Wiese abgelehnt: " + grass_why)
+	b.set_tool("rolllinie")
+	b.set_mode("gerade")
+	b.on_click(Vector3(320, 0, 300))
+	b.on_click(Vector3(400, 0, 300))
+	b.finish()
+	check(game.lines.size() == nl0 + 1 and game.lines[game.lines.size() - 1]["kind"] == "rolllinie", "Rolllinie auf dem Vorfeld gezeichnet")
+	b.set_tool("")
+	if game.lines.size() == nl0 + 1:
+		game.remove(game.lines[game.lines.size() - 1], 1.0)
+	b.set_mode("frei")
 
 	# Rollweg mit zu enger Kurve wird abgelehnt
 	b.set_tool("rollweg")

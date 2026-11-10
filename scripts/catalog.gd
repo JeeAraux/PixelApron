@@ -26,6 +26,9 @@ const LINES := {
 	"vorfeld": {"name": "Vorfeld", "width": 60.0, "cost_m": 2600, "min_r": 25.0, "min_len": 10.0,
 		"color": Color(0.47, 0.46, 0.42), "mark": 5, "y": 0.03, "straight": false, "utility": "",
 		"desc": "Betonfläche für Stände und Abfertigung, 60 m breit."},
+	"rolllinie": {"name": "Rollführungslinie", "short": "Rolllinie", "width": 0.45, "cost_m": 25, "min_r": 18.0, "min_len": 4.0,
+		"color": Color(0.93, 0.74, 0.16), "mark": 0, "y": 0.1, "straight": false, "utility": "", "marking": true,
+		"desc": "Gelbe Mittellinie zum Selberzeichnen auf Vorfeld und Rollwegen. Gibt es auf einer Fläche gezeichnete Linien, rollen die Flugzeuge dort nur noch auf ihnen. Linien verbinden sich, wo sie sich berühren oder kreuzen; Stände schließen an die nächste Linie hinter ihnen an."},
 	"betriebsstrasse": {"name": "Betriebsstraße", "width": 7.0, "cost_m": 300, "min_r": 8.0, "min_len": 5.0,
 		"color": Color(0.26, 0.255, 0.24), "mark": 10, "y": 0.035, "straight": false, "utility": "",
 		"desc": "Fahrweg für Bodenfahrzeuge auf der Luftseite: verbindet Gerätehalle, Tanklager, Busgarage, Catering und Feuerwache mit dem Vorfeld. Ohne Anschluss erscheinen die Fahrzeuge erst am Stand und die Abfertigung dauert länger."},
@@ -269,7 +272,7 @@ const ITEMS := {
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "piste"]],
+	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste"]],
 	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "betriebsstrasse", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude"]],
 	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "rolltreppe", "aufzug", "treppe", "personalraum"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
@@ -358,6 +361,11 @@ static func is_zone(id: String) -> bool:
 
 
 ## Markierung oder Befeuerung, die an Piste oder Rollweg einrastet (Lage statt Drehung bestimmt das Aussehen).
+## Bodenmarkierung als Weg (Rollführungslinie): liegt auf anderen Belägen, kreuzt alles.
+static func is_marking(kind: String) -> bool:
+	return LINES.has(kind) and bool(LINES[kind].get("marking", false))
+
+
 static func is_marker(id: String) -> bool:
 	return ITEMS.has(id) and ITEMS[id].has("marker")
 

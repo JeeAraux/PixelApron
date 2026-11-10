@@ -184,7 +184,15 @@ func _move(v: Dictionary, sim: float) -> void:
 		var seg := pts[mini(i + 1, pts.size() - 1)] - pts[maxi(i, 0)]
 		seg.y = 0.0
 		if seg.length() > 0.05:
-			v["heading"] = -seg.normalized() if bool(v["rev"]) else seg.normalized()
+			var want_h := -seg.normalized() if bool(v["rev"]) else seg.normalized()
+			if v.has("cars"):
+				# Schlepper mit Anhängern dreht nicht auf der Stelle (sonst knicken die Wagen ein)
+				var cur_h: Vector3 = v["heading"]
+				var ang := cur_h.signed_angle_to(want_h, Vector3.UP)
+				var mx := 1.4 * sim
+				v["heading"] = cur_h.rotated(Vector3.UP, clampf(ang, -mx, mx)).normalized()
+			else:
+				v["heading"] = want_h
 	v["pos"] = pos
 	v["i"] = i
 	if i >= pts.size() - 1:
@@ -696,20 +704,56 @@ func pax_at_door(flight: int) -> void:
 		return
 	var door: Vector3 = j["door"]
 	var bd: Dictionary = bus
-	var entry := _bus_door(bd, door)
-	_walker(flight, PackedVector3Array([door, door.lerp(entry, 0.5) + Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)), entry]), "in_dep_bus")
+	var ent := _bus_entry(bd, door)
+	var entry: Vector3 = ent[0]
+	_walker(flight, PackedVector3Array([door, door.lerp(entry, 0.5) + Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)), entry, ent[1]]), "in_dep_bus")
 	j["dep_out"] = int(j["dep_out"]) + 1
 
 
 ## Eine der drei Bustüren auf der Seite, die ref zugewandt ist.
 func _bus_door(bus: Dictionary, ref: Vector3) -> Vector3:
+	return _bus_entry(bus, ref)[0]
+
+
+## Tür eines Busses auf der Seite zu ref: [Punkt vor der Tür, Punkt im Bus hinter der Tür].
+func _bus_entry(bus: Dictionary, ref: Vector3) -> Array:
 	var h: Vector3 = bus["heading"]
 	var side := h.cross(Vector3.UP).normalized()
 	var z: float = [-4.6, 0.0, 4.6][randi() % 3]
 	var c: Vector3 = (bus["pos"] as Vector3) - h * z
-	var a := c + side * 1.9
-	var b := c - side * 1.9
-	return a if a.distance_to(ref) < b.distance_to(ref) else b
+	var sgn := 1.0 if (c + side * 1.9).distance_to(ref) < (c - side * 1.9).distance_to(ref) else -1.0
+	return [c + side * sgn * 2.1, c + side * sgn * 0.6 + Vector3(0, 0.35, 0)]
+
+
+## Eingestiegen: die Figur fährt im Bus mit (steht hinter den Scheiben) statt zu verschwinden.
+func _ride(wk: Dictionary, bus: Variant) -> bool:
+	if not (bus is Dictionary) or not is_instance_valid((bus as Dictionary).get("node")):
+		return false
+	var bd: Dictionary = bus
+	var body := (bd["node"] as Node3D).get_node_or_null("Body") as Node3D
+	if body == null:
+		return false
+	var node: Node3D = wk["node"]
+	if node.get_parent() != null:
+		node.get_parent().remove_child(node)
+	body.add_child(node)
+	var riders: Array = bd.get("riders", [])
+	var k := riders.size()
+	node.position = Vector3(-0.9 + float(k % 3) * 0.9 + randf_range(-0.15, 0.15), 0.35, -5.6 + float((k / 3) % 12) * 0.95)
+	node.rotation = Vector3(0, randf() * TAU, 0)
+	Factory.set_pose(node, 0)
+	riders.append(node)
+	bd["riders"] = riders
+	walkers.erase(wk)
+	return true
+
+
+## Fahrgäste steigen aus: Mitfahrer verschwinden, dafür laufen sie durch die Türen hinaus.
+func _clear_riders(bus: Dictionary) -> void:
+	for r: Variant in bus.get("riders", []):
+		if is_instance_valid(r):
+			(r as Node).queue_free()
+	bus["riders"] = []
 
 
 var sorting: Array = []          # Gepäckzüge an der Sortierung
@@ -734,12 +778,16 @@ func step(sim: float) -> void:
 			"in_bus":
 				if not j.is_empty():
 					j["in_bus"] = int(j["in_bus"]) + 1
+					if _ride(wk, j.get("bus")):
+						continue
 			"to_terminal":
 				if terminal != null and not j.is_empty():
 					terminal.bus_arrivals(j["flight"], 1)
 			"in_dep_bus":
 				if not j.is_empty():
 					j["dep_in"] = int(j["dep_in"]) + 1
+					if _ride(wk, j.get("dep_bus")):
+						continue
 			"on_board":
 				if not j.is_empty():
 					j["on_board"] = int(j.get("on_board", 0)) + 1
@@ -832,8 +880,9 @@ func _step_job(j: Dictionary, sim: float) -> void:
 			for i in range(n):
 				var v: Dictionary = stairs[i % stairs.size()]
 				var foot: Vector3 = v["foot"]
-				var entry := _bus_door(bus, foot)
-				_walker(int(p["id"]), PackedVector3Array([v["door"], v["top"], v["bottom"], foot, foot.lerp(entry, 0.5), entry]), "in_bus")
+				var ent := _bus_entry(bus, foot)
+				var entry: Vector3 = ent[0]
+				_walker(int(p["id"]), PackedVector3Array([v["door"], v["top"], v["bottom"], foot, foot.lerp(entry, 0.5), entry, ent[1]]), "in_bus")
 				walkers[walkers.size() - 1]["delay"] = float(i / stairs.size()) * 1.1 + 0.4
 		if bool(j.get("unloading", false)) and int(j["in_bus"]) >= n and not bool(j.get("bus_back", false)):
 			j["bus_back"] = true
@@ -842,9 +891,11 @@ func _step_job(j: Dictionary, sim: float) -> void:
 		if bool(j.get("bus_back", false)) and not bool(bus["moving"]) and not bool(j.get("bus_empty", false)):
 			j["bus_empty"] = true
 			var door2: Vector3 = j["door"]
+			_clear_riders(bus)
 			for i in range(n):
-				var exitp := _bus_door(bus, door2)
-				_walker(int(p["id"]), PackedVector3Array([exitp, exitp.lerp(door2, 0.5) + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5)), door2]), "to_terminal")
+				var ex := _bus_entry(bus, door2)
+				var exitp: Vector3 = ex[0]
+				_walker(int(p["id"]), PackedVector3Array([ex[1], exitp, exitp.lerp(door2, 0.5) + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5)), door2]), "to_terminal")
 				walkers[walkers.size() - 1]["delay"] = float(i) * 0.35
 			var away: Vector3 = (bus["pos"] as Vector3) + (bus["heading"] as Vector3) * 45.0
 			bus["after"] = away
@@ -884,11 +935,13 @@ func _step_job(j: Dictionary, sim: float) -> void:
 			var cnt: int = j["dep_in"]
 			j["dep_total"] = cnt
 			j["on_board"] = 0
+			_clear_riders(db)
 			for i in range(cnt):
 				var v: Dictionary = stairs[i % stairs.size()]
 				var foot: Vector3 = v["foot"]
-				var exitp := _bus_door(db, foot)
-				_walker(int(p["id"]), PackedVector3Array([exitp, exitp.lerp(foot, 0.5), foot, v["bottom"], v["top"], v["door"]]), "on_board")
+				var ex := _bus_entry(db, foot)
+				var exitp: Vector3 = ex[0]
+				_walker(int(p["id"]), PackedVector3Array([ex[1], exitp, exitp.lerp(foot, 0.5), foot, v["bottom"], v["top"], v["door"]]), "on_board")
 				walkers[walkers.size() - 1]["delay"] = float(i) * 0.4
 		if bool(j.get("dep_unload", false)) and int(j.get("on_board", 0)) >= int(j.get("dep_total", 0)):
 			j["boarded"] = true
@@ -975,8 +1028,10 @@ func _make_svc(plan: Dictionary) -> Array:
 		svc.append({"kind": "zug", "in": t_in, "out": t_out, "home": hf, "full": full, "hold": 0,
 			"way": [Vector3(lane, 0, zf - 16.0)], "spot": Vector3(lane, 0, zf - 1.0), "face": Vector3(0, 0, 1),
 			"exit": [Vector3(out_lane, 0, zf + 6.0), Vector3(out_lane, 0, za - 4.0), exitp]})
+		# hinterer Zug: in derselben Spur nur, wenn seine Wagen den vorderen Zug nicht berühren
+		var lane1 := lane if za + 1.0 - 14.5 > zf - 0.5 else out_lane
 		svc.append({"kind": "zug", "in": t_in + 0.02, "out": t_out, "home": hf, "full": full, "hold": 1,
-			"way": [Vector3(out_lane, 0, zf - 16.0), Vector3(out_lane, 0, za - 13.0)], "spot": Vector3(lane, 0, za + 1.0),
+			"way": [Vector3(out_lane, 0, zf - 16.0), Vector3(out_lane, 0, za - 13.0)], "spot": Vector3(lane1, 0, za + 1.0),
 			"face": Vector3(0, 0, 1), "exit": [exitp]})
 	# Catering an Tür R2 hinten rechts
 	var r2: float = plan["r2"]
@@ -997,6 +1052,14 @@ func _make_svc(plan: Dictionary) -> Array:
 		if (sv["kind"] == "tank" or sv["kind"] == "catering") and not has_garage(String(sv["kind"])):
 			continue
 		out.append(sv)
+	# Wartepunkte am Rand des Stands auffächern: jedes Fahrzeug bekommt seinen eigenen Platz
+	var seen := {}
+	for sv: Dictionary in out:
+		var hk := str(sv["home"])
+		var n := int(seen.get(hk, 0))
+		seen[hk] = n + 1
+		if n > 0:
+			sv["home"] = (sv["home"] as Vector3) + Vector3(4.5 * float(n), 0, 0)
 	return out
 
 
@@ -1324,27 +1387,44 @@ func _trail_add(v: Dictionary) -> void:
 
 ## Wagen stehen auf der Spur des Schleppers im Abstand von 3,3 m.
 func _place_cars(v: Dictionary) -> void:
-	var tr: PackedVector3Array = v["trail"]
 	var cars: Array = v["cars"]
 	var cps := []
 	var pos: Vector3 = v["pos"]
 	var h: Vector3 = v["heading"]
-	var anchor := pos + h * 1.5   # Kupplung hinten am Schlepper (Front -Z = heading)
-	anchor = pos - h * 1.6
+	h.y = 0.0
+	h = h.normalized() if h.length() > 0.01 else Vector3(0, 0, -1)
+	var hitch := pos - h * 1.6   # Kupplung hinten am Schlepper (Front -Z = heading)
+	# Jeder Wagen hängt mit der Deichsel an der Kupplung davor und wird nachgezogen (Schleppkurve):
+	# das Heck bewegt sich nur in Richtung der Kupplung, so schneiden die Wagen Kurven wie echte
+	# Anhänger und schieben sich nie ineinander. Deichsel 1,1 m, Kasten 2,6 m, Kupplung 0,2 m.
+	if not v.has("car_rear") or (v["car_rear"] as Array).size() != cars.size():
+		var init := []
+		var tr: PackedVector3Array = v.get("trail", PackedVector3Array())
+		for c in range(cars.size()):
+			init.append(hitch - h * (3.7 + 3.9 * float(c)))
+		v["car_rear"] = init
+	var rears: Array = v["car_rear"]
+	var ahead := h   # Richtung des Fahrzeugs davor (Knickwinkel der Deichsel höchstens 65°)
 	for c in range(cars.size()):
-		var want := 3.3 * float(c) + 1.3
-		var front := _trail_back(tr, anchor, want)
-		var rear := _trail_back(tr, anchor, want + 2.6)
-		var node: Node3D = cars[c]
-		if not is_instance_valid(node):
-			continue
-		var mid := (front + rear) * 0.5
-		node.position = Vector3(mid.x, 0.0, mid.z)
-		var d := front - rear
+		var rear: Vector3 = rears[c]
+		var d := hitch - rear
 		d.y = 0.0
-		if d.length() > 0.05:
-			node.basis = Basis.looking_at(d.normalized(), Vector3.UP)
-		cps.append(mid)
+		if d.length() < 0.01:
+			d = ahead
+		var dir := d.normalized()
+		var bend := ahead.signed_angle_to(dir, Vector3.UP)
+		if absf(bend) > deg_to_rad(65.0):
+			dir = ahead.rotated(Vector3.UP, signf(bend) * deg_to_rad(65.0)).normalized()
+		ahead = dir
+		rear = hitch - dir * 3.7
+		rears[c] = rear
+		var center := hitch - dir * (1.1 + 1.3)
+		var node: Node3D = cars[c]
+		if is_instance_valid(node):
+			node.position = Vector3(center.x, 0.0, center.z)
+			node.basis = Basis.looking_at(dir, Vector3.UP)
+		cps.append(center)
+		hitch = rear - dir * 0.2
 	v["car_pos"] = cps
 
 
@@ -1552,6 +1632,10 @@ func _garage(kind: String, near: Vector3) -> Array:
 				continue
 			for sp: Array in _spots(rec):
 				var d := (sp[1] as Vector3).distance_to(near) + randf() * 6.0
+				# steht schon ein Fahrzeug hinter diesem Tor, lieber ein anderes nehmen
+				for o: Dictionary in vehicles:
+					if (o["pos"] as Vector3).distance_to(sp[0]) < 6.0:
+						d += 400.0
 				if d < bd:
 					bd = d
 					best = [rec, sp[0], sp[1], sp[2], sp[3]]
@@ -1624,6 +1708,13 @@ func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
 	if kind == "zug" and bool(sv.get("full", false)):
 		var sp := sort_spot(g[2])
 		if not sp.is_empty():
+			# Ladeplatz neben den Abladeplätzen, je Zug ein eigener
+			var loading := 0
+			for o: Dictionary in vehicles:
+				if o.has("load_then"):
+					loading += 1
+			var lp: Vector3 = (sp[0] as Vector3) + (sp[1] as Vector3).cross(Vector3.UP) * (8.0 + 6.0 * float(loading % 3))
+			sp = [lp, sp[1], sp[2]]
 			var r1 := net.route(g[2], sp[0], 60.0)
 			var r2 := net.route(sp[0], home, 60.0)
 			if r1.size() >= 2 and r2.size() >= 2:
@@ -1707,18 +1798,27 @@ func _to_sorting(v: Dictionary) -> bool:
 	var sp := sort_spot(v["pos"])
 	if sp.is_empty():
 		return false
-	var road := net.route(v["pos"], sp[0], 60.0)
+	# jeder Zug bekommt einen eigenen Platz vor der Sortierung (nebeneinander)
+	var side := (sp[1] as Vector3).cross(Vector3.UP)
+	var used := {}
+	for o: Dictionary in sorting:
+		used[int(o.get("sort_slot", -1))] = true
+	var slot := 0
+	while used.has(slot) and slot < 5:
+		slot += 1
+	var target: Vector3 = (sp[0] as Vector3) + side * (float(slot) * 6.0 - 12.0)
+	var road := net.route(v["pos"], target, 60.0)
 	if road.size() < 2:
 		return false
 	var way := []
 	for q: Vector3 in road:
 		way.append(q)
-	var side := (sp[1] as Vector3).cross(Vector3.UP)
 	v["rev"] = false
 	v["vmax"] = GSE_V * 1.3
 	v.erase("then")
 	_go(v, _route(way, v["heading"], side), GSE_V * 1.3)
 	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2])}
+	v["sort_slot"] = slot
 	sorting.append(v)
 	return true
 

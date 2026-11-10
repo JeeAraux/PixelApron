@@ -118,6 +118,14 @@ func rebuild() -> void:
 	halos = []
 	night_lights = []
 	graph.build(game.lines, game.stands(), game.items_of("rollhalt"))
+	# Rollwege mit selbst gezeichneten Linien verlieren ihre automatische Mittellinie
+	for li in range(game.lines.size()):
+		var gl: Dictionary = game.lines[li]
+		if not (gl["kind"] in ["rollweg", "rollweg_breit"]) or not is_instance_valid(gl.get("node")):
+			continue
+		var gm := (gl["node"] as GeometryInstance3D).material_override as ShaderMaterial
+		if gm != null:
+			gm.set_shader_parameter("mark", 11 if graph.guided.has(li) else 2)
 	names = taxi_names(game.lines)
 	_index_pavement()
 	var k := Kit.new()       # Masten, Gehäuse, Schilder

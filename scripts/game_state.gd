@@ -365,6 +365,13 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 			return out
 	if Catalog.utility_of(kind) != "" or Catalog.is_wall(kind) or samples.size() < 2:
 		return out
+	if Catalog.is_marking(kind):
+		# Rollführungslinie: nur auf Vorfeld oder Rollweg, darf alles kreuzen
+		for i in range(0, samples.size(), 2):
+			if not _on_pavement(samples[i]):
+				out["why"] = "Rolllinien nur auf Vorfeld und Rollwegen zeichnen"
+				return out
+		return out
 	var w: float = Catalog.LINES[kind]["width"]
 	var bounds := Spline.bounds(samples, w * 0.5)
 	var step := 2 if w > 20.0 else 1
@@ -401,6 +408,8 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 			for dz in range(-reach, reach + 1):
 				for e: Vector2i in _grid.get(c + Vector2i(dx, dz), []):
 					var l: Dictionary = lines[e.x]
+					if Catalog.is_marking(String(l["kind"])):
+						continue
 					var j: int = e.y
 					var w2: float = Catalog.LINES[l["kind"]]["width"]
 					var p: Vector3 = (l["samples"] as PackedVector3Array)[j]
@@ -724,6 +733,14 @@ func footprint(id: String, pos: Vector3, rot: int) -> Rect2:
 	return Rect2(pos.x - s.x * 0.5, pos.z - s.y * 0.5, s.x, s.y)
 
 
+## Liegt p auf Vorfeld oder Rollweg (für Rollführungslinien)?
+func _on_pavement(p: Vector3) -> bool:
+	for k: String in ["vorfeld", "rollweg", "rollweg_breit"]:
+		if _on_kind(p, k):
+			return true
+	return false
+
+
 func _on_kind(p: Vector3, kind: String) -> bool:
 	var w: float = Catalog.LINES[kind]["width"]
 	for l: Dictionary in lines:
@@ -788,7 +805,7 @@ static func hall_rect(a: Vector3, b: Vector3) -> Rect2:
 func _rect_on_lines(r: Rect2, on: String) -> String:
 	for l: Dictionary in lines:
 		var kind: String = l["kind"]
-		if kind == "gehweg" or kind == on or Catalog.utility_of(kind) != "" or Catalog.is_wall(kind):
+		if kind == "gehweg" or kind == on or Catalog.utility_of(kind) != "" or Catalog.is_wall(kind) or Catalog.is_marking(kind):
 			continue
 		var b: Rect2 = l["bounds"]
 		if not b.intersects(r):
@@ -1891,6 +1908,8 @@ func load_starter() -> void:
 	build_line("vorfeld", [V.call(-155, -56), V.call(215, -56)], true)
 	build_line("vorfeld", [V.call(-155, -92), V.call(215, -92)], true)
 	build_line("vorfeld", [V.call(118, -24), V.call(215, -24)], true)
+	# Rollführungslinie über das Vorfeld (Rollgasse hinter den Ständen)
+	build_line("rolllinie", [V.call(-150, -93), V.call(210, -93)], true)
 	build_line("rollweg_breit", [V.call(-1280, -272), V.call(-1278, -200), V.call(-1266, -140), V.call(-1230, -110),
 		V.call(-1180, -104), V.call(1180, -104), V.call(1230, -110), V.call(1266, -140), V.call(1278, -200),
 		V.call(1280, -272)], true)

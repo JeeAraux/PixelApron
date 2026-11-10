@@ -22,6 +22,11 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.11: Rolllinien selbst zeichnen, runde Modelle**
+  - **Rollführungslinien:** Die gelben Linien auf Vorfeld und Rollwegen zeichnest du selbst (Wege → Rollführungslinie). Wo Linien liegen, rollen die Flugzeuge nur noch auf ihnen; Stände schließen an die nächste Linie an.
+  - **Außenpositionen:** Passagiere gehen die Treppe hinunter, steigen durch die geöffneten Türen in den Bus und fahren darin mit; am Terminal steigen sie wieder aus (beim Abflug umgekehrt).
+  - **Gepäckwagen** hängen sauber mit Deichsel hintereinander statt ineinander.
+  - **Runder statt kantig:** Fahrzeuge mit abgerundeten Kanten, Karosserien von Autos und Bussen weich geformt, Flügel und Leitwerke mit runder Vorderkante.
 - **Update 0.10: Anschlüsse, Befeuerung, Gepäcksortierung und flüssigere Bewegung**
   - **Brücken und Eingänge sitzen richtig:** Fluggastbrücken rasten bündig an der Fassade auf Höhe des Gates ein, ein gläserner Treppenturm mit Aufzug führt hinunter zum Gate. Eingänge und Brücken öffnen die Außenwand mit Laibung und Sturz.
   - **Stände mit Zufahrt:** Die Betriebsstraße läuft am Kopf der Stände entlang, die Infoanzeige zeigt, ob ein Stand angeschlossen ist. Straßen dürfen nicht mehr über Stände gehen, Fahrzeuge weichen stehenden Fahrzeugen aus statt durch sie hindurchzufahren.

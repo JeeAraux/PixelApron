@@ -34,6 +34,7 @@ var holds: Array = []                # Rollhalteorte: {"pos", "dir" (zur Piste),
 
 
 var line_hold: Dictionary = {}       # Linienindex -> Abstand des selbst gesetzten Rollhalteorts zur Pistenmitte
+var guided: Dictionary = {}          # Linienindex von Vorfeld/Rollweg mit gezeichneten Rollführungslinien
 
 
 func build(lines: Array, stands: Array, markers: Array = []) -> void:
@@ -58,11 +59,12 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 	for li in range(lines.size()):
 		var l: Dictionary = lines[li]
 		var k: String = l["kind"]
-		if not (k in ["piste", "rollweg", "rollweg_breit", "vorfeld"]):
+		if not (k in ["piste", "rollweg", "rollweg_breit", "vorfeld", "rolllinie"]):
 			continue
 		var s: PackedVector3Array = l["samples"]
 		var ids := []
 		var i := 0
+		var step := STEP if k != "rolllinie" else 3
 		while true:
 			var id := _add(s[i], k, li)
 			if not ids.is_empty():
@@ -70,12 +72,42 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 			ids.append(id)
 			if i == s.size() - 1:
 				break
-			i = mini(i + STEP, s.size() - 1)
+			i = mini(i + step, s.size() - 1)
 		line_nodes[li] = ids
 		if k == "rollweg" or k == "rollweg_breit":
 			if not _custom_holds(s, li, markers):
 				_find_holds(s, li)
+		elif k == "rolllinie":
+			_custom_holds(s, li, markers)
 	_cross_links()
+	# Flächen mit gezeichneten Rollführungslinien: dort nur auf den Linien rollen
+	guided = {}
+	var line_pts := []
+	for i in range(pos.size()):
+		if kind[i] == "rolllinie":
+			line_pts.append(pos[i])
+	# jeder Linienpunkt gehört zu der Fläche, auf deren Mitte er relativ am nächsten liegt
+	for q: Vector3 in line_pts:
+		var best_li := -1
+		var best_f := 1.0
+		for li in range(lines.size()):
+			var lk: String = lines[li]["kind"]
+			if not (lk in ["vorfeld", "rollweg", "rollweg_breit"]):
+				continue
+			var half := _width(lk) * 0.5
+			var b: Rect2 = lines[li].get("bounds", Rect2())
+			if b.size != Vector2.ZERO and not b.grow(2.0).has_point(Vector2(q.x, q.z)):
+				continue
+			var sm: PackedVector3Array = lines[li]["samples"]
+			var dmin := INF
+			for j in range(0, sm.size(), 2):
+				dmin = minf(dmin, Vector2(sm[j].x - q.x, sm[j].z - q.z).length())
+			var f := dmin / half
+			if f < best_f:
+				best_f = f
+				best_li = li
+		if best_li >= 0:
+			guided[best_li] = true
 	# Standflächen sperren
 	in_stand.resize(pos.size())
 	in_stand.fill(0)
@@ -123,20 +155,25 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 func _lead_targets(lp: Vector3, fwd: Vector3) -> Array:
 	var roll := []
 	var apron := []
+	var marked := []
 	for i in range(pos.size()):
-		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld"]):
+		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld", "rolllinie"]):
 			continue
 		var d := pos[i].distance_to(lp)
 		if d > 42.0 or (pos[i] - lp).dot(fwd) > 4.0:
 			continue
-		if kind[i] == "rollweg" or kind[i] == "rollweg_breit":
+		if kind[i] == "rolllinie":
+			marked.append([d, i])
+		elif guided.has(line_idx[i]):
+			continue
+		elif kind[i] == "rollweg" or kind[i] == "rollweg_breit":
 			roll.append([d, i])
 		else:
 			apron.append([d, i])
-	var list := roll if not roll.is_empty() else apron
+	var list := marked if not marked.is_empty() else (roll if not roll.is_empty() else apron)
 	list.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
 	var out := []
-	for f: Array in list.slice(0, 2 if list == roll else 3):
+	for f: Array in list.slice(0, 3 if list == apron else 2):
 		out.append(f[1])
 	return out
 
@@ -305,7 +342,9 @@ func nearest_taxi(p: Vector3, max_d: float) -> int:
 	var best := -1
 	var bd := max_d
 	for i in range(pos.size()):
-		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld"]):
+		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld", "rolllinie"]):
+			continue
+		if guided.has(line_idx[i]):
 			continue
 		var d := pos[i].distance_to(p)
 		if d < bd:
@@ -371,6 +410,9 @@ func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, min_dot: flo
 				continue
 			if not allow.has(nb):
 				if kind[nb] == "stand" or kind[nb] == "zufahrt" or in_stand[nb] == 1 or blocked.has(nb):
+					continue
+				# auf Flächen mit gezeichneten Linien nur entlang der Linien
+				if line_idx[nb] >= 0 and guided.has(line_idx[nb]):
 					continue
 			if wide and kind[nb] == "rollweg":
 				continue

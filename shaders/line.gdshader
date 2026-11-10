@@ -126,6 +126,11 @@ void fragment() {
 		if (zv < 3.0 && ax < half_w - 0.5 && mod(v + x, 1.2) < 0.6 && ax > half_w - 1.4) {
 			col = white * 0.9;
 		}
+	} else if (mark == 11) {
+		// Rollweg mit selbst gezeichneten Führungslinien: nur die Randlinien
+		if (abs(ax - (half_w - 0.3)) < 0.15 || abs(ax - (half_w - 0.8)) < 0.15) {
+			col = yellow * 0.95;
+		}
 	} else if (mark == 2) {
 		// ICAO: durchgehende gelbe Mittellinie, doppelte gelbe Randlinie am Rand der tragfähigen Fläche
 		if (ax < 0.18) {

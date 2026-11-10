@@ -122,7 +122,22 @@ func quad_n(a: Vector3, b: Vector3, c: Vector3, d: Vector3, na: Vector3, nb: Vec
 
 
 ## Achsenparalleler Quader von a nach b, optional gedreht/verschoben über xf.
+## Fasen: > 0 rundet alle Quader dieses Baukastens leicht ab (Fahrzeuge, Flugzeuge), damit keine
+## harten Kanten entstehen. Der Radius ist höchstens ein Viertel der kleinsten Kantenlänge.
+var bevel := 0.0
+
+
 func box(a: Vector3, b: Vector3, col: Color, xf: Transform3D = Transform3D.IDENTITY) -> void:
+	if bevel > 0.0 and xf == Transform3D.IDENTITY:
+		var sz := (b - a).abs()
+		var r := minf(bevel, minf(sz.x, minf(sz.y, sz.z)) * 0.25)
+		if r > 0.008:
+			soft_box(a, b, r, col, 8, 4)
+			return
+	_box_raw(a, b, col, xf)
+
+
+func _box_raw(a: Vector3, b: Vector3, col: Color, xf: Transform3D = Transform3D.IDENTITY) -> void:
 	var lo := Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
 	var hi := Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
 	var p := []
@@ -160,6 +175,71 @@ func rounded_box(a: Vector3, b: Vector3, r: float, col: Color, steps: int = 3, t
 			n0, n1, n1, n0, col, Vector3(center.x, (lo.y + hi.y) * 0.5, center.z))
 		tri(Vector3(center.x, hi.y, center.z), Vector3(p0.x, hi.y, p0.y), Vector3(p1.x, hi.y, p1.y), tc, Vector3(center.x, lo.y, center.z))
 		tri(Vector3(center.x, lo.y, center.z), Vector3(p0.x, lo.y, p0.y), Vector3(p1.x, lo.y, p1.y), col, Vector3(center.x, hi.y, center.z))
+
+
+## Quader mit rundum gerundeten Kanten und Ecken (Radius r), weich schattiert: für Karosserien,
+## Kabinen und Gehäuse, damit keine harten Kanten entstehen. Aus einer Kugel, deren Punkte auf den
+## inneren Quader geklemmt und um r nach außen versetzt werden.
+func soft_box(a: Vector3, b: Vector3, r: float, col: Color, seg: int = 16, rings: int = 8) -> void:
+	var lo := Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
+	var hi := Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+	var size := hi - lo
+	r = minf(r, minf(size.x, minf(size.y, size.z)) * 0.5 - 0.001)
+	if r <= 0.005:
+		_box_raw(a, b, col)
+		return
+	var ilo := lo + Vector3(r, r, r)
+	var ihi := hi - Vector3(r, r, r)
+	var c := (lo + hi) * 0.5
+	seg = maxi(4, seg / 4 * 4)
+	rings = maxi(2, rings / 2 * 2)
+	# Spalten (Winkel um die Hochachse) und Zeilen (Winkel von oben): an den Achsen doppelt, je mit
+	# einem kleinen Versatz, der entscheidet, auf welcher Seite des inneren Quaders der Punkt sitzt
+	var cols := [[0.0, 0.001]]
+	for kk in range(1, seg):
+		var th := TAU * float(kk) / float(seg)
+		if kk % (seg / 4) == 0:
+			cols.append([th, -0.001])
+			cols.append([th, 0.001])
+		else:
+			cols.append([th, 0.0])
+	cols.append([TAU, -0.001])
+	cols.append([TAU, 0.001])
+	var rws := []
+	for i in range(rings + 1):
+		var phi := PI * float(i) / float(rings)
+		if i == rings / 2:
+			rws.append([phi, -0.001])
+			rws.append([phi, 0.001])
+		else:
+			rws.append([phi, 0.0])
+	var grid := []
+	for rw: Array in rws:
+		var row := []
+		for cl: Array in cols:
+			var phi: float = rw[0]
+			var th: float = cl[0]
+			var d := Vector3(sin(phi) * cos(th), cos(phi), sin(phi) * sin(th))
+			var ph2 := phi + float(rw[1])
+			var th2 := th + float(cl[1])
+			var dh := Vector3(cos(th2), cos(ph2), sin(th2))
+			var base := Vector3(ihi.x if dh.x > 0.0 else ilo.x, ihi.y if dh.y > 0.0 else ilo.y, ihi.z if dh.z > 0.0 else ilo.z)
+			row.append([base + d * r, d])
+		grid.append(row)
+	for i in range(grid.size() - 1):
+		for kk in range(cols.size() - 1):
+			var p0: Array = grid[i][kk]
+			var p1: Array = grid[i][kk + 1]
+			var p2: Array = grid[i + 1][kk + 1]
+			var p3: Array = grid[i + 1][kk]
+			if (p0[0] as Vector3).distance_squared_to(p1[0]) < 1e-10 and (p3[0] as Vector3).distance_squared_to(p2[0]) < 1e-10:
+				continue
+			quad_n(p0[0], p1[0], p2[0], p3[0], p0[1], p1[1], p2[1], p3[1], col, c)
+	# Deckel oben und unten (die Pole der Kugel spannen keine Fläche auf)
+	for sy: float in [1.0, -1.0]:
+		var y := hi.y if sy > 0.0 else lo.y
+		var n := Vector3(0, sy, 0)
+		quad_n(Vector3(ilo.x, y, ilo.z), Vector3(ihi.x, y, ilo.z), Vector3(ihi.x, y, ihi.z), Vector3(ilo.x, y, ihi.z), n, n, n, n, col, c)
 
 
 ## Zylinder oder Kegelstumpf von a nach b, Mantel weich schattiert.

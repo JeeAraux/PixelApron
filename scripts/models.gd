@@ -314,9 +314,11 @@ static func _on_skin(k: Kit, s: Dictionary, side: float, z: float, dy: float, ha
 ## dir = Richtung der Dicke (Flügel: oben, Leitwerk: seitlich).
 static func _surface(k: Kit, a: Vector3, ca: float, b: Vector3, cb: float, dir: Vector3, tha: float, thb: float, col: Color, side_col: Variant = null) -> void:
 	var z := Vector3(0, 0, 1)
-	var bottom := [a - dir * tha * 0.5, a + z * ca - dir * tha * 0.2, b + z * cb - dir * thb * 0.2, b - dir * thb * 0.5]
-	var top := [a + dir * tha * 0.5, a + z * ca + dir * tha * 0.2, b + z * cb + dir * thb * 0.2, b + dir * thb * 0.5]
+	var bottom := [a - dir * tha * 0.5, a + z * ca - dir * tha * 0.12, b + z * cb - dir * thb * 0.12, b - dir * thb * 0.5]
+	var top := [a + dir * tha * 0.5, a + z * ca + dir * tha * 0.12, b + z * cb + dir * thb * 0.12, b + dir * thb * 0.5]
 	k.prism(bottom, top, col, side_col)
+	# gerundete Vorderkante (Nase des Profils) statt einer scharfen Kante
+	k.cyl(a + z * tha * 0.02, b + z * thb * 0.02, tha * 0.5, thb * 0.5, col, 10, true)
 
 
 static func _wing_at(s: Dictionary, ax: float) -> Array:
@@ -668,12 +670,12 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 		# Schuh: flach, vorne gerundet
 		var fz := ankle.z
 		var fy := ankle.y - 0.035
-		k.rounded_box(Vector3(side * 0.095 - 0.055, fy - 0.04, fz - 0.17), Vector3(side * 0.095 + 0.055, fy + 0.045, fz + 0.06), 0.04, shoes, 2)
+		k.soft_box(Vector3(side * 0.095 - 0.055, fy - 0.04, fz - 0.17), Vector3(side * 0.095 + 0.055, fy + 0.045, fz + 0.06), 0.04, shoes, 12, 6)
 	if skirt:
 		k.cyl(Vector3(0, hip_y + 0.08, 0), Vector3(0, hip_y - 0.38, 0), 0.17, 0.25, pants, 10)
 	# Becken, Gürtel, Oberkörper (Taille schmal, Brust und Schultern breiter)
-	k.rounded_box(Vector3(-0.17, hip_y - 0.07, -0.1), Vector3(0.17, hip_y + 0.08, 0.1), 0.06, pants, 2)
-	k.rounded_box(Vector3(-0.168, hip_y + 0.05, -0.102), Vector3(0.168, hip_y + 0.09, 0.102), 0.06, Color(0.12, 0.1, 0.08), 2)
+	k.soft_box(Vector3(-0.17, hip_y - 0.07, -0.1), Vector3(0.17, hip_y + 0.08, 0.1), 0.06, pants, 12, 6)
+	k.soft_box(Vector3(-0.168, hip_y + 0.05, -0.102), Vector3(0.168, hip_y + 0.09, 0.102), 0.06, Color(0.12, 0.1, 0.08), 12, 6)
 	var sy := hip_y + 0.5
 	k.prism([Vector3(-0.16, hip_y + 0.06, -0.095), Vector3(0.16, hip_y + 0.06, -0.095), Vector3(0.16, hip_y + 0.06, 0.095), Vector3(-0.16, hip_y + 0.06, 0.095)],
 		[Vector3(-0.2, sy - 0.12, -0.12), Vector3(0.2, sy - 0.12, -0.12), Vector3(0.2, sy - 0.12, 0.11), Vector3(-0.2, sy - 0.12, 0.11)], top)
@@ -713,9 +715,9 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 	# Tasche
 	match int(look["bag"]):
 		1:
-			k.rounded_box(Vector3(-0.15, sy - 0.42, 0.1), Vector3(0.15, sy - 0.06, 0.27), 0.05, JACKETS[(int(str(hair.to_html()).hash()) & 0x7fffffff) % JACKETS.size()], 2)
+			k.soft_box(Vector3(-0.15, sy - 0.42, 0.1), Vector3(0.15, sy - 0.06, 0.27), 0.05, JACKETS[(int(str(hair.to_html()).hash()) & 0x7fffffff) % JACKETS.size()], 12, 6)
 		2:
-			k.rounded_box(Vector3(0.24, hip_y - 0.12, -0.08), Vector3(0.31, hip_y + 0.1, 0.12), 0.03, Color(0.35, 0.2, 0.12), 2)
+			k.soft_box(Vector3(0.24, hip_y - 0.12, -0.08), Vector3(0.31, hip_y + 0.1, 0.12), 0.03, Color(0.35, 0.2, 0.12), 12, 6)
 			k.box(Vector3(0.265, hip_y + 0.1, 0.0), Vector3(0.285, sy - 0.05, 0.03), Color(0.3, 0.18, 0.1))
 	var mesh := k.commit()
 	_cache[key] = mesh
@@ -729,7 +731,7 @@ static func _hair(k: Kit, style: int, hair: Color, hc: Vector3, cap_col: Color) 
 			k.sphere(hc + Vector3(0, 0.035, 0.018), 0.108, hair, 10, 6, Vector3(0.96, 0.85, 0.98))
 		1:
 			k.sphere(hc + Vector3(0, 0.03, 0.02), 0.112, hair, 10, 6, Vector3(0.98, 0.9, 1.0))
-			k.rounded_box(Vector3(-0.1, hc.y - 0.2, 0.0), Vector3(0.1, hc.y + 0.04, 0.115), 0.05, hair, 2)
+			k.soft_box(Vector3(-0.1, hc.y - 0.2, 0.0), Vector3(0.1, hc.y + 0.04, 0.115), 0.05, hair, 12, 6)
 		2:
 			k.sphere(hc + Vector3(0, 0.035, 0.018), 0.108, hair, 10, 6, Vector3(0.96, 0.85, 0.98))
 			k.cyl(hc + Vector3(0, 0.02, 0.1), hc + Vector3(0, -0.16, 0.15), 0.035, 0.02, hair, 6)
@@ -753,6 +755,7 @@ static func city_bus_mesh(livery: Color) -> ArrayMesh:
 	if _cache.has(key):
 		return _cache[key]
 	var k := Kit.new()
+	k.bevel = 0.05
 	var body := Color(0.94, 0.94, 0.92)
 	var hl := 6.0
 	var hw := 1.27
@@ -760,9 +763,9 @@ static func city_bus_mesh(livery: Color) -> ArrayMesh:
 		for wz: float in [-3.6, 2.4]:
 			k.cyl(Vector3(sx * (hw - 0.3), 0.5, wz), Vector3(sx * (hw - 0.02), 0.5, wz), 0.5, 0.5, TYRE, 12, true, METAL)
 	k.box(Vector3(-hw + 0.05, 0.25, -hl), Vector3(hw - 0.05, 0.45, hl), Color(0.12, 0.12, 0.13))
-	k.rounded_box(Vector3(-hw, 0.4, -hl), Vector3(hw, 1.15, hl), 0.08, livery, 2)
+	k.soft_box(Vector3(-hw, 0.4, -hl), Vector3(hw, 1.15, hl), 0.08, livery, 12, 6)
 	k.box(Vector3(-hw - 0.01, 1.15, -hl + 0.2), Vector3(hw + 0.01, 2.65, hl - 0.2), GLASS)
-	k.rounded_box(Vector3(-hw, 2.65, -hl), Vector3(hw, 3.05, hl), 0.12, body, 2)
+	k.soft_box(Vector3(-hw, 2.65, -hl), Vector3(hw, 3.05, hl), 0.12, body, 12, 6)
 	# Fensterholme
 	for z in range(-5, 6, 2):
 		for sx: float in [-1.0, 1.0]:
@@ -783,7 +786,7 @@ static func city_bus_mesh(livery: Color) -> ArrayMesh:
 		k.box(Vector3(sx * (hw + 0.02), 2.2, -hl + 0.2), Vector3(sx * (hw + 0.2), 2.4, -hl + 0.35), Color(0.1, 0.1, 0.1))
 	# Heck mit Motorklappe, Dach mit Klimaanlage
 	k.box(Vector3(-hw + 0.1, 0.5, hl - 0.02), Vector3(hw - 0.1, 2.5, hl + 0.03), livery.darkened(0.15))
-	k.rounded_box(Vector3(-0.9, 3.05, -1.5), Vector3(0.9, 3.4, 1.5), 0.1, Color(0.8, 0.81, 0.82), 2)
+	k.soft_box(Vector3(-0.9, 3.05, -1.5), Vector3(0.9, 3.4, 1.5), 0.1, Color(0.8, 0.81, 0.82), 12, 6)
 	k.box(Vector3(-0.8, 3.05, 3.5), Vector3(0.8, 3.3, 5.6), Color(0.8, 0.81, 0.82))
 	var mesh := k.commit()
 	_cache[key] = mesh
@@ -808,6 +811,7 @@ static func car_mesh(kind: String, color: Color) -> ArrayMesh:
 	var hood: float = d[3]
 	var trunk: float = d[4]
 	var k := Kit.new()
+	k.bevel = 0.05
 	var body := color
 	if kind == "taxi":
 		body = Color(0.94, 0.89, 0.68)
@@ -821,7 +825,7 @@ static func car_mesh(kind: String, color: Color) -> ArrayMesh:
 			k.cyl(Vector3(sx * (hw - 0.26), wr, wz), Vector3(sx * (hw + 0.01), wr, wz), wr, wr, TYRE, 12, true, METAL)
 	# Unterbau und Karosserie bis zur Gürtellinie
 	k.box(Vector3(-hw + 0.04, 0.22, -hl), Vector3(hw - 0.04, 0.42, hl), Color(0.12, 0.12, 0.13))
-	k.box(Vector3(-hw, 0.36, -hl + 0.05), Vector3(hw, belt, hl - 0.05), body)
+	k.soft_box(Vector3(-hw, 0.36, -hl + 0.02), Vector3(hw, belt + 0.04, hl - 0.02), 0.14, body, 12, 6)
 	k.box(Vector3(-hw + 0.05, 0.4, -hl - 0.02), Vector3(hw - 0.05, 0.55, hl + 0.02), Color(0.16, 0.16, 0.17))
 	# Lichter
 	for sx: float in [-1.0, 1.0]:
@@ -838,7 +842,7 @@ static func car_mesh(kind: String, color: Color) -> ArrayMesh:
 	var top := [Vector3(-hw + inset + 0.06, H - 0.06, zf + slope_f), Vector3(hw - inset - 0.06, H - 0.06, zf + slope_f),
 		Vector3(hw - inset - 0.06, H - 0.06, zb - slope_b), Vector3(-hw + inset + 0.06, H - 0.06, zb - slope_b)]
 	k.prism(bottom, top, GLASS)
-	k.box(Vector3(-hw + inset + 0.04, H - 0.07, zf + slope_f - 0.05), Vector3(hw - inset - 0.04, H, zb - slope_b + 0.05), body)
+	k.soft_box(Vector3(-hw + inset + 0.03, H - 0.08, zf + slope_f - 0.06), Vector3(hw - inset - 0.03, H + 0.01, zb - slope_b + 0.06), 0.04, body, 12, 4)
 	# Säulen in Wagenfarbe
 	var mid := (zf + zb) * 0.5 + 0.1
 	for sx: float in [-1.0, 1.0]:
@@ -861,7 +865,7 @@ static func bag_mesh() -> ArrayMesh:
 		return _cache["bag"]
 	var k := Kit.new()
 	var w := Color(1, 1, 1)
-	k.rounded_box(Vector3(-0.22, 0.04, -0.34), Vector3(0.22, 0.5, 0.34), 0.05, w, 2)
+	k.soft_box(Vector3(-0.22, 0.04, -0.34), Vector3(0.22, 0.5, 0.34), 0.05, w, 12, 6)
 	k.box(Vector3(-0.23, 0.2, -0.35), Vector3(0.23, 0.24, 0.35), w.darkened(0.25))
 	k.box(Vector3(-0.08, 0.5, -0.03), Vector3(0.08, 0.55, 0.03), Color(0.12, 0.12, 0.12))
 	for sx: float in [-0.16, 0.16]:
@@ -877,7 +881,7 @@ static func bag_mesh_col(c: Color) -> ArrayMesh:
 	if _cache.has(key):
 		return _cache[key]
 	var k := Kit.new()
-	k.rounded_box(Vector3(-0.22, 0.0, -0.32), Vector3(0.22, 0.62, 0.32), 0.05, c, 2)
+	k.soft_box(Vector3(-0.22, 0.0, -0.32), Vector3(0.22, 0.62, 0.32), 0.05, c, 12, 6)
 	k.box(Vector3(-0.23, 0.28, -0.33), Vector3(0.23, 0.31, 0.33), c.darkened(0.25))
 	k.box(Vector3(-0.07, 0.62, -0.03), Vector3(0.07, 0.67, 0.03), Color(0.12, 0.12, 0.12))
 	var m := k.commit()
@@ -892,6 +896,7 @@ static func gse_part(kind: String) -> ArrayMesh:
 	if _cache.has(key):
 		return _cache[key]
 	var k := Kit.new()
+	k.bevel = 0.05
 	match kind:
 		"band":
 			# Förderband: Drehpunkt hinten bei z = 0, 7,6 m nach vorn (-Z), 0,8 m breit
@@ -943,6 +948,7 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 	if _cache.has(key):
 		return _cache[key]
 	var k := Kit.new()
+	k.bevel = 0.05
 	var cab := YELLOW
 	match kind:
 		"tank":
@@ -962,7 +968,7 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			for sx: float in [-0.95, 0.95]:
 				for ang: float in [0.36, -0.36]:
 					k.box(Vector3(-0.05, -0.06, -2.6), Vector3(0.05, 0.06, 2.6), METAL, Transform3D(Basis(Vector3(1, 0, 0), ang), Vector3(sx, 1.85, 0.95)))
-			k.box(Vector3(-1.25, 2.9, -1.8), Vector3(1.25, 5.3, 3.7), Color(0.92, 0.92, 0.9))
+			k.soft_box(Vector3(-1.25, 2.9, -1.8), Vector3(1.25, 5.3, 3.7), 0.12, Color(0.92, 0.92, 0.9), 12, 6)
 			k.box(Vector3(-1.27, 3.9, -1.8), Vector3(1.27, 4.2, 3.7), Color(0.2, 0.4, 0.65))
 			k.box(Vector3(-1.0, 2.9, -2.6), Vector3(1.0, 3.0, -1.8), METAL)
 			_wheels(k, 1.15, 0.45, [-3.0, 2.6])
@@ -970,7 +976,7 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			_tug(k)
 		"bandlader":
 			# Förderbandwagen: flaches Fahrgestell, Fahrersitz rechts, Band als eigenes Teil (Drehpunkt z = 2,6)
-			k.box(Vector3(-0.95, 0.35, -4.2), Vector3(0.95, 0.85, 3.3), YELLOW)
+			k.soft_box(Vector3(-0.95, 0.35, -4.2), Vector3(0.95, 0.85, 3.3), 0.1, YELLOW, 12, 6)
 			k.box(Vector3(-0.97, 0.6, -4.2), Vector3(0.97, 0.7, 3.3), DARK_METAL)
 			k.box(Vector3(0.15, 0.85, 1.6), Vector3(0.95, 1.05, 3.2), DARK_METAL)
 			k.box(Vector3(0.3, 1.05, 2.4), Vector3(0.85, 1.6, 2.6), Color(0.15, 0.15, 0.16))
@@ -994,7 +1000,7 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 		"gpu":
 			# Bodenstromaggregat auf Anhänger: Generatorkasten, Kabeltrommel, Deichsel
 			k.box(Vector3(-0.75, 0.45, -1.2), Vector3(0.75, 0.6, 1.3), DARK_METAL)
-			k.rounded_box(Vector3(-0.7, 0.6, -1.1), Vector3(0.7, 1.55, 1.2), 0.08, Color(0.88, 0.89, 0.86), 2)
+			k.soft_box(Vector3(-0.7, 0.6, -1.1), Vector3(0.7, 1.55, 1.2), 0.08, Color(0.88, 0.89, 0.86), 12, 6)
 			k.box(Vector3(-0.71, 0.75, -0.6), Vector3(0.71, 1.35, 0.6), Color(0.3, 0.32, 0.34))
 			for i in range(6):
 				k.box(Vector3(-0.72, 0.8 + float(i) * 0.09, -0.55), Vector3(0.72, 0.83 + float(i) * 0.09, 0.55), Color(0.5, 0.51, 0.52))
@@ -1004,8 +1010,8 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			_wheels(k, 0.8, 0.3, [0.0])
 		"gepaeckschlepper":
 			# Gepäckschlepper (Front -Z), Kupplung hinten bei z = 1,5
-			k.rounded_box(Vector3(-0.72, 0.3, -1.4), Vector3(0.72, 0.85, 1.4), 0.12, YELLOW, 2)
-			k.rounded_box(Vector3(-0.68, 0.85, -1.4), Vector3(0.68, 1.05, -0.4), 0.1, YELLOW.darkened(0.1), 2)
+			k.soft_box(Vector3(-0.72, 0.3, -1.4), Vector3(0.72, 0.85, 1.4), 0.12, YELLOW, 12, 6)
+			k.soft_box(Vector3(-0.68, 0.85, -1.4), Vector3(0.68, 1.05, -0.4), 0.1, YELLOW.darkened(0.1), 12, 6)
 			k.box(Vector3(-0.75, 0.32, -1.45), Vector3(0.75, 0.48, -1.35), Color(0.15, 0.15, 0.16))
 			# Lenkrad und Sitzlehne
 			k.cyl(Vector3(0, 1.15, -0.45), Vector3(0, 1.3, -0.35), 0.03, 0.03, Color(0.15, 0.15, 0.15), 6)
@@ -1033,7 +1039,7 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			k.box(Vector3(-0.05, 0.35, -2.4), Vector3(0.05, 0.42, -1.3), DARK_METAL)
 			k.box(Vector3(-0.07, 0.4, 1.3), Vector3(0.07, 0.48, 1.5), DARK_METAL)
 			# Dach mit Plane, seitlich aufgerollte Planen
-			k.rounded_box(Vector3(-0.9, 1.9, -1.35), Vector3(0.9, 2.0, 1.35), 0.06, Color(0.3, 0.42, 0.32), 2)
+			k.soft_box(Vector3(-0.9, 1.9, -1.35), Vector3(0.9, 2.0, 1.35), 0.06, Color(0.3, 0.42, 0.32), 12, 6)
 			for p: Vector3 in [Vector3(-0.85, 0, -1.3), Vector3(0.78, 0, -1.3), Vector3(-0.85, 0, 1.23), Vector3(0.78, 0, 1.23)]:
 				k.box(p + Vector3(0, 1.25, 0), p + Vector3(0.07, 1.9, 0.07), DARK_METAL)
 			for sx: float in [-0.9, 0.9]:
@@ -1083,8 +1089,8 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 ## Stoßfänger, Trittstufen und Rundumleuchte.
 static func _truck_cab(k: Kit, col: Color, z0: float, h: float) -> void:
 	var top := h + 0.4
-	k.rounded_box(Vector3(-1.15, 0.5, z0 + 0.15), Vector3(1.15, top - 0.1, z0 + 2.0), 0.18, col, 3)
-	k.rounded_box(Vector3(-1.1, top - 0.12, z0 + 0.4), Vector3(1.1, top, z0 + 1.95), 0.18, col.darkened(0.05), 3)
+	k.soft_box(Vector3(-1.15, 0.5, z0 + 0.15), Vector3(1.15, top - 0.1, z0 + 2.0), 0.18, col, 12, 6)
+	k.soft_box(Vector3(-1.1, top - 0.12, z0 + 0.4), Vector3(1.1, top, z0 + 1.95), 0.18, col.darkened(0.05), 12, 6)
 	# geneigte Frontscheibe
 	k.quad(Vector3(-1.0, h - 0.6, z0 + 0.12), Vector3(1.0, h - 0.6, z0 + 0.12), Vector3(1.0, top - 0.12, z0 + 0.42), Vector3(-1.0, top - 0.12, z0 + 0.42), GLASS, Vector3(0, h - 0.3, z0 + 1.5))
 	k.box(Vector3(-1.12, h - 0.62, z0 + 0.1), Vector3(1.12, h - 0.56, z0 + 0.2), col.darkened(0.2))
@@ -1103,7 +1109,7 @@ static func _truck_cab(k: Kit, col: Color, z0: float, h: float) -> void:
 	# Kühlergrill und Stoßfänger
 	for i in range(4):
 		k.box(Vector3(-0.55, 1.0 + float(i) * 0.14, z0 + 0.12), Vector3(0.55, 1.06 + float(i) * 0.14, z0 + 0.16), Color(0.2, 0.2, 0.22))
-	k.rounded_box(Vector3(-1.2, 0.42, z0 - 0.02), Vector3(1.2, 0.68, z0 + 0.3), 0.08, Color(0.22, 0.22, 0.24), 2)
+	k.soft_box(Vector3(-1.2, 0.42, z0 - 0.02), Vector3(1.2, 0.68, z0 + 0.3), 0.08, Color(0.22, 0.22, 0.24), 12, 6)
 	# Rundumleuchte auf dem Dach
 	k.cyl(Vector3(0, top, z0 + 1.2), Vector3(0, top + 0.18, z0 + 1.2), 0.13, 0.11, Color(0.98, 0.55, 0.08, 0.3), 10)
 	k.box(Vector3(-0.3, h + 0.4, z0 + 0.8), Vector3(0.3, h + 0.55, z0 + 1.1), Color(0.95, 0.55, 0.1))
@@ -1178,14 +1184,14 @@ static func _apron_bus(k: Kit) -> void:
 	var body := Color(0.93, 0.93, 0.9)
 	var stripe := Color(0.18, 0.36, 0.62)
 	k.box(Vector3(-1.5, 0.3, -7.0), Vector3(1.5, 0.55, 7.0), Color(0.15, 0.15, 0.16))
-	k.box(Vector3(-1.5, 0.55, -7.0), Vector3(1.5, 1.05, 7.0), body)
+	k.soft_box(Vector3(-1.5, 0.45, -7.0), Vector3(1.5, 1.1, 7.0), 0.15, body, 12, 6)
 	k.box(Vector3(-1.51, 0.75, -7.0), Vector3(1.51, 0.92, 7.0), stripe)
 	k.box(Vector3(-1.48, 1.05, -6.9), Vector3(1.48, 2.55, 6.9), GLASS)
 	# Fensterholme
 	for z in range(-6, 7, 2):
 		for sx: float in [-1.0, 1.0]:
 			k.box(Vector3(sx * 1.5 - 0.04, 1.05, float(z) - 0.06), Vector3(sx * 1.5 + 0.04, 2.55, float(z) + 0.06), body)
-	k.box(Vector3(-1.5, 2.55, -7.0), Vector3(1.5, 2.95, 7.0), body)
+	k.soft_box(Vector3(-1.5, 2.5, -7.0), Vector3(1.5, 3.0, 7.0), 0.18, body, 12, 6)
 	k.box(Vector3(-1.2, 2.95, -4.0), Vector3(1.2, 3.15, 2.0), Color(0.75, 0.76, 0.77))
 	# Türöffnungen: dunkle Rahmen und Trittstufe innen; die Flügel sind eigene Knoten (bus_door_leaf)
 	for sx: float in [-1.0, 1.0]:
@@ -1212,6 +1218,7 @@ static func stairs_mesh(h: float) -> ArrayMesh:
 	if _cache.has(key):
 		return _cache[key]
 	var k := Kit.new()
+	k.bevel = 0.05
 	var body := Color(0.92, 0.92, 0.9)
 	var rail := Color(0.85, 0.7, 0.15)
 	# Fahrgestell mit Kabine hinten links

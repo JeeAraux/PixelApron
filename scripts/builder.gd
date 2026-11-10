@@ -18,7 +18,8 @@ const SNAP_DIST := 7.0
 const SNAP_GROUPS := {"strasse": ["strasse", "strasse4", "einbahn"], "strasse4": ["strasse", "strasse4", "einbahn"],
 	"einbahn": ["strasse", "strasse4", "einbahn"], "gehweg": ["gehweg", "strasse", "strasse4", "einbahn"],
 	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"], "rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
-	"vorfeld": ["vorfeld", "rollweg", "rollweg_breit"], "piste": ["piste"], "betriebsstrasse": ["betriebsstrasse"]}
+	"vorfeld": ["vorfeld", "rollweg", "rollweg_breit"], "piste": ["piste"], "betriebsstrasse": ["betriebsstrasse"],
+	"rolllinie": ["rolllinie", "rollweg", "rollweg_breit"]}
 const ANGLE_STEP := 15.0
 ## Zeichenarten für Straßen, Rollwege und Vorfeld (wie in Städtebauspielen)
 const MODES := ["gerade", "kurve", "frei"]
