@@ -173,7 +173,7 @@ const BRANDS := ["WIESENAIR", "AEROLUNA", "ALPENFLUG", "BALTIKO", "SKYVIA", "NOR
 
 
 static func _wordmark(k: Kit, s: Dictionary, livery: Color) -> void:
-	var brand: String = BRANDS[absi(livery.to_html().hash()) % BRANDS.size()]
+	var brand: String = BRANDS[(livery.r8 + livery.g8 + livery.b8 * 2) % BRANDS.size()]
 	var length: float = s["len"]
 	var z0 := -length * 0.5
 	var px: float = clampf(float(s["r"]) * 0.062, 0.07, 0.16)
@@ -1186,7 +1186,7 @@ static func car_mesh(kind: String, color: Color, lod: bool = false) -> ArrayMesh
 		var rx := ax / maxf(wl, 0.01)
 		# Radkästen
 		for z0: float in wz:
-			if Vector2(m.z - z0, m.y - wr).length() < wr + 0.07 and ax > hw * 0.72:
+			if Vector2(m.z - z0, m.y - wr).length() < wr + 0.06 and ax > hw * 0.74 and m.y < belt - 0.12:
 				return Color(0.05, 0.05, 0.055)
 		# Schweller, Stoßfänger unten, beim SUV Beplankung
 		if m.y < bot + (0.17 if kind == "suv" else 0.09):
@@ -1213,9 +1213,9 @@ static func car_mesh(kind: String, color: Color, lod: bool = false) -> ArrayMesh
 		var fx := ax / hw
 		if m.z < zf + 0.24:
 			if m.y > nose - 0.17 and m.y < nose - 0.04 and fx > 0.52 and fx < 0.92:
-				return Color(0.8, 0.84, 0.88) if fx < 0.84 else Color(0.95, 0.6, 0.15)
+				return Color(0.55, 0.6, 0.66) if fx < 0.84 else Color(0.95, 0.6, 0.15)
 			if m.y > bot + 0.14 and m.y < nose - 0.1 and fx < 0.42:
-				if absf(m.y - (bot + 0.3)) < 0.07 and fx < 0.25:
+				if absf(m.y - (bot + 0.3)) < 0.055 and fx < 0.22:
 					return Color(0.92, 0.92, 0.9)
 				return Color(0.07, 0.07, 0.08)
 			if m.y < bot + 0.14:
