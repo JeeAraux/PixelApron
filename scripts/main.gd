@@ -13,6 +13,8 @@ const Thumbs = preload("res://scripts/thumbs.gd")
 const Terminal = preload("res://scripts/terminal.gd")
 const Settings = preload("res://scripts/settings.gd")
 const Updater = preload("res://scripts/updater.gd")
+const GroundOps = preload("res://scripts/ground_ops.gd")
+const Airfield = preload("res://scripts/airfield.gd")
 const RESUME_FLAG := "user://nach_update_laden"
 const Catalog = preload("res://scripts/catalog.gd")
 const GROUND_SHADER = preload("res://shaders/ground.gdshader")
@@ -30,6 +32,8 @@ var traffic: Traffic
 var roads: Roads
 var flights: Flights
 var terminal: Terminal
+var ops: GroundOps
+var airfield: Airfield
 var hud: Hud
 var settings: Settings
 var updater: Updater
@@ -68,6 +72,17 @@ func _ready() -> void:
 	flights.setup(game)
 	flights.terminal = terminal
 	flights.traffic = traffic
+	ops = GroundOps.new()
+	ops.name = "Vorfelddienste"
+	world.add_child(ops)
+	ops.setup(game)
+	ops.terminal = terminal
+	flights.ops = ops
+	terminal.bus_cb = ops.pax_at_door
+	airfield = Airfield.new()
+	airfield.name = "Flugfeld"
+	world.add_child(airfield)
+	airfield.setup(game)
 	cam_rig = IsoCamera.new()
 	cam_rig.name = "Kamera"
 	world.add_child(cam_rig)
@@ -89,6 +104,11 @@ func _ready() -> void:
 		game.load_game()
 	builder.set_tool("")
 	var args := OS.get_cmdline_user_args()
+	if "--fldebug" in args:
+		var dbg: Node = load("res://tests/dbg/fl_debug.gd").new()
+		add_child(dbg)
+		dbg.call("run", self)
+		return
 	if "--selftest" in args:
 		var t: Node = load("res://tests/selftest.gd").new()
 		add_child(t)
@@ -176,6 +196,7 @@ func _connect() -> void:
 	hud.setting_changed.connect(_on_setting)
 	hud.restart_requested.connect(_restart_for_update)
 	hud.downloads_requested.connect(updater.open_downloads)
+	hud.map_requested.connect(_toggle_map)
 	updater.status_changed.connect(_on_update_status)
 	game.interior_changed.connect(hud.show_interior)
 	game.day_ended.connect(_on_day_ended)
@@ -370,6 +391,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				builder.rotate()
 			KEY_L:
 				game.set_utility_view(not game.utility_view)
+			KEY_M:
+				_toggle_map()
+			KEY_B:
+				hud.toggle_build()
 			KEY_I:
 				game.set_interior_view(not game.interior_view)
 			KEY_SPACE:
@@ -389,6 +414,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_Z:
 				if k.ctrl_pressed:
 					game.undo_last()
+
+
+var _map_back: Array = []   # [Ziel, Zoom] vor der Kartenübersicht
+
+
+## Ganze Karte zeigen und wieder zurück zum vorherigen Ausschnitt.
+func _toggle_map() -> void:
+	if _map_back.is_empty():
+		_map_back = [cam_rig.target, cam_rig.zoom_goal]
+		var size := viewport.get_visible_rect().size
+		cam_rig.frame(Rect2(-GameState.MAP_HALF, -GameState.MAP_HALF, GameState.MAP_HALF * 2.0, GameState.MAP_HALF * 2.0),
+			size.x / maxf(size.y, 1.0))
+		hud.show_map(true)
+	else:
+		cam_rig.target = _map_back[0]
+		cam_rig.zoom_goal = _map_back[1]
+		_map_back = []
+		hud.show_map(false)
 
 
 ## Esc: Menü schließen oder zurück, laufenden Weg abbrechen, sonst Menü öffnen.
@@ -414,7 +457,42 @@ func _demo(args: PackedStringArray) -> void:
 		flights.step(0.05)
 	set_process(false)
 	sun.directional_shadow_max_distance = cam_rig.shadow_range()
-	if mode == "bauen":
+	if mode == "karte":
+		_toggle_map()
+		cam_rig.zoom = cam_rig.zoom_goal
+		hud.set_build_open(false)
+	elif mode in ["rollhalt", "piste", "vorfeld", "anflug"]:
+		var spots := {"rollhalt": [Vector3(-872, 0, -186), 70.0], "piste": [Vector3(-842, 0, -272), 70.0],
+			"vorfeld": [Vector3(-10, 0, -75), 300.0], "anflug": [Vector3(-1150, 0, -272), 520.0]}
+		for i in range(1200):
+			flights.step(0.05)
+		cam_rig.target = spots[mode][0]
+		cam_rig.zoom_goal = spots[mode][1]
+		cam_rig.zoom = spots[mode][1]
+	elif mode in ["pushback", "bus", "rollen", "haltestelle"]:
+		var found: Dictionary = {}
+		for i in range(12000):
+			flights.step(0.05)
+			for p: Dictionary in flights.planes:
+				if mode == "pushback" and p["state"] == "pushback" and float(p.get("ps", 0.0)) > 25.0:
+					found = p
+				if mode == "rollen" and p["state"] == "rollt_ein" and float(p["speed"]) < 6.0 and (p["pos"] as Vector3).z > -230.0:
+					found = p
+			if mode == "bus":
+				for j: Dictionary in ops.jobs.values():
+					if j.has("bus") and bool(j.get("unloading", false)) and ops.walkers.size() > 8:
+						found = j["flight"]
+			if mode == "haltestelle":
+				for j: Dictionary in ops.jobs.values():
+					if j.has("dep_bus") and bool(j.get("dep_called", false)) and int(j.get("dep_out", 0)) > 5:
+						found = {"pos": Vector3(-5, 0, -25)}
+			if not found.is_empty():
+				break
+		var at: Vector3 = found.get("pos", Vector3(-60, 0, -55))
+		cam_rig.target = at + Vector3(0, 0, -6 if mode == "pushback" else 4)
+		cam_rig.zoom_goal = 85.0
+		cam_rig.zoom = 85.0
+	elif mode == "bauen":
 		cam_rig.target = Vector3(-20, 0, -40)
 		cam_rig.zoom_goal = 230.0
 		cam_rig.zoom = 230.0

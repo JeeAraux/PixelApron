@@ -1,21 +1,39 @@
 extends Node3D
-## Flugbetrieb: Flüge nach Plan anlegen, Anflug, Landung, Rollen zum Stand, Abfertigung
-## mit Bodenfahrzeugen, Rollen zur Piste, Start.
-## Rollwege werden wie im Stellwerk abschnittsweise reserviert; die Piste nutzt immer nur ein Flugzeug.
+## Flugbetrieb: Flüge nach Plan anlegen, Anflug mit Abfangen, Aufsetzen, Ausrollen, Abrollen zum Stand,
+## Abfertigung mit Bodenfahrzeugen, Pushback mit Schlepper, Rollen zum Rollhalteort, Aufreihen, Start.
+##
+## Rollen: Das Bugrad folgt einer geglätteten Linie (Ecken als Bögen), das Hauptfahrwerk zieht nach.
+## Tempo nach Fläche (Piste, Rollweg, Vorfeld, Einrolllinie) und Kurvenradius, mit Anfahren und Bremsen.
+## Rollwege werden wie im Stellwerk abschnittsweise reserviert. In den Pistenschutzbereich
+## (näher als 90 m an der Pistenmitte) darf nur, wer die Piste hat: davor wird am Rollhalteort gewartet.
 ## Bei Tempo 1× vergeht pro Sekunde eine halbe Spielminute; Bewegungen in Metern pro Sekunde.
 
 const Catalog = preload("res://scripts/catalog.gd")
 const Factory = preload("res://scripts/factory.gd")
 const Airside = preload("res://scripts/airside.gd")
 const GameState = preload("res://scripts/game_state.gd")
+const Models = preload("res://scripts/models.gd")
 
-const TAXI_SPEED := 20.0
 const CLOCK := 0.5             # Spielminuten pro Simulationssekunde
 const INTERVAL := 7.0          # Spielminuten zwischen neuen Flügen bei mittlerer Zufriedenheit
 const APPROACH_DIST := 2200.0
 const GLIDE := 0.0524          # 3 Grad
-const LOOKAHEAD := 70.0        # so weit voraus reserviert ein rollendes Flugzeug
+const LOOKAHEAD := 80.0        # so weit voraus reserviert ein rollendes Flugzeug
+const CLEAR := 30.0            # so weit hält das Bugrad vor einem belegten Abschnitt
 const GSE_SPEED := 9.0
+# Rollen (m/s, m/s²)
+const V_RWY := 24.0
+const V_TAXI := 14.0           # ~27 kn auf geraden Rollwegen
+const V_APRON := 8.0
+const V_LEAD := 3.0            # auf der Einrolllinie in die Position
+const LAT := 1.0               # Querbeschleunigung in Kurven
+const ACC := 0.7
+const DEC := 1.4
+const DEC_LAND := 2.4          # Bremsen nach dem Aufsetzen
+const V_EXIT := 16.0           # Abrollgeschwindigkeit
+const TURN_R := 35.0           # Radius beim Ausrunden von Ecken
+const PUSH_V := 1.3
+const TAKEOFF_ACC := 2.2
 
 var game: GameState
 var graph := Airside.new()
@@ -32,6 +50,7 @@ var movements: Array = []      # Spielminuten der letzten Landungen und Starts
 var pax_log: Array = []        # [Spielminute, Passagiere, Abflug?] der letzten zwei Stunden
 var terminal: Variant = null   # terminal.gd (Gates, Passagiere, Kapazität)
 var traffic: Variant = null    # traffic.gd (Zufahrt Parkhaus)
+var ops: Variant = null        # ground_ops.gd (Schlepper, Treppen, Busse)
 var gate_short := 0.0          # Spielminuten, in denen noch "zu wenige Gates" gemeldet wird
 
 
@@ -79,6 +98,8 @@ func step(sim: float) -> void:
 	if terminal != null:
 		terminal.set_demand(arr * 0.5, dep * 0.5)
 		terminal.step(sim)
+	if ops != null:
+		ops.step(sim)
 	_satisfaction(sim)
 
 
@@ -92,8 +113,16 @@ func _rebuild() -> void:
 			_remove(p, "%s: Stand wurde abgerissen" % p["code"])
 			continue
 		p["path"] = []   # wird beim nächsten Schritt neu gesucht
-		if p["state"] == "abfertigung":
-			_reserve(graph.stand_node.get((st["node"] as Node).get_instance_id(), -1), int(p["id"]))
+		p.erase("route")
+		if p["state"] in ["abfertigung", "pushback"]:
+			_reserve(_stand_id(p), int(p["id"]))
+
+
+func _stand_id(p: Dictionary) -> int:
+	var st: Dictionary = p["stand"]
+	if st.is_empty() or not is_instance_valid(st["node"]):
+		return -1
+	return graph.stand_node.get((st["node"] as Node).get_instance_id(), -1)
 
 
 # ---------------------------------------------------------------- Flugplan
@@ -192,13 +221,15 @@ func _try_spawn() -> void:
 	var td := s[0] + dir * 300.0
 	var node := Factory.make_plane(kind, airline[1])
 	add_child(node)
+	var spec: Dictionary = Models.SPECS.get(kind, Models.SPECS["a320"])
 	var p := {
 		"id": counter, "code": "%s %d" % [airline[0], 200 + (counter * 37) % 700], "kind": kind,
 		"city": Catalog.DESTINATIONS[randi() % Catalog.DESTINATIONS.size()], "node": node,
 		"state": "anflug", "pos": td - dir * APPROACH_DIST, "alt": APPROACH_DIST * GLIDE,
-		"heading": dir, "speed": float(Catalog.PLANES[kind]["vapp"]), "stand": stand, "path": [], "pi": 0,
+		"heading": dir, "speed": float(Catalog.PLANES[kind]["vapp"]), "stand": stand, "path": [],
 		"timer": 0.0, "turn": 1.0, "wait": 0.0, "ghost": 0.0, "rerouted": false, "rwy": rwy, "dir": dir, "td": td,
-		"gse": [], "delay": 0.0,
+		"gse": [], "delay": 0.0, "pitch": deg_to_rad(2.5),
+		"ng": -float(spec["nose_gear_z"]), "mg": float(spec["main_gear_z"]),
 	}
 	runway_owner = counter
 	planes.append(p)
@@ -217,6 +248,23 @@ func _free_for(n: int, id: int) -> bool:
 		if reserved.has(m) and int(reserved[m]) != id:
 			return false
 	return true
+
+
+## Wer blockiert Knoten n für Flugzeug id (Besitzer der Reservierung, sonst -1)?
+func _blocker(n: int, id: int) -> int:
+	if reserved.has(n) and int(reserved[n]) != id:
+		return int(reserved[n])
+	for m: int in graph.near[n]:
+		if reserved.has(m) and int(reserved[m]) != id:
+			return int(reserved[m])
+	return -1
+
+
+func _plane_by_id(id: int) -> Dictionary:
+	for q: Dictionary in planes:
+		if int(q["id"]) == id:
+			return q
+	return {}
 
 
 func _reserve(n: int, id: int) -> void:
@@ -255,85 +303,93 @@ func _update(p: Dictionary, sim: float) -> void:
 				p["pos"] = td
 				p["alt"] = 0.0
 				p["state"] = "landung"
+				p["speed"] = float(p["speed"]) * 0.97
 				movements.append(game.minutes)
 				pax_log.append([game.minutes, int(Catalog.PLANES[p["kind"]]["pax"]), false])
 			else:
 				p["pos"] = pos + to_td.normalized() * move
-				p["alt"] = maxf(0.0, (to_td.length() - move) * GLIDE)
+				var alt := maxf(0.0, (to_td.length() - move) * GLIDE)
+				# Abfangen: kurz vor dem Aufsetzen flacher und Nase hoch
+				if alt < 14.0:
+					alt = 14.0 * pow(alt / 14.0, 1.6)
+				p["alt"] = alt
+				p["pitch"] = deg_to_rad(lerpf(5.5, 2.5, clampf(alt / 14.0, 0.0, 1.0)))
 		"landung":
 			var v: float = p["speed"]
-			v = maxf(TAXI_SPEED, v - 3.2 * sim)
+			v = maxf(V_EXIT, v - DEC_LAND * sim)
 			p["speed"] = v
 			p["pos"] = (p["pos"] as Vector3) + dir * v * sim
-			if v <= TAXI_SPEED + 0.01:
+			p["pitch"] = move_toward(float(p["pitch"]), 0.0, deg_to_rad(2.0) * sim)
+			if v <= V_EXIT + 0.01 and float(p["pitch"]) < 0.01:
 				p["state"] = "rollt_ein"
 				p["path"] = []
+				p.erase("route")
 		"rollt_ein":
-			if (p["path"] as Array).is_empty():
-				var start := _node_ahead(p) if runway_owner == id else graph.nearest(p["pos"])
-				var goal: int = graph.stand_node.get((p["stand"]["node"] as Node).get_instance_id(), -1)
-				p["path"] = graph.path(start, goal)
-				p["pi"] = 0
-				if (p["path"] as Array).is_empty():
+			if not p.has("route"):
+				if not _plan_arrival(p):
 					_remove(p, "%s findet keinen Weg zum Stand" % p["code"])
 					return
-			if runway_owner == id and graph.kind[_current_node(p)] != "piste":
+			var res := _drive(p, sim)
+			if runway_owner == id and _vacated(p):
 				runway_owner = -1
-			if _follow(p, sim):
+			if res == "ziel":
 				if runway_owner == id:
 					runway_owner = -1
 				_park(p)
 		"abfertigung":
 			p["timer"] = float(p["timer"]) - sim * CLOCK
 			_update_gse(p, sim)
-			if float(p["timer"]) <= 0.0:
+			var f := 1.0 - float(p["timer"]) / maxf(float(p["turn"]), 0.01)
+			if ops != null:
+				if f >= 0.3:
+					ops.want_board(p)
+				if f >= 0.82:
+					ops.call_tug(p, float(p["ng"]))
+			var ready: bool = ops == null or ops.remote_done(p)
+			if float(p["timer"]) <= 0.0 and not ready:
+				p["delay"] = float(p["delay"]) + sim * CLOCK
+			if float(p["timer"]) <= 0.0 and ready:
 				_clear_gse(p)
 				if terminal != null:
 					terminal.flight_left(p)
-				p["state"] = "rollt_aus"
-				p["path"] = []
+				if ops != null:
+					ops.call_tug(p, float(p["ng"]))
+					ops.remote_leave(p)
+				p["state"] = "pushback"
+				p["push_phase"] = "bereit"
+				p["ptimer"] = 0.0
+		"pushback":
+			_pushback(p, sim)
 		"rollt_aus", "wartet":
-			if (p["path"] as Array).is_empty():
-				var rwy: Dictionary = p["rwy"]
-				var s: PackedVector3Array = rwy["samples"]
-				var goal := graph.nearest(s[0] + dir * 15.0, "piste")
-				var start := -1
-				if not bool(p.get("left", false)):
-					start = graph.stand_node.get((p["stand"]["node"] as Node).get_instance_id(), -1)
-				if start == -1:
-					start = graph.nearest(p["pos"])
-				p["path"] = graph.path(start, goal)
-				p["pi"] = 0
-				if (p["path"] as Array).is_empty():
+			if not p.has("route"):
+				if not _plan_departure(p):
 					_remove(p, "%s findet keinen Weg zur Piste" % p["code"])
 					return
-			var path: Array = p["path"]
-			var nxt: int = path[mini(int(p["pi"]) + 1, path.size() - 1)]
-			if graph.kind[nxt] == "piste" and runway_owner != id:
-				if runway_owner == -1 and not _arrival_close():
-					runway_owner = id
-					p["state"] = "rollt_aus"
-				else:
-					p["state"] = "wartet"
-					p["delay"] = float(p["delay"]) + sim * CLOCK
-					return
-			var arrived := _follow(p, sim)
-			if int(p["pi"]) > 0:
-				p["left"] = true
-			if arrived:
-				_release_all(id)
+			var res := _drive(p, sim)
+			p["state"] = "wartet" if res == "piste" else "rollt_aus"
+			if res == "piste":
+				p["delay"] = float(p["delay"]) + sim * CLOCK
+			if res == "ziel":
 				p["state"] = "start"
 				p["speed"] = 0.0
-				p["heading"] = dir
+				p["lineup"] = 3.0
 				p["stand"] = {}
 		"start":
-			var v: float = float(p["speed"]) + 3.0 * sim
-			p["speed"] = v
-			p["heading"] = dir
-			p["pos"] = (p["pos"] as Vector3) + dir * v * sim
-			if v > float(Catalog.PLANES[p["kind"]]["vr"]):
-				p["alt"] = float(p["alt"]) + 9.0 * sim
+			var h: Vector3 = p["heading"]
+			p["heading"] = h.lerp(dir, clampf(sim * 1.5, 0.0, 1.0)).normalized()
+			if float(p.get("lineup", 0.0)) > 0.0:
+				p["lineup"] = float(p["lineup"]) - sim
+			else:
+				var v: float = float(p["speed"]) + TAKEOFF_ACC * sim
+				p["speed"] = v
+				p["pos"] = (p["pos"] as Vector3) + (p["heading"] as Vector3) * v * sim
+				var vr := float(Catalog.PLANES[p["kind"]]["vr"])
+				if v > vr:
+					p["pitch"] = move_toward(float(p["pitch"]), deg_to_rad(9.0), deg_to_rad(3.0) * sim)
+				if v > vr + 4.0:
+					p["alt"] = float(p["alt"]) + v * 0.11 * sim
 			if float(p["alt"]) > 40.0 and runway_owner == id:
+				_release_all(id)
 				runway_owner = -1
 				movements.append(game.minutes)
 				pax_log.append([game.minutes, int(Catalog.PLANES[p["kind"]]["pax"]), true])
@@ -351,23 +407,9 @@ func _update(p: Dictionary, sim: float) -> void:
 	_place(p)
 
 
-## Nächster Pistenknoten vor dem gelandeten Flugzeug (in Landerichtung).
-func _node_ahead(p: Dictionary) -> int:
-	var pos: Vector3 = p["pos"]
-	var dir: Vector3 = p["dir"]
-	var best := -1
-	var bd := INF
-	for i in range(graph.pos.size()):
-		if graph.kind[i] != "piste":
-			continue
-		var to := graph.pos[i] - pos
-		if to.dot(dir) < -1.0:
-			continue
-		var d := to.length()
-		if d < bd:
-			bd = d
-			best = i
-	return best if best != -1 else graph.nearest(pos, "piste")
+## Hat das gelandete Flugzeug den Pistenschutzbereich verlassen?
+func _vacated(p: Dictionary) -> bool:
+	return graph.runway_distance(p["pos"]) > Airside.HOLD_DIST + 20.0
 
 
 func _arrival_close() -> bool:
@@ -377,78 +419,530 @@ func _arrival_close() -> bool:
 	return false
 
 
-func _current_node(p: Dictionary) -> int:
-	var path: Array = p["path"]
-	return path[clampi(int(p["pi"]), 0, path.size() - 1)]
+func _may_take_runway(id: int) -> bool:
+	return runway_owner == id or (runway_owner == -1 and not _arrival_close())
 
 
-## Bewegt das Flugzeug entlang seines Pfades. Vor jedem Stück reserviert es die Knoten voraus;
-## sind sie belegt, wartet es, sucht nach einer Weile einen Umweg. true = Ziel erreicht.
-func _follow(p: Dictionary, sim: float) -> bool:
+## Bugrad-Position und Hauptfahrwerk aus Mitte und Richtung.
+func _nose(p: Dictionary) -> Vector3:
+	return (p["pos"] as Vector3) + (p["heading"] as Vector3) * float(p["ng"])
+
+
+func _set_gear(p: Dictionary) -> void:
+	p["mg_pos"] = (p["pos"] as Vector3) - (p["heading"] as Vector3) * float(p["mg"])
+
+
+# ---------------------------------------------------------------- Wege planen
+
+## Weg von der Landebahn (oder von dort, wo das Flugzeug gerade ist) zum Stand.
+func _plan_arrival(p: Dictionary) -> bool:
+	var h: Vector3 = p["heading"]
+	var nose := _nose(p)
+	var start := -1
+	if graph.kind.size() > 0 and graph.runway_distance(p["pos"]) < 30.0:
+		var v: float = p["speed"]
+		start = _node_ahead(nose, h, maxf(25.0, v * v / (2.0 * DEC) * 0.7))
+	if start < 0:
+		start = graph.nearest(nose)
+	var goal := _stand_id(p)
+	if start < 0 or goal < 0:
+		return false
+	var nodes := graph.path(start, goal, {}, h)
+	if nodes.is_empty():
+		return false
+	var st: Dictionary = p["stand"]
+	var fwd := (st["node"] as Node3D).global_transform.basis.z.normalized()
+	var park := _park_pos(p)
+	_set_route(p, nodes, park + fwd * float(p["ng"]), true)
+	return true
+
+
+## Weg vom Ende des Pushbacks zur Startposition auf der Piste.
+func _plan_departure(p: Dictionary) -> bool:
+	var h: Vector3 = p["heading"]
+	var start := graph.nearest_taxi(p["pos"], 40.0)
+	if start < 0:
+		start = graph.nearest(p["pos"])
+	var goal := _rwy_goal(p)
+	if start < 0 or goal < 0:
+		return false
+	var nodes := graph.path(start, goal, {}, h)
+	if nodes.is_empty():
+		return false
+	_set_route(p, nodes, null, false)
+	return true
+
+
+func _rwy_goal(p: Dictionary) -> int:
+	var rwy: Dictionary = p["rwy"]
+	var s: PackedVector3Array = rwy["samples"]
+	return graph.nearest(s[0] + (p["dir"] as Vector3) * 70.0, "piste")
+
+
+## Nächster Pistenknoten mindestens min_d vor dem Bugrad.
+func _node_ahead(nose: Vector3, h: Vector3, min_d: float) -> int:
+	var best := -1
+	var bd := INF
+	for i in range(graph.pos.size()):
+		if graph.kind[i] != "piste":
+			continue
+		var to := graph.pos[i] - nose
+		var along := to.dot(h)
+		if along < min_d:
+			continue
+		var d := to.length()
+		if d < bd:
+			bd = d
+			best = i
+	return best
+
+
+func _park_pos(p: Dictionary) -> Vector3:
+	var st: Dictionary = p["stand"]
+	var fwd := (st["node"] as Node3D).global_transform.basis.z.normalized()
+	var nose := float(Catalog.PLANES[p["kind"]]["nose"])
+	return (st["pos"] as Vector3) + fwd * (17.0 - nose)
+
+
+## Rolllinie aus Knoten bauen: Douglas-Peucker, Ecken als Bögen ausrunden, dicht abtasten,
+## je Meter ein Tempolimit aus Fläche und Krümmung, rückwärts die Bremskurve.
+func _set_route(p: Dictionary, nodes: Array, end_pt: Variant, stand_end: bool) -> void:
+	var start := _nose(p)
+	var h: Vector3 = p["heading"]
+	_set_gear(p)
+	var first := 0
+	while first < nodes.size() - 1:
+		var dq := graph.pos[nodes[first]] - start
+		if dq.length() < 32.0 and dq.dot(h) < 4.0:
+			first += 1
+		else:
+			break
+	var pts: Array = [start]
+	var vk: Array = [_kind_v(graph.kind[nodes[mini(first, nodes.size() - 1)]])]
+	for k in range(first, nodes.size()):
+		var q: Vector3 = graph.pos[nodes[k]]
+		if k == nodes.size() - 1 and end_pt != null:
+			q = end_pt
+		if q.distance_to(pts[pts.size() - 1]) > 0.8:
+			pts.append(q)
+			vk.append(_kind_v(graph.kind[nodes[k]]))
+	if pts.size() < 2:
+		pts.append(start + h * 2.0)
+		vk.append(V_APRON)
+	var keep := _simplify(pts, 0.7)
+	var P: Array = []
+	var seg_v: Array = []   # Tempo des Abschnitts, der an P[i] endet
+	for i in range(keep.size()):
+		P.append(pts[keep[i]])
+		var v := INF
+		if i == 0:
+			v = vk[0]
+		else:
+			for j in range(int(keep[i - 1]) + 1, int(keep[i]) + 1):
+				v = minf(v, float(vk[j]))
+		seg_v.append(v)
+	# Ecken ausrunden
+	var n := P.size()
+	var cut := []
+	var ang := []
+	for i in range(n):
+		cut.append(0.0)
+		ang.append(0.0)
+	for i in range(1, n - 1):
+		var u: Vector3 = ((P[i - 1] as Vector3) - (P[i] as Vector3)).normalized()
+		var w: Vector3 = ((P[i + 1] as Vector3) - (P[i] as Vector3)).normalized()
+		var theta := PI - acos(clampf(u.dot(w), -1.0, 1.0))
+		ang[i] = theta
+		if theta > 0.02:
+			# flache Abzweige (Schnellabrollwege) mit großem Radius, enge mit TURN_R
+			cut[i] = maxf(TURN_R * tan(minf(theta, 2.6) * 0.5), 25.0)
+	for _pass in range(2):
+		for i in range(n - 1):
+			var seg_len: float = (P[i] as Vector3).distance_to(P[i + 1])
+			var sum: float = float(cut[i]) + float(cut[i + 1])
+			if sum > seg_len * 0.98 and sum > 0.0:
+				var f := seg_len * 0.98 / sum
+				cut[i] = float(cut[i]) * f
+				cut[i + 1] = float(cut[i + 1]) * f
+	var out := PackedVector3Array([P[0]])
+	var vl := PackedFloat32Array([float(seg_v[mini(1, n - 1)])])
+	for i in range(1, n):
+		var a: Vector3 = P[i - 1]
+		var b: Vector3 = P[i]
+		var dv := (b - a).normalized()
+		var s1 := b - dv * float(cut[i])
+		_dense(out, vl, s1, float(seg_v[i]))
+		if i < n - 1 and float(cut[i]) > 0.05:
+			var w: Vector3 = ((P[i + 1] as Vector3) - b).normalized()
+			var e := b + w * float(cut[i])
+			var theta: float = ang[i]
+			var radius := float(cut[i]) / maxf(tan(theta * 0.5), 0.01)
+			var vr := clampf(sqrt(LAT * radius * 0.8), 2.5, minf(float(seg_v[i]), float(seg_v[i + 1])))
+			var steps := maxi(3, ceili(radius * theta / 1.5))
+			for k in range(1, steps + 1):
+				var t := float(k) / float(steps)
+				var q := s1 * ((1.0 - t) * (1.0 - t)) + b * (2.0 * (1.0 - t) * t) + e * (t * t)
+				out.append(q)
+				vl.append(vr)
+	# Bogenlänge und Bremskurve
+	var cum := PackedFloat32Array()
+	cum.resize(out.size())
+	cum[0] = 0.0
+	for i in range(1, out.size()):
+		cum[i] = cum[i - 1] + out[i - 1].distance_to(out[i])
+	var total := cum[cum.size() - 1]
+	var cap := PackedFloat32Array()
+	cap.resize(out.size())
+	cap[out.size() - 1] = 0.0
+	for i in range(out.size() - 2, -1, -1):
+		var ds := cum[i + 1] - cum[i]
+		cap[i] = minf(vl[i], sqrt(cap[i + 1] * cap[i + 1] + 2.0 * DEC * ds))
+		if stand_end:
+			var rest := total - cum[i]
+			cap[i] = minf(cap[i], 0.25 + sqrt(2.0 * 0.3 * rest))
+			if rest < 30.0:
+				cap[i] = minf(cap[i], V_LEAD)
+	# Bogenlänge, an der die Linie jedem Knoten am nächsten kommt
+	var node_s := PackedFloat32Array()
+	node_s.resize(nodes.size())
+	var idx := 0
+	for k in range(nodes.size()):
+		if k < first:
+			node_s[k] = 0.0
+			continue
+		var q: Vector3 = graph.pos[nodes[k]]
+		var best := idx
+		var bd := INF
+		for i in range(idx, mini(out.size(), idx + 160)):
+			var d := out[i].distance_squared_to(q)
+			if d < bd:
+				bd = d
+				best = i
+		idx = best
+		node_s[k] = cum[best]
+	p["path"] = nodes
+	p["route"] = {"pts": out, "s": cum, "cap": cap, "node_s": node_s, "total": total, "stand": stand_end}
+	p["rs"] = 0.0
+	p["ri"] = 0
+	p["pk"] = 0
+	for k in range(first):
+		_reserve(nodes[k], int(p["id"]))
+
+
+func _kind_v(k: String) -> float:
+	match k:
+		"piste":
+			return V_RWY
+		"rollweg":
+			return V_TAXI
+		"vorfeld":
+			return V_APRON
+	return V_LEAD
+
+
+func _dense(out: PackedVector3Array, vl: PackedFloat32Array, to: Vector3, v: float) -> void:
+	var from := out[out.size() - 1]
+	var d := from.distance_to(to)
+	var steps := maxi(1, ceili(d / 2.0))
+	for k in range(1, steps + 1):
+		out.append(from.lerp(to, float(k) / float(steps)))
+		vl.append(v)
+
+
+## Douglas-Peucker: Indizes der Punkte, die übrig bleiben.
+func _simplify(pts: Array, tol: float) -> Array:
+	var keep := {0: true, pts.size() - 1: true}
+	var stack := [[0, pts.size() - 1]]
+	while not stack.is_empty():
+		var seg: Array = stack.pop_back()
+		var a: int = seg[0]
+		var b: int = seg[1]
+		var pa: Vector3 = pts[a]
+		var pb: Vector3 = pts[b]
+		var best := -1
+		var bd := tol
+		for i in range(a + 1, b):
+			var d := Airside._seg_dist(pts[i], pa, pb)
+			if d > bd:
+				bd = d
+				best = i
+		if best >= 0:
+			keep[best] = true
+			stack.append([a, best])
+			stack.append([best, b])
+	var out := keep.keys()
+	out.sort()
+	return out
+
+
+# ---------------------------------------------------------------- Rollen
+
+## Ein Rollschritt entlang der Linie. Rückgabe: "fahrt", "ziel", "belegt" oder "piste" (wartet am Rollhalteort).
+func _drive(p: Dictionary, sim: float) -> String:
 	var id: int = p["id"]
-	var path: Array = p["path"]
-	var pi: int = p["pi"]
-	var pos: Vector3 = p["pos"]
-	var need := []
-	var dist := 0.0
-	var last := pos
-	var k := pi + 1
-	while k < path.size() and dist < LOOKAHEAD:
-		var n: int = path[k]
-		need.append(n)
-		dist += last.distance_to(graph.pos[n])
-		last = graph.pos[n]
-		k += 1
+	var r: Dictionary = p["route"]
+	var pts: PackedVector3Array = r["pts"]
+	var cum: PackedFloat32Array = r["s"]
+	var cap: PackedFloat32Array = r["cap"]
+	var node_s: PackedFloat32Array = r["node_s"]
+	var total: float = r["total"]
+	var nodes: Array = p["path"]
+	var rs: float = p["rs"]
 	var ghost := float(p["ghost"]) > 0.0
 	if ghost:
 		p["ghost"] = float(p["ghost"]) - sim
-	var free := true
-	for n: int in need:
-		if graph.kind[n] == "piste" and runway_owner == id:
-			continue
-		if not _free_for(n, id):
-			free = false
+	# Freigabe voraus: Knoten reservieren, bis einer belegt ist oder die Piste nicht frei
+	var limit := total
+	var why := ""
+	var k: int = p["pk"]
+	while k < nodes.size() and node_s[k] < rs - 0.5:
+		k += 1
+	p["pk"] = k
+	var kk := k
+	while kk < nodes.size():
+		var n: int = nodes[kk]
+		if node_s[kk] - rs > LOOKAHEAD:
 			break
-	if not free and not ghost:
+		if graph.zone[n] == 1 and runway_owner != id:
+			if _may_take_runway(id):
+				runway_owner = id
+			else:
+				limit = minf(limit, _hold_s(p, kk))
+				why = "piste"
+				break
+		if not ghost and not _free_for(n, id):
+			limit = minf(limit, node_s[kk] - CLEAR)
+			why = "belegt"
+			p["blocked_by"] = _blocker(n, id)
+			break
+		_reserve(n, id)
+		kk += 1
+	# Tempo: Bremskurve der Linie und Halt vor dem Hindernis
+	var ri: int = p["ri"]
+	var want := cap[ri]
+	if limit < total:
+		want = minf(want, sqrt(2.0 * DEC * maxf(0.0, limit - rs - 0.5)))
+	var v: float = p["speed"]
+	if want > v:
+		v = minf(want, v + ACC * sim)
+	else:
+		v = maxf(want, v - DEC * 2.5 * sim)
+	rs = minf(rs + v * sim, maxf(limit, rs))
+	rs = minf(rs, total)
+	p["speed"] = v
+	p["rs"] = rs
+	while ri < cum.size() - 2 and cum[ri + 1] <= rs:
+		ri += 1
+	p["ri"] = ri
+	var seg := maxf(cum[ri + 1] - cum[ri], 0.0001) if ri + 1 < cum.size() else 1.0
+	var t := clampf((rs - cum[ri]) / seg, 0.0, 1.0)
+	var nose := pts[ri].lerp(pts[mini(ri + 1, pts.size() - 1)], t)
+	# Hauptfahrwerk wird nachgezogen (Bugradsteuerung)
+	var wb := float(p["ng"]) + float(p["mg"])
+	var mg_pos: Vector3 = p.get("mg_pos", (p["pos"] as Vector3) - (p["heading"] as Vector3) * float(p["mg"]))
+	var dv := nose - mg_pos
+	dv.y = 0.0
+	if dv.length() > 0.01:
+		mg_pos = nose - dv.normalized() * wb
+	var hd := nose - mg_pos
+	hd.y = 0.0
+	if hd.length() > 0.01:
+		p["heading"] = hd.normalized()
+	p["mg_pos"] = mg_pos
+	p["pos"] = mg_pos + (p["heading"] as Vector3) * float(p["mg"])
+	# Knoten hinter dem Heck freigeben
+	for j in range(k):
+		var n: int = nodes[j]
+		if node_s[j] < rs - 32.0 and reserved.has(n) and int(reserved[n]) == id:
+			reserved.erase(n)
+	# Warten, Umweg, Notlösung
+	if v < 0.05 and why == "belegt":
 		p["wait"] = float(p["wait"]) + sim
 		p["delay"] = float(p["delay"]) + sim * CLOCK
 		if float(p["wait"]) > 12.0 and not bool(p["rerouted"]):
 			p["rerouted"] = true
-			var alt := graph.path(path[pi], path[path.size() - 1], _blocked_for(id))
-			if not alt.is_empty():
-				p["path"] = alt
-				p["pi"] = 0
-		elif float(p["wait"]) > 40.0:
+			_reroute(p)
+		elif float(p["wait"]) > 40.0 and _deadlocked(p):
 			p["ghost"] = 15.0   # Notlösung gegen gegenseitiges Blockieren
 			p["wait"] = 0.0
+		return "belegt"
+	if v > 0.5:
+		p["wait"] = 0.0
+		p["rerouted"] = false
+	if why == "piste" and v < 0.3:
+		return "piste"
+	if rs >= total - 0.05:
+		p["speed"] = 0.0
+		return "ziel"
+	return "fahrt"
+
+
+## Verklemmt: Der Blockierer kommt selbst nicht weiter und wartet (auf uns oder lange).
+## Wer hinter einem Pushback oder einem rollenden Flugzeug steht, wartet einfach.
+func _deadlocked(p: Dictionary) -> bool:
+	var q := _plane_by_id(int(p.get("blocked_by", -1)))
+	if q.is_empty():
+		return true
+	if q["state"] in ["pushback", "abfertigung", "start", "landung", "anflug"]:
 		return false
-	p["wait"] = 0.0
-	p["rerouted"] = false
+	if float(q["speed"]) > 0.2:
+		return false
+	return int(q.get("blocked_by", -1)) == int(p["id"]) or float(q["wait"]) > 30.0
+
+
+## Bogenlänge, an der das Bugrad vor dem Rollhalteort hält (Cockpit hinter der Markierung).
+func _hold_s(p: Dictionary, kk: int) -> float:
+	var nodes: Array = p["path"]
+	var node_s: PackedFloat32Array = p["route"]["node_s"]
+	var s1 := node_s[kk]
+	if kk == 0:
+		return s1 - 8.0
+	var s0 := node_s[kk - 1]
+	var d0 := graph.runway_distance(graph.pos[nodes[kk - 1]])
+	var d1 := graph.runway_distance(graph.pos[nodes[kk]])
+	var f := clampf((d0 - Airside.HOLD_DIST) / maxf(d0 - d1, 0.01), 0.0, 1.0)
+	var line := lerpf(s0, s1, f)
+	var nose_ahead := float(Catalog.PLANES[p["kind"]]["nose"]) - float(p["ng"])
+	return line - nose_ahead - 2.0
+
+
+func _reroute(p: Dictionary) -> void:
+	var nodes: Array = p["path"]
+	if nodes.is_empty():
+		return
+	var goal: int = nodes[nodes.size() - 1]
+	var start := graph.nearest(_nose(p))
+	var alt := graph.path(start, goal, _blocked_for(int(p["id"])), p["heading"])
+	if alt.is_empty():
+		return
+	var r: Dictionary = p["route"]
+	# nur nehmen, wenn der Umweg nicht viel länger ist und nicht über die Piste führt
+	var alt_len := 0.0
+	var via_rwy := false
+	for i in range(1, alt.size()):
+		alt_len += graph.pos[alt[i - 1]].distance_to(graph.pos[alt[i]])
+		via_rwy = via_rwy or graph.zone[alt[i]] == 1
+	var remaining := float(r["total"]) - float(p["rs"])
+	if alt_len > remaining * 1.4 + 120.0 or (via_rwy and runway_owner != int(p["id"])):
+		return
+	var end_pt: Variant = null
+	if bool(r["stand"]):
+		var pts: PackedVector3Array = r["pts"]
+		end_pt = pts[pts.size() - 1]
+	_release_all(int(p["id"]))
+	_set_route(p, alt, end_pt, bool(r["stand"]))
+
+
+# ---------------------------------------------------------------- Pushback
+
+func _pushback(p: Dictionary, sim: float) -> void:
+	var id: int = p["id"]
+	match String(p["push_phase"]):
+		"bereit":
+			p["ptimer"] = float(p["ptimer"]) + sim
+			var tug_ok: bool = ops == null or ops.tug_ready(p)
+			if not tug_ok or float(p["ptimer"]) < 6.0:
+				return
+			if not p.has("push"):
+				if not _plan_pushback(p):
+					p["wait"] = float(p["wait"]) + sim
+					p["delay"] = float(p["delay"]) + sim * CLOCK
+					return
+			p["wait"] = 0.0
+			p["push_phase"] = "schieben"
+			p["ps"] = 0.0
+			p["speed"] = 0.0
+		"schieben":
+			var push: Dictionary = p["push"]
+			var pts: PackedVector3Array = push["pts"]
+			var cum: PackedFloat32Array = push["s"]
+			var total: float = push["total"]
+			var ps: float = p["ps"]
+			var want := minf(PUSH_V, sqrt(2.0 * 0.25 * maxf(total - ps, 0.0)) + 0.1)
+			var v := move_toward(float(p["speed"]), want, 0.3 * sim)
+			p["speed"] = v
+			ps = minf(ps + v * sim, total)
+			p["ps"] = ps
+			var i := 0
+			while i < cum.size() - 2 and cum[i + 1] <= ps:
+				i += 1
+			var seg := maxf(cum[i + 1] - cum[i], 0.0001)
+			var t := clampf((ps - cum[i]) / seg, 0.0, 1.0)
+			p["pos"] = pts[i].lerp(pts[i + 1], t)
+			var tng := pts[i + 1] - pts[i]
+			tng.y = 0.0
+			if tng.length() > 0.001:
+				p["heading"] = -tng.normalized()
+			if ops != null:
+				ops.tug_follow(p, _nose(p), p["heading"], sim)
+			if ps >= total - 0.05:
+				p["push_phase"] = "abkoppeln"
+				p["ptimer"] = 0.0
+				p["speed"] = 0.0
+		"abkoppeln":
+			p["ptimer"] = float(p["ptimer"]) + sim
+			if float(p["ptimer"]) > 3.0 and not bool(p.get("tug_off", false)):
+				p["tug_off"] = true
+				if ops != null:
+					ops.tug_leave(p)
+			if float(p["ptimer"]) > 9.0:
+				_release_all(id)
+				p.erase("push")
+				p["stand"] = {}   # Position ist frei für den nächsten Flug
+				p["state"] = "rollt_aus"
+				p["path"] = []
+				p.erase("route")
+				_set_gear(p)
+				_plan_departure(p)
+				_reserve(graph.nearest_taxi(p["pos"], 40.0), id)
+
+
+## Pushback-Kurve: rückwärts aus der Position, das Heck schwenkt entgegen der späteren Rollrichtung.
+## Reserviert Zufahrt und den Rollweg dahinter; false, wenn dort gerade jemand ist.
+func _plan_pushback(p: Dictionary) -> bool:
+	var id: int = p["id"]
+	var sid := _stand_id(p)
+	if sid < 0 or not graph.lead_of.has(sid):
+		return false
+	var lid: int = graph.lead_of[sid]
+	var goal := _rwy_goal(p)
+	var path0 := graph.path(lid, goal)
+	if path0.size() < 3:
+		return false
+	var b_node: int = path0[1]
+	var dvec := graph.pos[path0[2]] - graph.pos[path0[1]]
+	dvec.y = 0.0
+	var d := dvec.normalized()
+	var t_node := graph.nearest_taxi(graph.pos[b_node] - d * 26.0, 30.0)
+	if t_node < 0:
+		t_node = b_node
+	var need := graph.path(lid, t_node)
+	need.append_array(graph.path(t_node, b_node))
+	need.append(sid)
+	for n: int in need:
+		if not _free_for(n, id):
+			return false
 	for n: int in need:
 		_reserve(n, id)
-	var budget := TAXI_SPEED * sim
-	while budget > 0.0:
-		var i: int = p["pi"]
-		if i >= path.size() - 1:
-			break
-		var target: Vector3 = graph.pos[path[i + 1]]
-		var to := target - pos
-		var d := to.length()
-		if d <= budget:
-			pos = target
-			budget -= d
-			p["pi"] = i + 1
-		else:
-			pos += to / d * budget
-			budget = 0.0
-		if d > 0.01:
-			p["heading"] = (p["heading"] as Vector3).lerp(to.normalized(), 0.35).normalized()
-	p["pos"] = pos
-	for j in range(int(p["pi"])):
-		var n: int = path[j]
-		if reserved.has(n) and int(reserved[n]) == id:
-			reserved.erase(n)
-	return int(p["pi"]) >= path.size() - 1
+	var p0: Vector3 = p["pos"]
+	var fwd: Vector3 = p["heading"]
+	var tp := graph.pos[t_node]
+	var depth := maxf((p0 - tp).dot(fwd), 10.0)
+	var c1 := p0 - fwd * depth * 0.55
+	var c2 := tp + d * minf(24.0, depth * 0.6)
+	var pts := PackedVector3Array()
+	var steps := 60
+	for k in range(steps + 1):
+		var t := float(k) / float(steps)
+		var u := 1.0 - t
+		pts.append(p0 * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + tp * (t * t * t))
+	var cum := PackedFloat32Array()
+	cum.resize(pts.size())
+	cum[0] = 0.0
+	for k in range(1, pts.size()):
+		cum[k] = cum[k - 1] + pts[k - 1].distance_to(pts[k])
+	p["push"] = {"pts": pts, "s": cum, "total": cum[cum.size() - 1]}
+	return true
 
 
 func _park(p: Dictionary) -> void:
@@ -458,9 +952,12 @@ func _park(p: Dictionary) -> void:
 	var node: Node3D = st["node"]
 	_reserve(graph.stand_node.get(node.get_instance_id(), -1), id)
 	var fwd := node.global_transform.basis.z.normalized()
-	var nose := float(Catalog.PLANES[p["kind"]]["nose"])
-	p["pos"] = (st["pos"] as Vector3) + fwd * (17.0 - nose)
+	p["pos"] = _park_pos(p)
 	p["heading"] = fwd
+	p["hs"] = fwd
+	p["speed"] = 0.0
+	p["pitch"] = 0.0
+	p.erase("route")
 	p["state"] = "abfertigung"
 	var plane: Dictionary = Catalog.PLANES[p["kind"]]
 	var slow := 1.0 if depot_ok() else 1.5
@@ -477,6 +974,9 @@ func _park(p: Dictionary) -> void:
 	_spawn_gse(p)
 	if terminal != null:
 		terminal.flight_parked(p, gate)
+	if ops != null and bool(p.get("bus", false)) and not gate.is_empty():
+		var door: Array = terminal.gate_door(gate)
+		ops.remote_arrive(p, terminal.bus_stop(gate), door[1], true)
 	game.earn(int(plane["fee"]) + int(plane["pax"]) * Catalog.TICKET_FEE, "Landung %s aus %s" % [p["code"], p["city"]])
 
 
@@ -507,15 +1007,15 @@ func _spawn_gse(p: Dictionary) -> void:
 		var start: Vector3 = home + side * float(i) * 4.0
 		v.position = start
 		list.append({"node": v, "home": start, "spot": spot[1], "face": spot[2], "delay": 0.04 * float(i)})
-	# Vorfeldpersonal in Warnwesten: Einweiser vor der Nase, Lader am Gepäckwagen
-	var crew := [[c + fwd * (float(Catalog.PLANES[p["kind"]]["nose"]) + 3.0), -fwd], [c - side * 3.2 - fwd * 7.5, side],
-		[c + side * 6.8 + fwd * 3.5, -side]]
+	# Vorfeldpersonal in Warnwesten: Einweiser vor der Nase (geht nach dem Andocken), Lader am Gepäckwagen
+	var crew := [[c + fwd * (float(Catalog.PLANES[p["kind"]]["nose"]) + 3.0), -fwd, 0.12], [c - side * 3.2 - fwd * 7.5, side, 2.0],
+		[c + side * 6.8 + fwd * 3.5, -side, 2.0]]
 	for i in range(crew.size()):
 		var w := Factory.make_staff(Color(0.95, 0.85, 0.1), Color(0.15, 0.18, 0.28), i, true)
 		add_child(w)
 		w.position = crew[i][0]
 		w.basis = Basis.looking_at(crew[i][1], Vector3.UP)
-		list.append({"node": w, "static": true})
+		list.append({"node": w, "static": true, "until": crew[i][2]})
 	p["gse"] = list
 
 
@@ -524,6 +1024,9 @@ func _update_gse(p: Dictionary, _sim: float) -> void:
 	var f := 1.0 - float(p["timer"]) / maxf(total, 0.01)
 	for g: Dictionary in p["gse"]:
 		if bool(g.get("static", false)):
+			var nd: Variant = g["node"]
+			if is_instance_valid(nd):
+				(nd as Node3D).visible = f < float(g.get("until", 2.0))
 			continue
 		var v: Node3D = g["node"]
 		var home: Vector3 = g["home"]
@@ -560,12 +1063,16 @@ func _animate(p: Dictionary, sim: float) -> void:
 	var state: String = p["state"]
 	var target := 0.0
 	match state:
-		"anflug", "landung", "start":
+		"anflug", "start":
 			target = 34.0
+		"landung":
+			target = 30.0 if float(p["speed"]) > 30.0 else 16.0   # Schubumkehr, dann Leerlauf
 		"rollt_ein", "rollt_aus", "wartet":
 			target = 16.0
 		"abfertigung":
-			target = 0.0 if float(p["timer"]) > 3.0 and float(p["timer"]) < float(p["turn"]) - 2.0 else 10.0
+			target = 0.0 if float(p["timer"]) < float(p["turn"]) - 2.0 else 10.0
+		"pushback":
+			target = 12.0 if p.get("push_phase", "") != "bereit" else 0.0   # Triebwerke werden beim Zurückschieben gestartet
 	var rate := lerpf(float(p.get("fan_rate", 0.0)), target, clampf(sim * 0.6, 0.0, 1.0))
 	p["fan_rate"] = rate
 	p["spin"] = fmod(float(p.get("spin", 0.0)) + rate * sim, TAU)
@@ -579,7 +1086,8 @@ func _animate(p: Dictionary, sim: float) -> void:
 		gear.visible = float(p["alt"]) < (140.0 if state == "anflug" else 35.0)
 	var beacon := node.get_node_or_null("Beacon") as Node3D
 	if beacon != null:
-		beacon.visible = rate > 2.0 and fmod(float(p["t"]), 1.1) < 0.18
+		var on := rate > 2.0 or state == "pushback"
+		beacon.visible = on and fmod(float(p["t"]), 1.1) < 0.18
 	var strobe := node.get_node_or_null("Strobe") as Node3D
 	if strobe != null:
 		strobe.visible = state in ["anflug", "landung", "start"] and fmod(float(p["t"]), 1.4) < 0.08
@@ -588,17 +1096,20 @@ func _animate(p: Dictionary, sim: float) -> void:
 func _place(p: Dictionary) -> void:
 	var node: Node3D = p["node"]
 	var pos: Vector3 = p["pos"]
-	node.position = Vector3(pos.x, float(p["alt"]), pos.z)
+	var pitch := float(p.get("pitch", 0.0))
+	var lift := 0.0
+	if float(p["alt"]) < 2.0 and pitch > 0.0:
+		lift = maxf(0.0, 13.0 * sin(pitch) - 1.3)   # Heck nicht durch den Boden drehen
+	node.position = Vector3(pos.x, float(p["alt"]) + lift, pos.z)
 	var h: Vector3 = p["heading"]
+	h.y = 0.0
 	if h.length_squared() > 0.0001:
-		# weich drehen statt an jedem Wegpunkt abzuknicken
 		var hs: Vector3 = p.get("hs", h)
-		hs = hs.lerp(h.normalized(), 0.18 if p["state"] in ["rollt_ein", "rollt_aus", "wartet"] else 1.0)
-		hs.y = 0.0
+		hs = hs.lerp(h.normalized(), 0.5)
 		if hs.length_squared() < 0.0001:
 			hs = h
 		p["hs"] = hs.normalized()
-		node.basis = Basis.looking_at(p["hs"], Vector3.UP)
+		node.basis = Basis.looking_at(p["hs"], Vector3.UP) * Basis(Vector3.RIGHT, pitch)
 
 
 func _remove(p: Dictionary, msg: String) -> void:
@@ -609,6 +1120,8 @@ func _remove(p: Dictionary, msg: String) -> void:
 	_clear_gse(p)
 	if terminal != null:
 		terminal.flight_left(p)
+	if ops != null:
+		ops.release(p)
 	(p["node"] as Node).queue_free()
 	planes.erase(p)
 	if msg != "":
@@ -623,6 +1136,8 @@ func clear() -> void:
 	pax_log.clear()
 	if terminal != null:
 		terminal.clear_people()
+	if ops != null:
+		ops.clear()
 	dirty = true
 
 
@@ -704,11 +1219,16 @@ func describe(p: Dictionary) -> String:
 	var plane: Dictionary = Catalog.PLANES[p["kind"]]
 	var lines := ["%s, %d Sitzplätze" % [String(plane["name"]), int(plane["pax"])]]
 	lines.append(_route(p) + " · " + _status(p)[0])
+	if p["state"] in ["rollt_ein", "rollt_aus", "start", "landung"]:
+		lines.append("%d km/h" % roundi(float(p["speed"]) * 3.6))
 	if p["state"] == "abfertigung":
 		lines.append("Tankwagen, Gepäck und Catering sind am Flugzeug")
 		var gate: Dictionary = p.get("gate", {})
 		if terminal != null and not gate.is_empty():
-			lines.append("Passagiere am " + String(terminal.gate_name(gate)))
+			if bool(p.get("bus", false)):
+				lines.append("Außenposition: Busse und Treppen, " + String(terminal.gate_name(gate)))
+			else:
+				lines.append("Fluggastbrücke am " + String(terminal.gate_name(gate)))
 		if not depot_ok():
 			lines.append("Ohne Vorfelddepot dauert es 50 % länger")
 	if float(p["delay"]) >= 1.0:
@@ -731,13 +1251,19 @@ func _status(p: Dictionary) -> Array:
 				return ["Wartet auf Rollweg", Color(1.0, 0.55, 0.45)]
 			return ["Rollt zum Stand", Color(0.94, 0.76, 0.31)]
 		"abfertigung":
+			if float(p["timer"]) <= 0.0:
+				return ["Boarding per Bus", Color(0.94, 0.76, 0.31)]
 			return ["Abfertigung %d Min" % ceili(float(p["timer"])), Color(0.66, 0.85, 0.56)]
+		"pushback":
+			if p.get("push_phase", "") == "bereit":
+				return ["Wartet auf Pushback" if float(p["wait"]) > 1.0 else "Türen zu, Schlepper dockt an", Color(0.94, 0.76, 0.31)]
+			return ["Pushback", Color(0.94, 0.76, 0.31)]
 		"rollt_aus":
 			if float(p["wait"]) > 1.0:
 				return ["Wartet auf Rollweg", Color(1.0, 0.55, 0.45)]
 			return ["Rollt zur Piste", Color(0.94, 0.76, 0.31)]
 		"wartet":
-			return ["Wartet auf Piste", Color(1.0, 0.55, 0.45)]
+			return ["Wartet am Rollhalt", Color(1.0, 0.55, 0.45)]
 		"start":
 			return ["Start", Color(0.56, 0.75, 0.94)]
 	return ["", Color.WHITE]

@@ -1,22 +1,34 @@
 extends RefCounted
 ## Rollnetz als Graph: Knoten alle 5 m entlang von Pisten, Rollwegen und Vorfeldern,
-## Verbindungen dort, wo sich Flächen berühren oder kreuzen, dazu ein Knoten je Stand.
-## Wegsuche mit A*.
+## Verbindungen dort, wo sich Flächen berühren oder kreuzen.
+## Je Stand ein Standknoten und ein Zufahrtsknoten am hinteren Rand (Einrolllinie).
+## Über Standflächen wird nicht durchgerollt, Knoten näher als HOLD_DIST an einer Pistenmitte
+## gehören zum Pistenschutzbereich (dort darf nur, wer die Piste hat).
+## Wegsuche mit A*, ohne Wenden auf der Stelle.
 
 const Catalog = preload("res://scripts/catalog.gd")
 
 const STEP := 5
 const CELL := 20.0
+const NEAR := 30.0
+const HOLD_DIST := 90.0      # Rollhalteort: Abstand zur Pistenmitte (ICAO, Instrumentenpiste)
+const LEAD_BACK := 24.0      # Zufahrtsknoten so weit hinter der Standmitte
+const MAX_TURN_DOT := -0.35  # schärfer als ~110° wird an einem Knoten nicht abgebogen
 
 var pos := PackedVector3Array()
 var kind := PackedStringArray()
-var line_idx := PackedInt32Array()   # Index in game.lines, -1 für Stände
+var line_idx := PackedInt32Array()   # Index in game.lines, -1 für Stände und Zufahrten
 var adj: Array = []                  # je Knoten: Array von Nachbarindizes
 var line_nodes: Dictionary = {}      # Index in game.lines -> Array der Knoten in Reihenfolge
-var stand_node: Dictionary = {}      # Stand-Datensatz (Instanz-ID des Knotens) -> Knoten
+var stand_node: Dictionary = {}      # Instanz-ID des Stand-Knotens -> Graphknoten
+var lead_of: Dictionary = {}         # Standknoten -> Zufahrtsknoten
+var stand_of_lead: Dictionary = {}   # Zufahrtsknoten -> Standknoten
+var stand_fwd: Dictionary = {}       # Standknoten -> Blickrichtung des geparkten Flugzeugs
 var near: Array = []                 # je Knoten: Knoten im Umkreis von NEAR m (für Reservierungen)
-
-const NEAR := 30.0
+var zone := PackedByteArray()        # 1 = im Pistenschutzbereich
+var in_stand := PackedByteArray()    # 1 = liegt auf einer Standfläche
+var runways: Array = []              # [Anfang, Ende, Breite] je Piste
+var holds: Array = []                # Rollhalteorte: {"pos", "dir" (zur Piste), "line"}
 
 
 func build(lines: Array, stands: Array) -> void:
@@ -27,6 +39,15 @@ func build(lines: Array, stands: Array) -> void:
 	near = []
 	line_nodes = {}
 	stand_node = {}
+	lead_of = {}
+	stand_of_lead = {}
+	stand_fwd = {}
+	runways = []
+	holds = []
+	for l: Dictionary in lines:
+		if l["kind"] == "piste":
+			var s: PackedVector3Array = l["samples"]
+			runways.append([s[0], s[s.size() - 1], float(Catalog.LINES["piste"]["width"])])
 	for li in range(lines.size()):
 		var l: Dictionary = lines[li]
 		var k: String = l["kind"]
@@ -44,15 +65,104 @@ func build(lines: Array, stands: Array) -> void:
 				break
 			i = mini(i + STEP, s.size() - 1)
 		line_nodes[li] = ids
+		if k == "rollweg":
+			_find_holds(s, li)
 	_cross_links()
+	# Standflächen sperren
+	in_stand.resize(pos.size())
+	in_stand.fill(0)
+	var rects := []
 	for st: Dictionary in stands:
+		rects.append((st["rect"] as Rect2).grow(1.0))
+	for i in range(pos.size()):
+		if kind[i] == "piste":
+			continue
+		for r: Rect2 in rects:
+			if r.has_point(Vector2(pos[i].x, pos[i].z)):
+				in_stand[i] = 1
+				break
+	# Stand- und Zufahrtsknoten
+	for st: Dictionary in stands:
+		var node: Node3D = st["node"]
+		var fwd := node.global_transform.basis.z.normalized()
+		fwd.y = 0.0
+		fwd = fwd.normalized()
 		var p: Vector3 = st["pos"]
-		var id := _add(p, "stand", -1)
-		var near := _nearest_of_kind(p, "vorfeld", 45.0, 3)
-		for n: int in near:
-			_link(id, n)
-		stand_node[(st["node"] as Node).get_instance_id()] = id
+		var sid := _add(p, "stand", -1)
+		var lid := _add(p - fwd * LEAD_BACK, "zufahrt", -1)
+		in_stand.append(0)
+		in_stand.append(0)
+		_link(sid, lid)
+		lead_of[sid] = lid
+		stand_of_lead[lid] = sid
+		stand_fwd[sid] = fwd
+		stand_node[node.get_instance_id()] = sid
+		for n: int in _lead_targets(pos[lid], fwd):
+			_link(lid, n)
+	zone.resize(pos.size())
+	for i in range(pos.size()):
+		zone[i] = 1 if in_zone(pos[i]) else 0
 	_near_lists()
+
+
+## Rollweg- oder Vorfeldknoten hinter dem Stand, an die die Einrolllinie anschließt.
+func _lead_targets(lp: Vector3, fwd: Vector3) -> Array:
+	var roll := []
+	var apron := []
+	for i in range(pos.size()):
+		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "vorfeld"]):
+			continue
+		var d := pos[i].distance_to(lp)
+		if d > 42.0 or (pos[i] - lp).dot(fwd) > 4.0:
+			continue
+		if kind[i] == "rollweg":
+			roll.append([d, i])
+		else:
+			apron.append([d, i])
+	var list := roll if not roll.is_empty() else apron
+	list.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var out := []
+	for f: Array in list.slice(0, 2 if list == roll else 3):
+		out.append(f[1])
+	return out
+
+
+## Wo ein Rollweg den Abstand HOLD_DIST zu einer Pistenmitte unterschreitet, liegt ein Rollhalteort.
+func _find_holds(s: PackedVector3Array, li: int) -> void:
+	if runways.is_empty():
+		return
+	var prev := _rwy_dist(s[0])
+	for i in range(1, s.size()):
+		var d := _rwy_dist(s[i])
+		if (prev >= HOLD_DIST) != (d >= HOLD_DIST):
+			var t := s[i] - s[i - 1]
+			t.y = 0.0
+			var toward := t.normalized() if d < prev else -t.normalized()
+			holds.append({"pos": Vector3(s[i].x, 0.0, s[i].z), "dir": toward, "line": li})
+		prev = d
+
+
+func _rwy_dist(p: Vector3) -> float:
+	var best := INF
+	for r: Array in runways:
+		best = minf(best, _seg_dist(p, r[0], r[1]))
+	return best
+
+
+## Abstand zur nächsten Pistenmitte (für Rollhalteorte und den Pistenschutzbereich).
+func runway_distance(p: Vector3) -> float:
+	return _rwy_dist(p)
+
+
+func in_zone(p: Vector3) -> bool:
+	return _rwy_dist(p) < HOLD_DIST - 0.5
+
+
+static func _seg_dist(p: Vector3, a: Vector3, b: Vector3) -> float:
+	var ab := Vector2(b.x - a.x, b.z - a.z)
+	var ap := Vector2(p.x - a.x, p.z - a.z)
+	var t := clampf(ap.dot(ab) / maxf(ab.length_squared(), 0.0001), 0.0, 1.0)
+	return (ap - ab * t).length()
 
 
 func _near_lists() -> void:
@@ -124,26 +234,13 @@ func _cross_links() -> void:
 			_link(i, int(best[li][1]))
 
 
-func _nearest_of_kind(p: Vector3, k: String, max_d: float, count: int) -> Array:
-	var found := []
-	for i in range(pos.size()):
-		if kind[i] != k:
-			continue
-		var d := pos[i].distance_to(p)
-		if d <= max_d:
-			found.append([d, i])
-	found.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
-	var out := []
-	for f: Array in found.slice(0, count):
-		out.append(f[1])
-	return out
-
-
 func nearest(p: Vector3, k: String = "") -> int:
 	var best := -1
 	var bd := INF
 	for i in range(pos.size()):
 		if k != "" and kind[i] != k:
+			continue
+		if k == "" and (kind[i] in ["stand", "zufahrt"] or in_stand[i] == 1):
 			continue
 		var d := pos[i].distance_squared_to(p)
 		if d < bd:
@@ -152,11 +249,38 @@ func nearest(p: Vector3, k: String = "") -> int:
 	return best
 
 
+## Nächster freier Rollknoten (kein Stand, keine Standfläche) in der Nähe von p, sonst -1.
+func nearest_taxi(p: Vector3, max_d: float) -> int:
+	var best := -1
+	var bd := max_d
+	for i in range(pos.size()):
+		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "vorfeld"]):
+			continue
+		var d := pos[i].distance_to(p)
+		if d < bd:
+			bd = d
+			best = i
+	return best
+
+
 ## Kürzester Weg von a nach b als Knotenliste (leer, wenn es keinen gibt).
-## blocked: Knoten, die gemieden werden (z. B. von anderen reserviert). Stände sind nur Start oder Ziel.
-func path(a: int, b: int, blocked: Dictionary = {}) -> Array:
+## blocked: gemiedene Knoten (z. B. von anderen reserviert). Stände, Zufahrten und Standflächen
+## nur als Start oder Ziel. heading: Fahrtrichtung am Start (kein Wenden).
+func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.ZERO) -> Array:
+	var out := _search(a, b, blocked, heading, true)
+	if out.is_empty():
+		out = _search(a, b, blocked, heading, false)
+	return out
+
+
+func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bool) -> Array:
 	if a < 0 or b < 0:
 		return []
+	var allow := {a: true, b: true}
+	if lead_of.has(b):
+		allow[lead_of[b]] = true
+	if lead_of.has(a):
+		allow[lead_of[a]] = true
 	var g := {a: 0.0}
 	var came := {}
 	var open := [a]
@@ -178,12 +302,26 @@ func path(a: int, b: int, blocked: Dictionary = {}) -> Array:
 				out.push_front(came[out[0]])
 			return out
 		closed[cur] = true
+		var din := Vector3.ZERO
+		if came.has(cur):
+			din = (pos[cur] - pos[came[cur]]).normalized()
+		elif heading.length_squared() > 0.01:
+			din = heading.normalized()
 		for nb: int in adj[cur]:
 			if closed.has(nb):
 				continue
-			if nb != b and (kind[nb] == "stand" or blocked.has(nb)):
+			if not allow.has(nb):
+				if kind[nb] == "stand" or kind[nb] == "zufahrt" or in_stand[nb] == 1 or blocked.has(nb):
+					continue
+			var step := pos[nb] - pos[cur]
+			if no_uturn and din != Vector3.ZERO and step.length() > 0.01 and din.dot(step.normalized()) < MAX_TURN_DOT:
 				continue
-			var cost := float(g[cur]) + pos[cur].distance_to(pos[nb]) * (1.6 if kind[nb] == "piste" else 1.0)
+			var w := 1.0
+			if kind[nb] == "piste":
+				w = 1.6
+			elif kind[nb] == "vorfeld":
+				w = 1.4
+			var cost := float(g[cur]) + step.length() * w
 			if not g.has(nb) or cost < float(g[nb]):
 				g[nb] = cost
 				came[nb] = cur

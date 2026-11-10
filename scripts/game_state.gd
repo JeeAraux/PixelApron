@@ -13,6 +13,11 @@ signal day_ended                   # Mitternacht (Tagesbilanz)
 
 const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
+const MAP_HALF := 3000.0   # Spielfeld 6 × 6 km, Mitte im Ursprung
+
+
+static func on_map(p: Vector3, margin: float = 0.0) -> bool:
+	return absf(p.x) <= MAP_HALF - margin and absf(p.z) <= MAP_HALF - margin
 const Factory = preload("res://scripts/factory.gd")
 const SAVE_PATH := "user://spielstand.json"
 const START_MONEY := 30000000
@@ -289,6 +294,10 @@ func _ensure_grid() -> void:
 ## Ergebnis: why (leer = erlaubt), decor (wird weggeräumt), junctions ([Straße, Kreuzungspunkt, Index im neuen Weg]).
 func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 	var out := {"why": "", "decor": [], "junctions": []}
+	for v: Vector3 in samples:
+		if not on_map(v):
+			out["why"] = "Außerhalb der Karte"
+			return out
 	if Catalog.utility_of(kind) != "" or Catalog.is_wall(kind) or samples.size() < 2:
 		return out
 	var w: float = Catalog.LINES[kind]["width"]
@@ -562,6 +571,8 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 	var on: String = def.get("on", "")
 	var r := footprint(id, pos, rot)
 	var inner := r.grow(-0.05)
+	if not on_map(Vector3(r.position.x, 0, r.position.y)) or not on_map(Vector3(r.end.x, 0, r.end.y)):
+		return "Außerhalb der Karte"
 	if Catalog.is_inside(id):
 		var hall := hall_for_rect(r)
 		if hall.is_empty():
@@ -686,7 +697,7 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false) -> Dicti
 func stands() -> Array:
 	var out := []
 	for it: Dictionary in items:
-		if it["id"] == "stand":
+		if it["id"] == "stand" or it["id"] == "stand_aussen":
 			out.append(it)
 	return out
 
@@ -854,6 +865,7 @@ func _update_status_labels() -> void:
 			lbl.outline_size = 8
 			lbl.modulate = Color(1.0, 0.45, 0.35)
 			lbl.outline_modulate = Color(0.1, 0.03, 0.02)
+			lbl.visibility_range_end = 950.0   # weit herausgezoomt ausblenden
 			node.add_child(lbl)
 		lbl.text = text
 		lbl.position = Vector3(0, float(Catalog.ITEMS[it["id"]]["h"]) + 3.0, 0)
@@ -1093,19 +1105,28 @@ func load_game() -> bool:
 
 func load_starter() -> void:
 	var V := func(x: float, z: float) -> Vector3: return Vector3(x, 0.0, z)
-	build_line("vorfeld", [V.call(-150, -55), V.call(150, -55)], true)
-	build_line("rollweg", [V.call(-875, -170), V.call(-860, -120), V.call(-815, -95), V.call(815, -95),
-		V.call(860, -120), V.call(875, -170)], true)
-	build_line("piste", [V.call(-900, -170), V.call(900, -170)], true)
-	for x: float in [-420.0, 60.0, 420.0]:
-		build_line("rollweg", [V.call(x - 70, -170), V.call(x - 10, -150), V.call(x + 30, -95)], true)
+	# Vorfeld bis zum Terminal, dahinter der Parallelrollweg A (Abstand Pistenmitte 168 m nach ICAO,
+	# Rollhalteorte 90 m vor der Pistenmitte), an den Enden Zurollwege, dazwischen zwei Schnellabrollwege.
+	build_line("vorfeld", [V.call(-155, -56), V.call(155, -56)], true)
+	build_line("vorfeld", [V.call(-155, -92), V.call(155, -92)], true)
+	build_line("rollweg", [V.call(-880, -272), V.call(-878, -200), V.call(-866, -140), V.call(-830, -110),
+		V.call(-780, -104), V.call(780, -104), V.call(830, -110), V.call(866, -140), V.call(878, -200),
+		V.call(880, -272)], true)
+	build_line("piste", [V.call(-900, -272), V.call(900, -272)], true)
+	for x: float in [140.0, 470.0]:
+		build_line("rollweg", [V.call(x, -272), V.call(x + 70, -260), V.call(x + 125, -238), V.call(x + 160, -205),
+			V.call(x + 178, -165), V.call(x + 184, -130), V.call(x + 185, -104)], true)
 	build_line("strasse", [V.call(430, 60), V.call(260, 60), V.call(170, 40), V.call(60, 30),
 		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true)
 	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true)
 	build_line("gehweg", [V.call(-30, 12), V.call(30, 12)], true)
 	_starter_terminal(V)
-	for x: float in [-105.0, -60.0, -15.0, 30.0]:
+	# Kontaktstände mit Brücke vor den Gates, Außenpositionen mit Bus und Treppe daneben
+	for x: float in [-40.0, 5.0]:
 		build_item("stand", V.call(x, -55), 0, true)
+	for x: float in [-130.0, -85.0, 50.0, 95.0]:
+		build_item("stand_aussen", V.call(x, -55), 0, true)
+	build_item("bushalt", V.call(-5, -27.5), 0, true)
 	build_item("tower", V.call(190, -40), 0, true)
 	build_item("hangar", V.call(-200, -48), 0, true)
 	build_item("parkhaus", V.call(-40, 62), 0, true)
@@ -1163,8 +1184,10 @@ func _starter_terminal(V: Callable) -> void:
 	put.call("sicherheit", -3, -8)
 	put.call("sicherheit", 3, -8)
 	# Luftseite: Gates am Vorfeld, Toiletten, Gepäcksortierung, Shop
-	for x: float in [-22.0, -11.0, 0.0, 11.0]:
-		put.call("gate", x, -20)
+	put.call("gate", -22, -20)
+	put.call("busgate", -11, -20)
+	put.call("busgate", 0, -20)
+	put.call("gate", 11, -20)
 	put.call("wc", 22, -21.5)
 	put.call("gepaeckanlage", 22, -13)
 	put.call("shop", -22, -11)

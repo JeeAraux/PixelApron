@@ -27,6 +27,7 @@ var bridges: Dictionary = {}   # Instanz-ID des Gates -> Fluggastbrücke
 const Models = preload("res://scripts/models.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
 const BRIDGE_REACH := 36.0
+var bus_cb: Callable            # ground_ops.pax_at_door(Flug-ID): ein Abfliegender ist an der Bus-Tür
 
 
 func setup(g: GameState) -> void:
@@ -52,7 +53,10 @@ func _analyze() -> void:
 			counts[it["id"]] = int(counts.get(it["id"], 0)) + 1
 		var missing := []
 		for e: Array in ESSENTIAL:
-			if int(counts.get(e[0], 0)) == 0:
+			var have := int(counts.get(e[0], 0))
+			if e[0] == "gate":
+				have += int(counts.get("busgate", 0))
+			if have == 0:
 				missing.append(e[1])
 		var powered := game.supplied(h, "strom")
 		var area := (h["rect"] as Rect2).get_area()
@@ -200,9 +204,10 @@ func factors() -> Array:
 
 func gate_name(gate: Dictionary) -> String:
 	var i := 1
-	for g: Dictionary in game.items_of("gate"):
+	var id: String = gate.get("id", "gate")
+	for g: Dictionary in game.items_of(id):
 		if is_same(g, gate):
-			return "Gate %d" % i
+			return ("Bus-Gate %d" if id == "busgate" else "Gate %d") % i
 		i += 1
 	return "Gate"
 
@@ -239,25 +244,84 @@ func hall_summary(h: Dictionary) -> String:
 
 # ---------------------------------------------------------------- Gates
 
+## Gate für einen Flug wählen. Auf Außenpositionen (oder wenn keine Brücke hinreicht) geht es
+## mit dem Bus: dann bevorzugt ein Bus-Gate. Setzt p["bus"].
 func assign_gate(p: Dictionary) -> Dictionary:
 	var stand: Dictionary = p["stand"]
 	var sp: Vector3 = stand.get("pos", Vector3.ZERO)
+	var remote := String(stand.get("id", "stand")) == "stand_aussen"
 	var best: Dictionary = {}
 	var bd := INF
 	for info: Dictionary in _complete():
 		for it: Dictionary in game.inside_of(info["hall"]):
-			if it["id"] != "gate":
+			if not (it["id"] in ["gate", "busgate"]):
 				continue
 			var gid := (it["node"] as Node).get_instance_id()
 			if gate_use.has(gid):
 				continue
-			var d := (it["pos"] as Vector3).distance_to(sp)
-			if d < bd:
-				bd = d
+			var score := (it["pos"] as Vector3).distance_to(sp)
+			if remote:
+				score += 0.0 if it["id"] == "busgate" else 400.0
+			elif it["id"] == "gate" and bridge_reaches(it, p):
+				score -= 1000.0
+			elif it["id"] == "busgate":
+				score += 150.0
+			if score < bd:
+				bd = score
 				best = it
+	p["bus"] = remote or best.is_empty() or not (best["id"] == "gate" and bridge_reaches(best, p))
 	if not best.is_empty():
 		gate_use[(best["node"] as Node).get_instance_id()] = int(p["id"])
 	return best
+
+
+## Erreicht die Brücke dieses Gates Tür L1 des Flugzeugs (in seiner Parkposition)?
+func bridge_reaches(gate: Dictionary, p: Dictionary) -> bool:
+	if dirty:
+		_analyze()
+	var gid := (gate["node"] as Node).get_instance_id()
+	if not bridges.has(gid) or not p.has("heading"):
+		return false
+	var s: Dictionary = Models.SPECS.get(p["kind"], Models.SPECS["a320"])
+	var h: Vector3 = p["heading"]
+	var door: Vector3 = (p["pos"] as Vector3) + Basis.looking_at(Vector3(h.x, 0, h.z).normalized(), Vector3.UP) * Vector3(-(float(s["r"]) + 2.9), 0.0, float(s["doors"][0]))
+	var a: Vector3 = bridges[gid]["anchor"]
+	return Vector2(door.x - a.x, door.z - a.z).length() < BRIDGE_REACH
+
+
+## Tür eines Gates zum Vorfeld: [Punkt innen, Punkt außen, Außennormale].
+func gate_door(gate: Dictionary) -> Array:
+	var h: Dictionary = gate["hall"]
+	var hr: Rect2 = h["rect"]
+	var gr: Rect2 = gate["rect"]
+	var c := gr.get_center()
+	var cand := [[gr.position.y - hr.position.y, Vector3(0, 0, -1), Vector3(c.x, 0, hr.position.y)],
+		[hr.end.y - gr.end.y, Vector3(0, 0, 1), Vector3(c.x, 0, hr.end.y)],
+		[gr.position.x - hr.position.x, Vector3(-1, 0, 0), Vector3(hr.position.x, 0, c.y)],
+		[hr.end.x - gr.end.x, Vector3(1, 0, 0), Vector3(hr.end.x, 0, c.y)]]
+	cand.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+	var n: Vector3 = cand[0][1]
+	var wall: Vector3 = cand[0][2]
+	var along := n.cross(Vector3.UP)
+	return [wall - n * 1.2 + along * 2.5, wall + n * 1.5 + along * 2.5, n]
+
+
+## Vorfeld-Haltestelle für ein Gate: [Halteposition, Fahrtrichtung]. Ohne Haltestelle hält der Bus
+## direkt vor der Tür.
+func bus_stop(gate: Dictionary) -> Array:
+	var door := gate_door(gate)
+	var best: Dictionary = {}
+	var bd := 260.0
+	for it: Dictionary in game.items_of("bushalt"):
+		var d := (it["pos"] as Vector3).distance_to(door[1])
+		if d < bd:
+			bd = d
+			best = it
+	if not best.is_empty():
+		var b := Basis(Vector3.UP, float(best["rot"]) * PI * 0.5)
+		return [(best["pos"] as Vector3) + b * Vector3(0, 0, -0.6), b * Vector3(1, 0, 0)]
+	var n: Vector3 = door[2]
+	return [(door[1] as Vector3) + n * 6.0, n.cross(Vector3.UP)]
 
 
 func _release_gate(fid: int) -> void:
@@ -301,19 +365,8 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 		bridges[gid]["plane"] = p
 	var hall: Dictionary = gate["hall"]
 	var n := ceili(float(Catalog.PLANES[p["kind"]]["pax"]) / float(PAX_PER_FIGURE))
-	var band := _any(hall, "gepaeckband")
-	for i in range(n):
-		var plan := [["wait", float(i) * 0.45], ["show"]]
-		if not band.is_empty():
-			var bs := _size(band)
-			plan.append(["go", _pt(band, Vector3(randf_range(-bs.x * 0.4, bs.x * 0.4), 0, bs.y * 0.5 + 0.5 + randf() * 0.8))])
-			plan.append(["wait", randf_range(4.0, 8.0)])
-		_maybe(plan, hall, "wc", 0.2)
-		var door := _any(hall, "eingang")
-		if not door.is_empty():
-			plan.append(["go", _pt(door, Vector3(randf_range(-2.0, 2.0), 0, 0))])
-		plan.append(["end"])
-		_spawn(p, hall, false, _pt(gate, Vector3(3.5 + randf_range(-0.5, 0.5), 0, -3.2)), plan)
+	if not bool(p.get("bus", false)):
+		_arrivals(p, gate, n, _pt(gate, Vector3(3.5, 0, -3.2)), 0.45)
 	for i in range(n):
 		var door := _any(hall, "eingang")
 		if door.is_empty():
@@ -342,6 +395,61 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 		plan.append(["sit", face])
 		plan.append(["stay"])
 		_spawn(p, hall, true, _pt(door, Vector3(randf_range(-2.0, 2.0), 0, 0.3)), plan)
+
+
+## Ankommende betreten das Terminal am Gate (oder durch die Tür des Bus-Gates) und gehen zum Band.
+func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing: float) -> void:
+	var hall: Dictionary = gate["hall"]
+	var band := _any(hall, "gepaeckband")
+	for i in range(n):
+		var plan := [["wait", float(i) * spacing], ["show"]]
+		if not band.is_empty():
+			var bs := _size(band)
+			plan.append(["go", _pt(band, Vector3(randf_range(-bs.x * 0.4, bs.x * 0.4), 0, bs.y * 0.5 + 0.5 + randf() * 0.8))])
+			plan.append(["wait", randf_range(4.0, 8.0)])
+		_maybe(plan, hall, "wc", 0.2)
+		var door := _any(hall, "eingang")
+		if not door.is_empty():
+			plan.append(["go", _pt(door, Vector3(randf_range(-2.0, 2.0), 0, 0))])
+		plan.append(["end"])
+		_spawn(p, hall, false, start + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5)), plan)
+
+
+## Ein Bus hat Ankommende an der Haltestelle abgesetzt; n Figuren kommen durch das Bus-Gate herein.
+func bus_arrivals(p: Dictionary, n: int) -> void:
+	var gate: Dictionary = p.get("gate", {})
+	if gate.is_empty() or not is_instance_valid(gate.get("node")):
+		return
+	_arrivals(p, gate, n, gate_door(gate)[0], 0.0)
+
+
+## Der Abflugbus steht bereit: alle Abfliegenden dieses Flugs gehen zur Tür des Bus-Gates.
+## Rückgabe: Anzahl der Figuren, die kommen.
+func board_bus(p: Dictionary) -> int:
+	var gate: Dictionary = p.get("gate", {})
+	if gate.is_empty():
+		return 0
+	var inside: Vector3 = gate_door(gate)[0]
+	var count := 0
+	for per: Dictionary in people:
+		if int(per["flight"]) != int(p["id"]) or not bool(per["dep"]):
+			continue
+		per["plan"] = [["show"], ["go", inside + Vector3(randf_range(-1.5, 1.5), 0, 0)], ["bus"]]
+		per["si"] = 0
+		per["path"] = []
+		per["timer"] = 0.0
+		var luggage := (per["node"] as Node3D).get_node_or_null("Koffer") as Node3D
+		if luggage != null:
+			luggage.position = Vector3(0.36, 0, 0.32)
+		count += 1
+	return count
+
+
+func bus_pax_pending(p: Dictionary) -> bool:
+	for per: Dictionary in people:
+		if int(per["flight"]) == int(p["id"]) and bool(per["dep"]):
+			return true
+	return false
 
 
 func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> void:
@@ -472,6 +580,10 @@ func _update_person(per: Dictionary, sim: float) -> void:
 			per["si"] = si + 1
 		"stay":
 			pass
+		"bus":
+			if bus_cb.is_valid():
+				bus_cb.call(int(per["flight"]))
+			_drop(per)
 		"end":
 			_drop(per)
 
@@ -484,7 +596,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 func _security_problems(h: Dictionary, g: Dictionary) -> Array:
 	var out := []
 	var entries := _cells_of(h, "eingang")
-	var gates := _cells_of(h, "gate")
+	var gates := _cells_of(h, "gate") + _cells_of(h, "busgate")
 	if entries.is_empty() or gates.is_empty():
 		return out
 	var arr: AStarGrid2D = g["arr"]

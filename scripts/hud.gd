@@ -15,12 +15,13 @@ signal quit_requested
 signal setting_changed(key: String, value: Variant)
 signal restart_requested
 signal downloads_requested
+signal map_requested
 
 const Catalog = preload("res://scripts/catalog.gd")
 const GameState = preload("res://scripts/game_state.gd")
 const Settings = preload("res://scripts/settings.gd")
 
-const C_PANEL := Color(0.083, 0.075, 0.055, 0.94)
+const C_PANEL := Color(0.083, 0.075, 0.055, 0.88)
 const C_GOLD := Color(0.73, 0.65, 0.42)
 const C_TEXT := Color(0.96, 0.91, 0.74)
 const C_DIM := Color(0.76, 0.72, 0.58)
@@ -63,6 +64,14 @@ var speed_buttons: Array = []
 var tool_group := ButtonGroup.new()
 var tab_group := ButtonGroup.new()
 var speed_group := ButtonGroup.new()
+var info_details: Control          # Text und Hilfe im Infofeld (einklappbar)
+var info_toggle: Button
+var flights_details: Control
+var flights_toggle: Button
+var build_pages: Control           # Karten des Baumenüs (einklappbar, Reiter bleiben)
+var build_open := true
+var current_tab := ""
+var map_button: Button
 
 
 func _ready() -> void:
@@ -191,6 +200,10 @@ func _build_top() -> void:
 	money_box.add_child(day_label)
 	row.add_child(money_box)
 	row.add_child(VSeparator.new())
+	map_button = _button("Karte", true)
+	map_button.tooltip_text = "Ganze Karte zeigen und zurück (M)"
+	map_button.toggled.connect(func(_on: bool) -> void: map_requested.emit())
+	row.add_child(map_button)
 	utility_button = _button("Leitungen", true)
 	utility_button.tooltip_text = "Strom-, Wasser- und Heizleitungen zeigen (L)"
 	utility_button.toggled.connect(func(on: bool) -> void: utility_toggled.emit(on))
@@ -216,8 +229,19 @@ func _build_info() -> void:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
 	panel.add_child(col)
+	var head := HBoxContainer.new()
+	col.add_child(head)
 	info_title = _label("Ansehen", 20, C_TEXT)
-	col.add_child(info_title)
+	info_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(info_title)
+	info_toggle = _fold_button()
+	info_toggle.pressed.connect(func() -> void: _fold(info_details, info_toggle, not info_details.visible))
+	head.add_child(info_toggle)
+	var details := VBoxContainer.new()
+	details.add_theme_constant_override("separation", 6)
+	col.add_child(details)
+	info_details = details
+	col = details
 	info_body = _label("", 15, C_DIM)
 	info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info_body.custom_minimum_size = Vector2(336, 0)
@@ -227,6 +251,20 @@ func _build_info() -> void:
 	help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help_label.custom_minimum_size = Vector2(336, 0)
 	col.add_child(help_label)
+	_fold(info_details, info_toggle, false)
+
+
+## Kleiner Knopf zum Ein- und Ausklappen eines Felds.
+func _fold_button() -> Button:
+	var b := _button("–", false)
+	b.custom_minimum_size = Vector2(30, 26)
+	b.tooltip_text = "Ein- oder ausklappen"
+	return b
+
+
+func _fold(details: Control, b: Button, open: bool) -> void:
+	details.visible = open
+	b.text = "–" if open else "+"
 
 
 # ---------------------------------------------------------------- Flugplan
@@ -250,13 +288,20 @@ func _build_flights() -> void:
 	head.add_child(sp)
 	flight_done = _label("", 13, C_DIM)
 	head.add_child(flight_done)
+	flights_toggle = _fold_button()
+	flights_toggle.pressed.connect(func() -> void: _fold(flights_details, flights_toggle, not flights_details.visible))
+	head.add_child(flights_toggle)
 	col.add_child(head)
+	var details := VBoxContainer.new()
+	details.add_theme_constant_override("separation", 6)
+	col.add_child(details)
+	flights_details = details
 	flight_status = _label("", 14, C_OK)
 	flight_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(flight_status)
+	details.add_child(flight_status)
 	var board := PanelContainer.new()
-	board.add_theme_stylebox_override("panel", _box(Color(0.03, 0.03, 0.02), Color(0.23, 0.2, 0.14), 2, 8))
-	col.add_child(board)
+	board.add_theme_stylebox_override("panel", _box(Color(0.03, 0.03, 0.02, 0.9), Color(0.23, 0.2, 0.14), 2, 8))
+	details.add_child(board)
 	flight_rows = VBoxContainer.new()
 	flight_rows.add_theme_constant_override("separation", 3)
 	board.add_child(flight_rows)
@@ -275,7 +320,12 @@ func set_flights(rows: Array, status: String, done: int, hint: String = "") -> v
 	if rows.is_empty():
 		flight_rows.add_child(_label("Gerade kein Flugzeug unterwegs", 14, C_FAINT))
 		return
+	var shown := 0
 	for r: Array in rows:
+		shown += 1
+		if shown > 8:
+			flight_rows.add_child(_label("… und %d weitere" % (rows.size() - 8), 13, C_FAINT))
+			break
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
 		var code := _label(String(r[0]), 15, Color(0.94, 0.76, 0.31))
@@ -378,6 +428,7 @@ func _build_menu() -> void:
 	pages.custom_minimum_size = Vector2(0, 116)
 	pages.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(pages)
+	build_pages = pages
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 6)
 	col.add_child(tabs)
@@ -404,6 +455,13 @@ func _build_menu() -> void:
 	sp.custom_minimum_size = Vector2(24, 0)
 	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tabs.add_child(sp)
+	var fold := _button("Baumenü", true)
+	fold.custom_minimum_size = Vector2(96, 36)
+	fold.tooltip_text = "Bauteile ein- und ausblenden (B). Ein Klick auf den offenen Reiter klappt auch zu."
+	fold.button_pressed = true
+	fold.toggled.connect(func(on: bool) -> void: set_build_open(on))
+	tabs.add_child(fold)
+	tab_buttons["_fold"] = fold
 	var undo := _button("Rückgängig", false)
 	undo.custom_minimum_size = Vector2(104, 36)
 	undo.tooltip_text = "Letzten Bau zurücknehmen, volle Erstattung (Strg+Z)"
@@ -421,14 +479,37 @@ func _build_menu() -> void:
 	tool_buttons["abriss"] = demolish
 	pages.custom_minimum_size.x = widest
 	var first: String = Catalog.CATEGORIES[0][0]
-	(tab_buttons[first] as Button).button_pressed = true
-	_show_tab(first)
+	(tab_buttons[first] as Button).set_pressed_no_signal(true)
+	_show_tab(first, false)
 
 
-func _show_tab(key: String) -> void:
+func _show_tab(key: String, toggle: bool = true) -> void:
+	# erneuter Klick auf den offenen Reiter klappt das Baumenü zu
+	if toggle and key == current_tab and build_open:
+		set_build_open(false)
+		return
+	current_tab = key
 	for k: String in tab_pages:
 		(tab_pages[k] as Control).visible = k == key
 		(tab_buttons[k] as Button).set_pressed_no_signal(k == key)
+	set_build_open(true)
+
+
+## Karten des Baumenüs zeigen oder verbergen; die Reiterzeile bleibt immer sichtbar.
+func set_build_open(on: bool) -> void:
+	build_open = on
+	if build_pages != null:
+		build_pages.visible = on
+	if tab_buttons.has("_fold"):
+		(tab_buttons["_fold"] as Button).set_pressed_no_signal(on)
+
+
+func toggle_build() -> void:
+	set_build_open(not build_open)
+
+
+func show_map(on: bool) -> void:
+	map_button.set_pressed_no_signal(on)
 
 
 func set_thumbs(textures: Dictionary) -> void:
@@ -464,7 +545,7 @@ func show_tool(id: String) -> void:
 	for key: String in tool_buttons:
 		(tool_buttons[key] as Button).set_pressed_no_signal(key == id)
 	if tool_category.has(id):
-		_show_tab(String(tool_category[id]))
+		_show_tab(String(tool_category[id]), false)
 
 
 func show_speed(i: int) -> void:
@@ -698,6 +779,8 @@ func set_money(v: int) -> void:
 
 func set_info(title: String, body: String, state: int) -> void:
 	info_title.text = title
+	if title != "Ansehen" and body != "" and info_details != null:
+		_fold(info_details, info_toggle, true)
 	info_body.text = body
 	var c := C_DIM
 	if state == 1:

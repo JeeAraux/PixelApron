@@ -17,6 +17,7 @@ const Models = preload("res://scripts/models.gd")
 
 const CARS_PER_MOVEMENT := 5
 const MIN_GAP := 2.2
+const STOP_BEFORE := 1.7   # Abstand Spurende → Fahrzeugfront beim Halt (Haltelinie bei 0.6 m)
 const LOOK := 45.0
 const ACCEL := 2.6
 const BRAKE := 7.0
@@ -569,7 +570,7 @@ func _drive(m: Dictionary, dt: float) -> void:
 	if free < MIN_GAP:
 		nv = 0.0
 	m["brake"] = nv < v - 0.05 or nv < 0.3
-	if nv < 0.2 and stop < 2.0:
+	if nv < 0.2 and stop < MIN_GAP + 1.5:
 		m["wait"] = float(m["wait"]) + dt
 	elif nv > 1.0:
 		m["wait"] = 0.0
@@ -661,7 +662,7 @@ func _stop_distance(m: Dictionary) -> float:
 				must = true
 			elif sig == "gelb":
 				var v: float = m["v"]
-				must = rest > v * v / (2.0 * 4.5) + 1.5
+				must = rest - STOP_BEFORE > v * v / (2.0 * 4.5) + 0.5
 		"vorfahrt":
 			if not roads.is_major(ni, ei):
 				must = _junction_busy(ni, ei) or _approaching(ni, roads.nodes[ni]["major"], 30.0)
@@ -679,7 +680,11 @@ func _stop_distance(m: Dictionary) -> float:
 		must = false   # niemand wartet ewig (verhindert Verklemmung)
 	if not must:
 		return INF
-	return rest + MIN_GAP + 0.3
+	# Haltelinie liegt 0.6 m vor dem Spurende (0.45 m breit); die Front hält gut einen Meter davor.
+	# Wer die Linie schon überfahren hat, räumt die Kreuzung.
+	if rest < 0.5:
+		return INF
+	return rest - STOP_BEFORE + MIN_GAP
 
 
 func _junction_busy(ni: int, ei: int) -> bool:

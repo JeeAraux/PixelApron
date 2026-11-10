@@ -1,0 +1,602 @@
+extends Node3D
+## Flugfeld nach ICAO Annex 14: Befeuerung (Piste, Rollwege, Anflug mit Lauffeuer, PAPI),
+## Rollhalteorte mit Markierung Muster A, Haltebalken, Pistenwarnlichtern und Schildern,
+## Richtungsschilder an Rollweg-Kreuzungen, Einrolllinien und Standnummern, Windsäcke.
+## Baut sich neu auf, wenn sich Wege oder Stände ändern.
+
+const Catalog = preload("res://scripts/catalog.gd")
+const Kit = preload("res://scripts/mesh_kit.gd")
+const PixelFont = preload("res://scripts/pixel_font.gd")
+const Airside = preload("res://scripts/airside.gd")
+const Factory = preload("res://scripts/factory.gd")
+const Models = preload("res://scripts/models.gd")
+const GameState = preload("res://scripts/game_state.gd")
+
+const BLUE := Color(0.3, 0.5, 1.0)
+const GREEN := Color(0.25, 1.0, 0.5)
+const AMBER := Color(1.0, 0.78, 0.2)
+const RED := Color(1.0, 0.18, 0.12)
+const LAMP_WHITE := Color(1.0, 0.98, 0.88)
+const SIGN_RED := Color(0.72, 0.1, 0.08)
+const SIGN_YELLOW := Color(0.95, 0.78, 0.15)
+const SIGN_BLACK := Color(0.07, 0.07, 0.07)
+const MARK_YELLOW := Color(0.88, 0.70, 0.18)
+const MARK_WHITE := Color(0.88, 0.88, 0.85)
+const POST := Color(0.85, 0.72, 0.2)
+const TAXI_LETTERS := ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P", "Q", "R", "S", "T", "U", "W", "Y", "Z"]
+
+var game: GameState
+var graph := Airside.new()
+var dirty := true
+var names: Dictionary = {}          # Linienindex -> Rollwegname
+var stand_numbers: Dictionary = {}  # Instanz-ID des Stand-Knotens -> Nummer
+var wigwag: Array = []              # zwei Gruppen Pistenwarnlichter, abwechselnd an
+var flashers: Array = []            # Lauffeuer der Anflugbefeuerung, zur Schwelle hin geordnet
+var socks: Array = []               # Windsäcke
+var t := 0.0
+var _pave: Dictionary = {}          # Raster für "liegt auf einem anderen Belag?"
+
+static var _lamp_mat: StandardMaterial3D
+
+
+func setup(g: GameState) -> void:
+	game = g
+	game.network_changed.connect(_mark)
+	game.items_changed.connect(_mark)
+
+
+func _mark() -> void:
+	dirty = true
+
+
+static func lamp_material() -> StandardMaterial3D:
+	if _lamp_mat == null:
+		_lamp_mat = StandardMaterial3D.new()
+		_lamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_lamp_mat.vertex_color_use_as_albedo = true
+		_lamp_mat.vertex_color_is_srgb = true
+		_lamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return _lamp_mat
+
+
+func _process(delta: float) -> void:
+	if dirty:
+		rebuild()
+	t += delta
+	if wigwag.size() == 2:
+		var on := fmod(t, 1.0) < 0.5
+		(wigwag[0] as Node3D).visible = on
+		(wigwag[1] as Node3D).visible = not on
+	if not flashers.is_empty():
+		# zweimal pro Sekunde läuft ein Blitz zur Schwelle
+		var phase := fmod(t, 0.5) / 0.5
+		var lit := int(phase * float(flashers.size() + 3))
+		for i in range(flashers.size()):
+			(flashers[i] as Node3D).visible = i == lit
+	for s: Node3D in socks:
+		if is_instance_valid(s):
+			s.rotation.y = float(s.get_meta("base", 0.0)) + sin(t * 0.37 + float(s.get_meta("seed", 0.0))) * 0.35
+			s.rotation.z = sin(t * 2.3) * 0.04
+
+
+## Name jedes Rollwegs (A, B, C … in Bauzeitfolge).
+static func taxi_names(lines: Array) -> Dictionary:
+	var out := {}
+	var n := 0
+	for i in range(lines.size()):
+		if lines[i]["kind"] == "rollweg":
+			var letter: String = TAXI_LETTERS[n % TAXI_LETTERS.size()]
+			out[i] = letter if n < TAXI_LETTERS.size() else letter + str(n / TAXI_LETTERS.size())
+			n += 1
+	return out
+
+
+func rebuild() -> void:
+	dirty = false
+	for c in get_children():
+		c.queue_free()
+	wigwag = []
+	flashers = []
+	socks = []
+	graph.build(game.lines, game.stands())
+	names = taxi_names(game.lines)
+	_index_pavement()
+	var k := Kit.new()       # Masten, Gehäuse, Schilder
+	var km := Kit.new()      # Bodenmarkierungen
+	var lamps := {}          # Farbe -> Kit (leuchtend, unbeleuchtet)
+	var wa := Kit.new()
+	var wb := Kit.new()
+	for li in range(game.lines.size()):
+		var l: Dictionary = game.lines[li]
+		if l["kind"] == "piste":
+			_runway(l, k, lamps)
+		elif l["kind"] == "rollweg":
+			_taxi_lights(li, l, k, lamps)
+	_holds(k, km, lamps, wa, wb)
+	_junction_signs(k)
+	_stands(k, km, lamps)
+	_add(k, "Flugfeld", false)
+	_add(km, "Markierung", false)
+	for key: String in lamps:
+		_add(lamps[key], "Licht", true)
+	if wa.count > 0:
+		wigwag = [_add(wa, "WarnA", true), _add(wb, "WarnB", true)]
+
+
+func _add(k: Kit, nm: String, lit: bool) -> MeshInstance3D:
+	var mi := k.instance(nm)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if lit else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	if lit:
+		mi.material_override = lamp_material()
+	add_child(mi)
+	return mi
+
+
+func _lk(lamps: Dictionary, col: Color) -> Kit:
+	var key := col.to_html()
+	if not lamps.has(key):
+		lamps[key] = Kit.new()
+	return lamps[key]
+
+
+## Unterflurfeuer (bündig im Belag) oder Überflurfeuer auf einem Knickmast.
+func _lamp(k: Kit, lamps: Dictionary, p: Vector3, col: Color, elevated: bool, top: float = 0.1) -> void:
+	var kl := _lk(lamps, col)
+	if elevated:
+		k.box(p + Vector3(-0.06, 0.0, -0.06), p + Vector3(0.06, 0.42, 0.06), POST)
+		kl.box(p + Vector3(-0.2, 0.42, -0.2), p + Vector3(0.2, 0.78, 0.2), col)
+	else:
+		kl.box(p + Vector3(-0.28, 0.0, -0.28), p + Vector3(0.28, top + 0.05, 0.28), col)
+
+
+# ---------------------------------------------------------------- Beläge
+
+func _index_pavement() -> void:
+	_pave = {}
+	for li in range(game.lines.size()):
+		var l: Dictionary = game.lines[li]
+		var kind: String = l["kind"]
+		if not (kind in ["piste", "rollweg", "vorfeld"]):
+			continue
+		var hw := float(Catalog.LINES[kind]["width"]) * 0.5
+		var s: PackedVector3Array = l["samples"]
+		for i in range(0, s.size(), 2):
+			var key := Vector2i(floori(s[i].x / 20.0), floori(s[i].z / 20.0))
+			if not _pave.has(key):
+				_pave[key] = []
+			(_pave[key] as Array).append([s[i].x, s[i].z, hw, li, kind])
+
+
+## Liegt p auf einem anderen Belag als Linie li? kinds leer = alle.
+func _on_other(p: Vector3, li: int, kinds: Array = []) -> bool:
+	var c := Vector2i(floori(p.x / 20.0), floori(p.z / 20.0))
+	for dx in range(-2, 3):
+		for dz in range(-2, 3):
+			for e: Array in _pave.get(c + Vector2i(dx, dz), []):
+				if int(e[3]) == li:
+					continue
+				if not kinds.is_empty() and not (String(e[4]) in kinds):
+					continue
+				var d := Vector2(p.x - float(e[0]), p.z - float(e[1])).length()
+				if d < float(e[2]) - 0.3:
+					return true
+	return false
+
+
+# ---------------------------------------------------------------- Piste
+
+func _runway(l: Dictionary, k: Kit, lamps: Dictionary) -> void:
+	var s: PackedVector3Array = l["samples"]
+	var a := Vector3(s[0].x, 0, s[0].z)
+	var b := Vector3(s[s.size() - 1].x, 0, s[s.size() - 1].z)
+	var length := a.distance_to(b)
+	var dir := (b - a).normalized()
+	var side := dir.cross(Vector3.UP).normalized()   # rechts in Landerichtung
+	var hw := float(Catalog.LINES["piste"]["width"]) * 0.5
+	var at := func(dv: float, dx: float) -> Vector3: return a + dir * dv + side * dx
+	# Randfeuer alle 60 m, die letzten 600 m gelb
+	var v := 0.0
+	while v <= length + 0.1:
+		var col := AMBER if length - v < 600.0 else LAMP_WHITE
+		for sx: float in [-1.0, 1.0]:
+			_lamp(k, lamps, at.call(v, sx * (hw + 1.5)), col, true)
+		v += 60.0
+	# Schwellenfeuer grün (Anfang), Endfeuer rot (Ende), mit Flügelbalken
+	var x := -hw + 1.5
+	while x <= hw - 1.4:
+		_lamp(k, lamps, at.call(0.6, x), GREEN, false, 0.09)
+		_lamp(k, lamps, at.call(length - 0.6, x), RED, false, 0.09)
+		x += 3.0
+	for sx: float in [-1.0, 1.0]:
+		for i in range(5):
+			_lamp(k, lamps, at.call(0.0, sx * (hw + 3.0 + float(i) * 1.5)), GREEN, true)
+	# Mittellinienfeuer alle 15 m: weiß, ab 900 m vor dem Ende rot/weiß, die letzten 300 m rot
+	v = 15.0
+	var n := 0
+	while v < length - 10.0:
+		var rest := length - v
+		var col := LAMP_WHITE
+		if rest < 300.0:
+			col = RED
+		elif rest < 900.0 and n % 2 == 1:
+			col = RED
+		_lamp(k, lamps, at.call(v, 0.6), col, false, 0.09)
+		v += 15.0
+		n += 1
+	# Aufsetzzonenfeuer: Dreierreihen beidseitig auf den ersten 900 m
+	v = 60.0
+	while v <= minf(900.0, length * 0.5):
+		for sx: float in [-1.0, 1.0]:
+			for i in range(3):
+				_lamp(k, lamps, at.call(v, sx * (9.0 + float(i) * 1.5)), LAMP_WHITE, false, 0.09)
+		v += 30.0
+	# Anflugbefeuerung (CAT I): Querbalken alle 30 m über 900 m, Querbalken bei 300 m, Lauffeuer
+	var order := []
+	v = -30.0
+	while v >= -900.0:
+		var p0: Vector3 = at.call(v, 0.0)
+		var mast := clampf(-v / 300.0, 0.3, 2.5)
+		for i in range(5):
+			var q: Vector3 = at.call(v, -2.0 + float(i))
+			k.box(q + Vector3(-0.07, 0, -0.07), q + Vector3(0.07, mast, 0.07), Color(0.5, 0.5, 0.5))
+			_lk(lamps, LAMP_WHITE).box(q + Vector3(-0.22, mast, -0.22), q + Vector3(0.22, mast + 0.35, 0.22), LAMP_WHITE)
+		k.box(p0 - side * 2.2 + Vector3(0, mast - 0.1, -0.05) - dir * 0.05, p0 + side * 2.2 + Vector3(0, mast, 0.05) + dir * 0.05, Color(0.5, 0.5, 0.5))
+		if absf(v + 300.0) < 1.0:
+			for i in range(-10, 11):
+				if absi(i) <= 2:
+					continue
+				var q2: Vector3 = at.call(v, float(i) * 1.5)
+				_lamp(k, lamps, q2, LAMP_WHITE, true)
+		if v <= -330.0:
+			order.append(p0 + Vector3(0, mast + 0.9, 0))
+		v -= 30.0
+	order.reverse()   # vom äußersten Feuer zur Schwelle
+	for q: Vector3 in order:
+		var fk := Kit.new()
+		fk.box(q + Vector3(-0.45, -0.3, -0.45), q + Vector3(0.45, 0.3, 0.45), Color(1, 1, 1))
+		var fl := _add(fk, "Lauffeuer", true)
+		fl.visible = false
+		flashers.append(fl)
+	# PAPI links am Zielpunkt: zwei rot, zwei weiß (auf dem Gleitpfad)
+	var aim := 400.0 if length >= 2400.0 else 300.0 if length >= 1500.0 else 250.0
+	for i in range(4):
+		var q: Vector3 = at.call(aim, -(hw + 15.0 + float(i) * 9.0))
+		k.box(q + Vector3(-0.6, 0, -0.6), q + Vector3(0.6, 0.35, 0.6), Color(0.3, 0.3, 0.3))
+		var box_c := q + Vector3(0, 0.85, 0)
+		k.box(box_c - side * 0.7 - dir * 0.4 + Vector3(0, -0.45, 0), box_c + side * 0.7 + dir * 0.4 + Vector3(0, 0.45, 0), Color(0.9, 0.6, 0.15))
+		var lens := RED if i < 2 else LAMP_WHITE
+		for j in range(3):
+			var lc := box_c - dir * 0.42 + side * (-0.42 + float(j) * 0.42)
+			_lk(lamps, lens).box(lc + Vector3(-0.15, -0.15, -0.15), lc + Vector3(0.15, 0.15, 0.15), lens)
+	# Windsäcke an beiden Enden
+	for e: Array in [[300.0, 1.0], [length - 300.0, -1.0]]:
+		var q: Vector3 = at.call(float(e[0]), float(e[1]) * (hw + 75.0))
+		_windsock(k, q)
+
+
+func _windsock(k: Kit, q: Vector3) -> void:
+	k.box(q + Vector3(-1.5, 0, -1.5), q + Vector3(1.5, 0.15, 1.5), Color(0.55, 0.54, 0.5))
+	k.cyl(q, q + Vector3(0, 6.5, 0), 0.12, 0.08, Color(0.85, 0.85, 0.82), 8)
+	var holder := Node3D.new()
+	holder.name = "Windsack"
+	holder.position = q + Vector3(0, 6.3, 0)
+	holder.set_meta("base", randf() * TAU)
+	holder.set_meta("seed", randf() * 10.0)
+	var sk := Kit.new()
+	sk.cyl(Vector3(0, -0.1, 0), Vector3(0, 0.1, 0), 0.6, 0.6, Color(0.3, 0.3, 0.3), 10)
+	for i in range(5):
+		var z0 := float(i) * 0.75
+		var r0 := 0.55 - float(i) * 0.07
+		var r1 := 0.55 - float(i + 1) * 0.07
+		var c := Color(0.98, 0.45, 0.1) if i % 2 == 0 else Color(0.95, 0.95, 0.93)
+		sk.cyl(Vector3(0, -0.05 * float(i), z0), Vector3(0, -0.05 * float(i + 1), z0 + 0.75), r0, r1, c, 10, false)
+	holder.add_child(sk.instance("Sack"))
+	add_child(holder)
+	socks.append(holder)
+
+
+# ---------------------------------------------------------------- Rollwege
+
+func _taxi_lights(li: int, l: Dictionary, k: Kit, lamps: Dictionary) -> void:
+	var s: PackedVector3Array = l["samples"]
+	if s.size() < 3:
+		return
+	var hw := float(Catalog.LINES["rollweg"]["width"]) * 0.5
+	var acc_edge := 0.0
+	var acc_c := 0.0
+	var alt := 0
+	for i in range(1, s.size() - 1):
+		var seg := s[i].distance_to(s[i - 1])
+		acc_edge += seg
+		acc_c += seg
+		var t0 := s[maxi(i - 4, 0)]
+		var t1 := s[mini(i + 4, s.size() - 1)]
+		var tng := Vector3(t1.x - t0.x, 0, t1.z - t0.z).normalized()
+		var tb := s[mini(i + 1, s.size() - 1)] - s[maxi(i - 1, 0)]
+		var ta := s[i] - s[maxi(i - 5, 0)]
+		var bend := 0.0
+		if ta.length() > 0.1 and tb.length() > 0.1:
+			bend = absf(Vector2(ta.x, ta.z).angle_to(Vector2(tb.x, tb.z))) / maxf(ta.length(), 0.1)
+		var curved := bend > 0.004
+		var right := tng.cross(Vector3.UP)
+		var p := Vector3(s[i].x, 0, s[i].z)
+		if acc_c >= (7.5 if curved else 15.0):
+			acc_c = 0.0
+			if not _on_other(p, li, ["piste", "vorfeld"]):
+				var col := GREEN
+				if graph.runway_distance(p) < Airside.HOLD_DIST:
+					col = GREEN if alt % 2 == 0 else AMBER
+					alt += 1
+				_lamp(k, lamps, p, col, false, 0.04)
+		if acc_edge >= (15.0 if curved else 30.0):
+			acc_edge = 0.0
+			for sx: float in [-1.0, 1.0]:
+				var q := p + right * sx * (hw + 1.2)
+				if not _on_other(q, li):
+					_lamp(k, lamps, q, BLUE, true)
+
+
+## Rollhalteorte: Markierung Muster A (zwei durchgezogene, zwei unterbrochene Linien), Haltebalken (rot),
+## Pistenwarnlichter (gelb, abwechselnd), Gebotsschild (rot, Pistenbezeichnung) mit Ortsschild (Rollwegname).
+func _holds(k: Kit, km: Kit, lamps: Dictionary, wa: Kit, wb: Kit) -> void:
+	var hw := float(Catalog.LINES["rollweg"]["width"]) * 0.5
+	for h: Dictionary in graph.holds:
+		var c: Vector3 = h["pos"]
+		var dir: Vector3 = h["dir"]
+		var right := dir.cross(Vector3.UP).normalized()
+		var bas := Basis.looking_at(dir, Vector3.UP)
+		for off: float in [-1.35, -0.75]:
+			km.box(Vector3(-hw + 0.4, 0, -0.15), Vector3(hw - 0.4, 0.068, 0.15), MARK_YELLOW, Transform3D(bas, c + dir * off))
+		for off: float in [-0.15, 0.45]:
+			var x := -hw + 0.4
+			while x < hw - 0.4:
+				km.box(Vector3(x, 0, -0.15), Vector3(minf(x + 1.0, hw - 0.4), 0.068, 0.15), MARK_YELLOW, Transform3D(bas, c + dir * off))
+				x += 2.0
+		# Haltebalken
+		var x2 := -hw + 1.5
+		while x2 <= hw - 1.5:
+			_lamp(k, lamps, c - dir * 2.4 + right * x2, RED, false, 0.04)
+			x2 += 3.0
+		# Pistenwarnlichter beidseitig
+		for sx: float in [-1.0, 1.0]:
+			var q := c - dir * 2.0 + right * sx * (hw + 3.2)
+			k.box(q + Vector3(-0.08, 0, -0.08), q + Vector3(0.08, 0.7, 0.08), POST)
+			k.box(q - right * 0.6 + Vector3(0, 0.7, 0) - dir * 0.15, q + right * 0.6 + Vector3(0, 1.15, 0) + dir * 0.15, SIGN_BLACK)
+			for side_i in range(2):
+				var lc := q + right * (-0.3 + float(side_i) * 0.6) + Vector3(0, 0.93, 0) - dir * 0.17
+				(wa if side_i == 0 else wb).box(lc + Vector3(-0.17, -0.17, -0.08), lc + Vector3(0.17, 0.17, 0.08), AMBER)
+		# Schilder: links [Ort][Gebot], rechts [Gebot][Ort]
+		var rw := _runway_text(c, dir)
+		var nm: String = names.get(int(h["line"]), "")
+		for sx: float in [-1.0, 1.0]:
+			var base := c - dir * 4.0 + right * sx * (hw + 3.5 + 3.5)
+			var signs := [[rw, "gebot"]]
+			if nm != "":
+				if sx < 0.0:
+					signs.push_front([nm, "ort"])
+				else:
+					signs.append([nm, "ort"])
+			_sign_array(k, base, dir, signs)
+
+
+## Text des Gebotsschilds: Kennzahl der Schwelle links zuerst (vom Rollhalt aus gesehen).
+func _runway_text(c: Vector3, dir: Vector3) -> String:
+	var best: Dictionary = {}
+	var bd := INF
+	for l: Dictionary in game.lines:
+		if l["kind"] != "piste":
+			continue
+		var s: PackedVector3Array = l["samples"]
+		var d := Airside._seg_dist(c, s[0], s[s.size() - 1])
+		if d < bd:
+			bd = d
+			best = l
+	if best.is_empty():
+		return "RWY"
+	var s: PackedVector3Array = best["samples"]
+	var nums := Factory.runway_numbers(s)
+	var left := Vector3.UP.cross(dir).normalized()
+	var a_left := (s[0] - c).dot(left) > (s[s.size() - 1] - c).dot(left)
+	if a_left:
+		return "%02d-%02d" % [nums[0], nums[1]]
+	return "%02d-%02d" % [nums[1], nums[0]]
+
+
+## Schilderreihe quer zur Fahrtrichtung, lesbar für jemanden, der in Richtung dir darauf zurollt.
+## Arten: "gebot" (rot, weiße Schrift), "ort" (schwarz, gelbe Schrift und Rahmen), "richtung" (gelb, schwarze Schrift).
+func _sign_array(k: Kit, center: Vector3, dir: Vector3, signs: Array) -> void:
+	var px := 0.13
+	var right := dir.cross(Vector3.UP).normalized()
+	var face := -dir
+	var widths := []
+	var total := 0.0
+	for sg: Array in signs:
+		var w := float(PixelFont.width(String(sg[0])) + 4) * px
+		widths.append(w)
+		total += w
+	var x := -total * 0.5
+	var y0 := 0.45
+	var hgt := 7.0 * px + 4.0 * px
+	for i in range(signs.size()):
+		var sg: Array = signs[i]
+		var w: float = widths[i]
+		var mid := center + right * (x + w * 0.5)
+		var bg := SIGN_RED
+		var fg := Color(0.97, 0.97, 0.95)
+		match String(sg[1]):
+			"ort":
+				bg = SIGN_BLACK
+				fg = SIGN_YELLOW
+			"richtung":
+				bg = SIGN_YELLOW
+				fg = SIGN_BLACK
+		var bas := Basis.looking_at(dir, Vector3.UP)
+		k.box(Vector3(-w * 0.5, y0, -0.12), Vector3(w * 0.5, y0 + hgt, 0.12), bg, Transform3D(bas, mid))
+		if String(sg[1]) == "ort":
+			# gelber Rahmen
+			for e: Array in [[Vector2(-w * 0.5 + 0.05, y0 + 0.05), Vector2(w * 0.5 - 0.05, y0 + 0.11)],
+					[Vector2(-w * 0.5 + 0.05, y0 + hgt - 0.11), Vector2(w * 0.5 - 0.05, y0 + hgt - 0.05)],
+					[Vector2(-w * 0.5 + 0.05, y0 + 0.05), Vector2(-w * 0.5 + 0.11, y0 + hgt - 0.05)],
+					[Vector2(w * 0.5 - 0.11, y0 + 0.05), Vector2(w * 0.5 - 0.05, y0 + hgt - 0.05)]]:
+				var lo: Vector2 = e[0]
+				var hi: Vector2 = e[1]
+				k.box(Vector3(lo.x, lo.y, 0.12), Vector3(hi.x, hi.y, 0.14), fg, Transform3D(bas, mid))
+		PixelFont.draw(k, String(sg[0]), mid + Vector3(0, y0 + hgt * 0.5, 0) + face * 0.15, right, Vector3.UP, face, px, fg)
+		x += w
+	# zwei Beine
+	for sx: float in [-1.0, 1.0]:
+		var q := center + right * sx * (total * 0.5 - 0.2)
+		k.box(q + Vector3(-0.06, 0, -0.06), q + Vector3(0.06, y0, 0.06), Color(0.4, 0.4, 0.42))
+		k.box(q + Vector3(-0.25, 0, -0.25), q + Vector3(0.25, 0.08, 0.25), Color(0.55, 0.54, 0.5))
+
+
+## Richtungsschilder vor Kreuzungen zweier Rollwege: [Ort][Richtung mit Pfeil].
+func _junction_signs(k: Kit) -> void:
+	var hw := float(Catalog.LINES["rollweg"]["width"]) * 0.5
+	var found := {}   # "X|Y" -> Array [Knoten X, Knoten Y]
+	for i in range(graph.pos.size()):
+		if graph.kind[i] != "rollweg":
+			continue
+		var lx := graph.line_idx[i]
+		for nb: int in graph.adj[i]:
+			if graph.kind[nb] != "rollweg" or graph.line_idx[nb] == lx:
+				continue
+			var key := "%d|%d" % [lx, graph.line_idx[nb]]
+			var list: Array = found.get(key, [])
+			var dup := false
+			for e: Array in list:
+				if graph.pos[int(e[0])].distance_to(graph.pos[i]) < 60.0:
+					dup = true
+			if not dup:
+				list.append([i, nb])
+			found[key] = list
+	for key: String in found:
+		var parts := key.split("|")
+		var lx := int(parts[0])
+		var ly := int(parts[1])
+		if not names.has(lx) or not names.has(ly):
+			continue
+		var nodes_x: Array = graph.line_nodes.get(lx, [])
+		var nodes_y: Array = graph.line_nodes.get(ly, [])
+		for e: Array in found[key]:
+			var jx: int = e[0]
+			var jy: int = e[1]
+			var ix := nodes_x.find(jx)
+			var iy := nodes_y.find(jy)
+			if ix < 0 or iy < 0:
+				continue
+			var jp := graph.pos[jx]
+			if graph.runway_distance(jp) < Airside.HOLD_DIST + 10.0:
+				continue
+			# Äste von Y an der Kreuzung
+			var branches := []
+			for step: int in [-4, 4]:
+				var q := iy + step
+				if q >= 0 and q < nodes_y.size():
+					branches.append(graph.pos[nodes_y[q]] - graph.pos[jy])
+			# Auf X aus beiden Richtungen 45 m vor der Kreuzung
+			for step: int in [-9, 9]:
+				var q := ix + step
+				if q < 0 or q >= nodes_x.size():
+					continue
+				var from := graph.pos[nodes_x[q]]
+				var travel := (jp - from).normalized()
+				var right := travel.cross(Vector3.UP).normalized()
+				var signs := [[String(names[lx]), "ort"]]
+				for b: Vector3 in branches:
+					if b.length() < 1.0 or b.normalized().dot(travel) < -0.7:
+						continue
+					var side := travel.cross(b).y
+					var txt := String(names[ly]) + ">" if side < 0.0 else "<" + String(names[ly])
+					signs.append([txt, "richtung"])
+				if signs.size() < 2:
+					continue
+				var pos := from - right * (hw + 3.5 + 3.0)
+				if _on_other(pos, lx):
+					continue
+				_sign_array(k, pos, travel, signs)
+
+
+# ---------------------------------------------------------------- Stände
+
+## Standnummern (am Boden und auf der Andockanzeige) und Einrolllinien vom Rollweg in den Stand.
+func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
+	var list := game.stands().duplicate()
+	list.sort_custom(_stand_order)
+	stand_numbers = {}
+	var num := 0
+	for st: Dictionary in list:
+		num += 1
+		var node: Node3D = st["node"]
+		var bas := node.global_transform.basis.orthonormalized()
+		var fwd := bas.z
+		var sp: Vector3 = st["pos"]
+		var label := str(num)
+		stand_numbers[node.get_instance_id()] = label
+		st["number"] = label
+		# Nummer am Boden auf schwarzem Grund, lesbar beim Einrollen
+		var c := sp + bas * Vector3(-5.5, 0, -17.5)
+		var tw := float(PixelFont.width(label)) * 0.55 + 1.2
+		km.box(Vector3(-tw * 0.5, 0, -2.6), Vector3(tw * 0.5, 0.06, 2.6), SIGN_BLACK, Transform3D(Basis.looking_at(fwd, Vector3.UP), c))
+		PixelFont.draw_ground(km, label, c + Vector3(0, 0.07, 0), fwd, 0.55, MARK_YELLOW)
+		# Nummer auf der Andockanzeige (leuchtend)
+		var disp := sp + bas * Vector3(0, 5.55, 21.93)
+		PixelFont.draw(_lk(lamps, AMBER), label, disp, bas * Vector3(1, 0, 0), Vector3.UP, -fwd, 0.13, AMBER)
+		# Einrolllinien
+		var sid: int = graph.stand_node.get(node.get_instance_id(), -1)
+		if sid < 0 or not graph.lead_of.has(sid):
+			continue
+		var lid: int = graph.lead_of[sid]
+		var bnode := -1
+		var bd := INF
+		for nb: int in graph.adj[lid]:
+			if nb == sid:
+				continue
+			var lateral := absf((graph.pos[nb] - sp).dot(bas.x))
+			if lateral < bd:
+				bd = lateral
+				bnode = nb
+		if bnode < 0:
+			continue
+		var nodes: Array = graph.line_nodes.get(graph.line_idx[bnode], [])
+		var bi := nodes.find(bnode)
+		if bi < 0:
+			continue
+		var p0 := graph.pos[nodes[maxi(bi - 1, 0)]]
+		var p1 := graph.pos[nodes[mini(bi + 1, nodes.size() - 1)]]
+		var tng := Vector3(p1.x - p0.x, 0, p1.z - p0.z).normalized()
+		var bp := graph.pos[bnode]
+		var end := sp + fwd * 12.1
+		var dout := (end - bp).normalized()
+		var span := bp.distance_to(end)
+		for sgn: float in [-1.0, 1.0]:
+			var din := tng * sgn
+			var theta := PI - acos(clampf((-din).dot(dout), -1.0, 1.0))
+			var cut := minf(35.0 * tan(theta * 0.5), span * 0.6)
+			var s1 := bp - din * cut
+			var e := bp + dout * cut
+			var pts := PackedVector3Array()
+			for i in range(25):
+				var tt := float(i) / 24.0
+				pts.append(s1 * ((1.0 - tt) * (1.0 - tt)) + bp * (2.0 * (1.0 - tt) * tt) + e * (tt * tt))
+			pts.append(end)
+			_strip(km, pts, 0.18, MARK_YELLOW)
+
+
+static func _stand_order(a: Dictionary, b: Dictionary) -> bool:
+	var pa: Vector3 = a["pos"]
+	var pb: Vector3 = b["pos"]
+	return pa.x < pb.x if absf(pa.x - pb.x) > 1.0 else pa.z < pb.z
+
+
+## Linie aus flachen Quadern entlang eines Polygonzugs.
+func _strip(km: Kit, pts: PackedVector3Array, half: float, col: Color) -> void:
+	for i in range(pts.size() - 1):
+		var a := Vector3(pts[i].x, 0, pts[i].z)
+		var b := Vector3(pts[i + 1].x, 0, pts[i + 1].z)
+		var d := b - a
+		var seg_len := d.length()
+		if seg_len < 0.05:
+			continue
+		km.box(Vector3(-half, 0, -seg_len * 0.5 - half), Vector3(half, 0.066, seg_len * 0.5 + half), col,
+			Transform3D(Basis.looking_at(d / seg_len, Vector3.UP), (a + b) * 0.5))

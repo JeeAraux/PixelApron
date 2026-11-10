@@ -654,6 +654,10 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			k.box(Vector3(-1.27, 3.9, -1.8), Vector3(1.27, 4.2, 3.7), Color(0.2, 0.4, 0.65))
 			k.box(Vector3(-1.0, 2.9, -2.6), Vector3(1.0, 3.0, -1.8), METAL)
 			_wheels(k, 1.15, 0.45, [-3.0, 2.6])
+		"schlepper":
+			_tug(k)
+		"bus":
+			_apron_bus(k)
 		_:
 			# Gepäckschlepper mit zwei Wagen
 			k.box(Vector3(-0.75, 0.3, -1.5), Vector3(0.75, 0.9, 0.5), cab)
@@ -694,3 +698,118 @@ static func _wheels(k: Kit, half_track: float, r: float, zs: Array) -> void:
 	for z: float in zs:
 		for sx: float in [-1.0, 1.0]:
 			k.cyl(Vector3(sx * (half_track - 0.3), r, z), Vector3(sx * half_track, r, z), r, r, TYRE, 10, true, METAL)
+
+
+## Stangenloser Pushback-Schlepper (Front -Z): flacher Körper, vorn eine U-Gabel für das Bugrad,
+## Kabine seitlich, Rundumleuchte. Das Bugrad sitzt bei z = -2.8.
+static func _tug(k: Kit) -> void:
+	var body := Color(0.92, 0.78, 0.16)
+	var dark := Color(0.16, 0.16, 0.17)
+	# Rahmen hinten und zwei Gabelarme vorn
+	k.box(Vector3(-1.8, 0.35, -0.9), Vector3(1.8, 1.35, 3.9), body)
+	for sx: float in [-1.0, 1.0]:
+		k.box(Vector3(sx * 1.8, 0.35, -4.2), Vector3(sx * 0.75, 1.15, -0.9), body)
+		k.box(Vector3(sx * 1.82, 0.9, -4.2), Vector3(sx * 0.73, 1.0, -0.9), dark)
+		# Warnstreifen schwarz-gelb an den Gabelenden
+		for i in range(3):
+			var z0 := -4.2 + float(i) * 0.5
+			k.box(Vector3(sx * 1.83, 0.45, z0), Vector3(sx * 1.6, 0.85, z0 + 0.25), dark)
+	# Gabel: Rampe und Klemmbacken
+	k.box(Vector3(-0.75, 0.2, -3.2), Vector3(0.75, 0.32, -0.9), DARK_METAL)
+	for sx: float in [-1.0, 1.0]:
+		k.box(Vector3(sx * 0.75, 0.32, -3.3), Vector3(sx * 0.55, 0.95, -2.4), METAL)
+	k.box(Vector3(-0.75, 0.32, -1.1), Vector3(0.75, 1.1, -0.9), METAL)
+	# Kabine rechts hinten, verglast
+	k.box(Vector3(0.4, 1.35, 1.0), Vector3(1.75, 1.45, 3.6), dark)
+	k.box(Vector3(0.45, 1.45, 1.1), Vector3(1.7, 2.55, 3.5), GLASS)
+	for p: Vector3 in [Vector3(0.45, 1.45, 1.1), Vector3(1.6, 1.45, 1.1), Vector3(0.45, 1.45, 3.4), Vector3(1.6, 1.45, 3.4)]:
+		k.box(p, p + Vector3(0.1, 1.15, 0.1), body.darkened(0.15))
+	k.box(Vector3(0.35, 2.55, 1.0), Vector3(1.8, 2.7, 3.6), body)
+	k.cyl(Vector3(1.1, 2.7, 2.3), Vector3(1.1, 2.9, 2.3), 0.14, 0.12, Color(0.98, 0.55, 0.08), 8)
+	# Motorhaube mit Gitter, Rücklichter
+	k.box(Vector3(-1.6, 1.35, 1.2), Vector3(0.2, 1.6, 3.8), body.darkened(0.08))
+	for i in range(5):
+		k.box(Vector3(-1.5, 1.6, 1.5 + float(i) * 0.45), Vector3(0.1, 1.63, 1.7 + float(i) * 0.45), dark)
+	for sx: float in [-1.0, 1.0]:
+		k.box(Vector3(sx * 1.5 - 0.2, 0.9, 3.9), Vector3(sx * 1.5 + 0.2, 1.15, 3.95), Color(0.8, 0.1, 0.08))
+		k.box(Vector3(sx * 1.5 - 0.2, 0.9, -4.25), Vector3(sx * 1.5 + 0.2, 1.1, -4.2), Color(0.98, 0.95, 0.8))
+	_wheels(k, 1.95, 0.55, [-3.3, 2.8])
+
+
+## Vorfeldbus (Front -Z): 14 m lang, 3 m breit, Niederflur, rundum verglast, je drei Türen links und rechts.
+static func _apron_bus(k: Kit) -> void:
+	var body := Color(0.93, 0.93, 0.9)
+	var stripe := Color(0.18, 0.36, 0.62)
+	k.box(Vector3(-1.5, 0.3, -7.0), Vector3(1.5, 0.55, 7.0), Color(0.15, 0.15, 0.16))
+	k.box(Vector3(-1.5, 0.55, -7.0), Vector3(1.5, 1.05, 7.0), body)
+	k.box(Vector3(-1.51, 0.75, -7.0), Vector3(1.51, 0.92, 7.0), stripe)
+	k.box(Vector3(-1.48, 1.05, -6.9), Vector3(1.48, 2.55, 6.9), GLASS)
+	# Fensterholme
+	for z in range(-6, 7, 2):
+		for sx: float in [-1.0, 1.0]:
+			k.box(Vector3(sx * 1.5 - 0.04, 1.05, float(z) - 0.06), Vector3(sx * 1.5 + 0.04, 2.55, float(z) + 0.06), body)
+	k.box(Vector3(-1.5, 2.55, -7.0), Vector3(1.5, 2.95, 7.0), body)
+	k.box(Vector3(-1.2, 2.95, -4.0), Vector3(1.2, 3.15, 2.0), Color(0.75, 0.76, 0.77))
+	# Türen: dunkle Rahmen mit Glas, links und rechts
+	for sx: float in [-1.0, 1.0]:
+		for z: float in [-4.6, 0.0, 4.6]:
+			k.box(Vector3(sx * 1.5 - 0.03, 0.4, z - 1.0), Vector3(sx * 1.5 + 0.03, 2.6, z + 1.0), Color(0.22, 0.23, 0.25))
+			k.box(Vector3(sx * 1.5 - 0.05, 0.55, z - 0.9), Vector3(sx * 1.5 + 0.05, 2.5, z + 0.9), GLASS)
+			k.box(Vector3(sx * 1.5 - 0.06, 0.55, z - 0.03), Vector3(sx * 1.5 + 0.06, 2.5, z + 0.03), Color(0.22, 0.23, 0.25))
+	# Front und Heck: große Scheibe, Lichter, Zielanzeige
+	k.box(Vector3(-1.45, 1.0, -7.03), Vector3(1.45, 2.5, -6.98), GLASS)
+	k.box(Vector3(-1.2, 2.6, -7.04), Vector3(1.2, 2.85, -6.98), Color(0.05, 0.05, 0.05))
+	k.box(Vector3(-0.9, 2.66, -7.06), Vector3(0.9, 2.79, -7.03), Color(0.98, 0.65, 0.15))
+	for sx: float in [-1.0, 1.0]:
+		k.box(Vector3(sx * 1.15 - 0.2, 0.65, -7.04), Vector3(sx * 1.15 + 0.2, 0.85, -7.0), Color(0.98, 0.95, 0.8))
+		k.box(Vector3(sx * 1.15 - 0.2, 0.65, 7.0), Vector3(sx * 1.15 + 0.2, 0.85, 7.04), Color(0.75, 0.08, 0.06))
+	k.cyl(Vector3(0, 3.15, -1.0), Vector3(0, 3.35, -1.0), 0.13, 0.11, Color(0.98, 0.55, 0.08), 8)
+	_wheels(k, 1.5, 0.48, [-4.8, 4.8])
+
+
+## Treppenwagen (Front -Z) mit Plattform vorn auf Höhe h (Türschwelle), Treppe fällt nach hinten ab.
+static func stairs_mesh(h: float) -> ArrayMesh:
+	var key := "treppe_%.2f" % h
+	if _cache.has(key):
+		return _cache[key]
+	var k := Kit.new()
+	var body := Color(0.92, 0.92, 0.9)
+	var rail := Color(0.85, 0.7, 0.15)
+	# Fahrgestell mit Kabine hinten links
+	k.box(Vector3(-1.1, 0.35, -3.6), Vector3(1.1, 0.75, 3.8), DARK_METAL)
+	k.box(Vector3(-1.15, 0.75, 1.8), Vector3(-0.05, 2.3, 3.9), YELLOW)
+	k.box(Vector3(-1.1, 1.5, 1.75), Vector3(-0.1, 2.2, 1.8), GLASS)
+	k.box(Vector3(-1.16, 1.5, 2.0), Vector3(-1.14, 2.2, 3.5), GLASS)
+	k.cyl(Vector3(-0.6, 2.3, 2.8), Vector3(-0.6, 2.45, 2.8), 0.12, 0.1, Color(0.98, 0.55, 0.08), 8)
+	# Plattform vorn mit Dach
+	var top := maxf(h, 1.2)
+	k.box(Vector3(-0.85, top - 0.15, -4.4), Vector3(0.85, top, -2.6), DARK_METAL)
+	for p: Vector3 in [Vector3(-0.85, 0, -4.4), Vector3(0.75, 0, -4.4), Vector3(-0.85, 0, -2.7), Vector3(0.75, 0, -2.7)]:
+		k.box(p + Vector3(0, 0.75, 0), p + Vector3(0.1, top - 0.15, 0.1), METAL)
+	k.box(Vector3(-0.95, top + 2.0, -4.5), Vector3(0.95, top + 2.1, -2.4), body)
+	for sx: float in [-1.0, 1.0]:
+		k.box(Vector3(sx * 0.9 - 0.04, top, -4.4), Vector3(sx * 0.9 + 0.04, top + 2.0, -4.3), METAL)
+		k.box(Vector3(sx * 0.9 - 0.08, top, -4.3), Vector3(sx * 0.9 + 0.08, top + 2.0, -2.5), Color(0.75, 0.82, 0.86))
+	# Stufen von der Plattform nach hinten hinunter
+	var n := maxi(4, int(top / 0.2))
+	var run := 4.2
+	for i in range(n):
+		var t := float(i) / float(n)
+		var y := top - (float(i) + 1.0) * top / float(n)
+		var z := -2.6 + t * run
+		k.box(Vector3(-0.8, y + 0.0, z), Vector3(0.8, y + 0.12, z + run / float(n) + 0.02), Color(0.55, 0.56, 0.58))
+	# Wangen und Handläufe
+	for sx: float in [-1.0, 1.0]:
+		var a := Vector3(sx * 0.85, top, -2.6)
+		var b := Vector3(sx * 0.85, 0.75, -2.6 + run)
+		var d := b - a
+		var bas := Basis.looking_at(d.normalized(), Vector3.UP)
+		k.box(Vector3(-0.05, -0.25, -d.length() * 0.5), Vector3(0.05, 0.05, d.length() * 0.5), body, Transform3D(bas, (a + b) * 0.5))
+		k.box(Vector3(-0.04, -0.04, -d.length() * 0.5), Vector3(0.04, 0.04, d.length() * 0.5), rail, Transform3D(bas, (a + b) * 0.5 + Vector3(0, 1.0, 0)))
+		for t: float in [0.15, 0.5, 0.85]:
+			var q := a.lerp(b, t)
+			k.box(q + Vector3(-0.03, 0, -0.03), q + Vector3(0.03, 1.0, 0.03), rail)
+	_wheels(k, 1.15, 0.42, [-2.8, 2.9])
+	var mesh := k.commit()
+	_cache[key] = mesh
+	return mesh

@@ -42,8 +42,36 @@ func run(main: Node) -> void:
 	var max_people := 0
 	var at_gate := false
 	var at_band := false
-	for i in range(6000):
+	var crossed := ""
+	var hold_min := INF
+	var push_seen := false
+	var tug_seen := false
+	var bus_seen := false
+	var stairs_seen := false
+	var bus_boarded := false
+	var outdoor_pax := 0
+	var stand_rects := []
+	for st: Dictionary in game.stands():
+		stand_rects.append([st, (st["rect"] as Rect2).grow(-3.0)])
+	for i in range(9000):
 		fl.step(0.1)
+		outdoor_pax = maxi(outdoor_pax, main.ops.walkers.size())
+		for j: Dictionary in main.ops.jobs.values():
+			tug_seen = tug_seen or j.has("tug")
+			stairs_seen = stairs_seen or j.has("stairs")
+			bus_seen = bus_seen or j.has("bus") or j.has("dep_bus")
+			bus_boarded = bus_boarded or bool(j.get("boarded", false))
+		for p: Dictionary in fl.planes:
+			if p["state"] == "pushback" and p.get("push_phase", "") == "schieben":
+				push_seen = true
+			if p["state"] == "wartet":
+				hold_min = minf(hold_min, fl.graph.runway_distance(p["pos"]))
+			if p["state"] in ground and float(p["ghost"]) <= 0.0:
+				var pp: Vector3 = p["pos"]
+				for e: Array in stand_rects:
+					var own: bool = is_same(e[0], p["stand"])
+					if not own and (e[1] as Rect2).has_point(Vector2(pp.x, pp.z)):
+						crossed = "%s (%s) bei %s" % [p["code"], p["state"], str(pp)]
 		max_people = maxi(max_people, tb.people.size())
 		for per: Dictionary in tb.people:
 			var plan: Array = per["plan"]
@@ -63,10 +91,18 @@ func run(main: Node) -> void:
 			for c in range(a + 1, fl.planes.size()):
 				var pc: Dictionary = fl.planes[c]
 				if pc["state"] in ground and float(pc["ghost"]) <= 0.0:
-					min_gap = minf(min_gap, (pa["pos"] as Vector3).distance_to(pc["pos"]))
+					var gap := (pa["pos"] as Vector3).distance_to(pc["pos"])
+					if gap < min_gap and gap < 20.0:
+						print("      zu nah: %s %s %s / %s %s %s" % [pa["code"], pa["state"], str(pa["pos"]), pc["code"], pc["state"], str(pc["pos"])])
+					min_gap = minf(min_gap, gap)
 	print("      Zustände: ", seen_states.keys(), "  abgeflogen: ", fl.done, "  kleinster Abstand am Boden: ", min_gap)
 	var m1: int = game.money
 	check(min_gap > 20.0, "Rollende Flugzeuge halten Abstand (Reservierung)")
+	check(crossed == "", "Kein Flugzeug rollt über fremde Stände " + crossed)
+	check(push_seen and tug_seen, "Pushback mit Schlepper")
+	check(hold_min < INF and hold_min > 85.0, "Abflüge warten am Rollhalteort (%.0f m vor der Pistenmitte)" % hold_min)
+	check(stairs_seen and bus_seen, "Außenpositionen: Treppenwagen und Vorfeldbusse fahren")
+	check(outdoor_pax > 5 and bus_boarded, "Passagiere steigen per Bus und Treppe ein und aus (bis zu %d draußen)" % outdoor_pax)
 	check(saw_gse, "Bodenfahrzeuge fahren zum Flugzeug")
 	check(max_people > 10, "Passagiere laufen durchs Terminal (bis zu %d Figuren)" % max_people)
 	check(at_gate, "Abfliegende Passagiere warten am Gate")
@@ -92,6 +128,7 @@ func run(main: Node) -> void:
 	check(is_equal_approx(float(test_plane["turn"]), expect), "Mit Depot normale Abfertigungszeit (%.0f Min)" % float(test_plane["turn"]))
 	fl._clear_gse(test_plane)
 	fl._release_all(999)
+	main.ops.release(test_plane)
 	tb.flight_left(test_plane)
 	for per: Dictionary in tb.people.duplicate():
 		if int(per["flight"]) == 999:
@@ -200,19 +237,28 @@ func run(main: Node) -> void:
 	var m_before: int = game.money
 	var max_wait := 0.0
 	var parked_seen := 0
+	var red_min := INF
 	for i in range(2500):
 		tr.step(0.1)
 		parked_seen = maxi(parked_seen, tr.parked.size())
 		for mv: Dictionary in tr.movers:
 			max_wait = maxf(max_wait, float(mv["wait"]))
+			var legs: Array = mv["legs"]
+			if float(mv["v"]) < 0.05 and legs.size() > 1 and legs[0]["type"] == "lane" and legs[1]["type"] == "conn":
+				var ni: int = legs[1]["node"]
+				if rd.control_of(ni) == "ampel" and rd.signal_at(ni, int(legs[1]["from_e"])) == "rot":
+					var rest := float(legs[0]["len"]) - float(mv["s"]) - float(mv["len"]) * 0.5
+					if rest < 10.0:
+						red_min = minf(red_min, rest)
 	check(tr.movers.size() > 10, "Verkehr läuft auf Spuren (%d Autos)" % tr.movers.size())
 	check(parked_seen > 0 and game.money > m_before, "Autos parken im Parkhaus und zahlen (%d geparkt)" % parked_seen)
 	check(max_wait < 90.0, "Niemand steckt fest (längste Wartezeit %.0f s)" % max_wait)
+	check(red_min < INF and red_min > 0.85, "Autos halten bei Rot vor der Haltelinie (Front %.1f m vor dem Kreuzungsrand)" % red_min)
 	tr.set_process(true)
 	b.set_tool("stand")
 	b.on_move(Vector3(400, 0, 400))
 	check(b.reason != "", "Stand neben dem Vorfeld abgelehnt: " + b.reason)
-	b.on_move(Vector3(80, 0, -55))
+	b.on_move(Vector3(136, 0, -55))
 	check(b.reason == "", "Stand auf dem Vorfeld erlaubt " + b.reason + " " + str(b.hover))
 	b.set_tool("")
 	fl.clear()

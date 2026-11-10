@@ -5,6 +5,7 @@ uniform vec3 c_dark : source_color = vec3(0.20, 0.22, 0.12);
 uniform vec3 c_mid : source_color = vec3(0.25, 0.27, 0.14);
 uniform vec3 c_light : source_color = vec3(0.30, 0.32, 0.17);
 uniform float grid = 0.0;
+uniform float bound = 3000.0;   // halbe Kantenlänge des Spielfelds
 
 varying vec3 wpos;
 
@@ -47,6 +48,13 @@ void fragment() {
 		if (g.x < fw.x * 0.6 || g.y < fw.y * 0.6) {
 			col = mix(col, vec3(0.62, 0.86, 0.92), 0.22 * fade);
 		}
+	}
+	// außerhalb des Spielfelds dunkler, am Rand eine Linie
+	float edge = max(abs(wpos.x), abs(wpos.z)) - bound;
+	if (edge > 0.0) {
+		col = mix(col, vec3(0.13, 0.14, 0.11), 0.65);
+	} else if (edge > -6.0) {
+		col = mix(col, vec3(0.85, 0.8, 0.55), 0.35);
 	}
 	ALBEDO = col;
 	ROUGHNESS = 1.0;

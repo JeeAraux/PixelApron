@@ -173,6 +173,8 @@ func panel(c: Vector3, right: Vector3, up: Vector3, col: Color, normal: Vector3)
 
 
 func commit() -> ArrayMesh:
+	if count == 0:
+		return ArrayMesh.new()
 	var mesh := st.commit()
 	mesh.surface_set_material(0, material())
 	return mesh

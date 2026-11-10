@@ -5,6 +5,9 @@ extends Node3D
 
 const PITCH := -30.0
 const DIST := 400.0
+const MIN_ZOOM := 35.0
+const MAX_ZOOM := 5200.0   # reicht für das ganze Spielfeld
+const BOUND := 3000.0
 
 var cam: Camera3D
 var target := Vector3(20, 0, -10)
@@ -36,9 +39,9 @@ func handle_input(event: InputEvent) -> bool:
 		if (mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN) and mb.pressed:
 			var zoom_in := (mb.button_index == MOUSE_BUTTON_WHEEL_UP) != invert_zoom
 			if zoom_in:
-				zoom_goal = maxf(35.0, zoom_goal / 1.15)
+				zoom_goal = maxf(MIN_ZOOM, zoom_goal / 1.15)
 			else:
-				zoom_goal = minf(1100.0, zoom_goal * 1.15)
+				zoom_goal = minf(MAX_ZOOM, zoom_goal * 1.15)
 			return true
 		if mb.button_index == MOUSE_BUTTON_MIDDLE:
 			dragging = mb.pressed
@@ -99,6 +102,8 @@ func _process(delta: float) -> void:
 					pan.y -= 1.0
 	if pan != Vector2.ZERO:
 		target += (_right() * pan.x + _fwd() * pan.y * 1.6) * zoom * 0.8 * pan_speed * delta
+	target.x = clampf(target.x, -BOUND, BOUND)
+	target.z = clampf(target.z, -BOUND, BOUND)
 	var t := 1.0 - pow(0.0005, delta)
 	yaw = lerpf(yaw, yaw_goal, t)
 	if absf(yaw - yaw_goal) < 0.05:
@@ -111,7 +116,9 @@ func _process(delta: float) -> void:
 
 func _place() -> void:
 	var b := Basis.from_euler(Vector3(deg_to_rad(PITCH), deg_to_rad(yaw), 0.0))
-	var pos := Vector3(target.x, 0.0, target.z) + b.z * DIST
+	var dist := maxf(DIST, zoom * 1.1)
+	cam.far = dist + zoom * 1.4 + 300.0
+	var pos := Vector3(target.x, 0.0, target.z) + b.z * dist
 	var vh := float(cam.get_viewport().get_visible_rect().size.y)
 	if vh > 0.0 and yaw == yaw_goal:
 		var texel := zoom / vh
@@ -124,4 +131,14 @@ func _place() -> void:
 
 ## Reichweite für Schatten, damit auch weit herausgezoomt alles Schatten wirft.
 func shadow_range() -> float:
-	return DIST + zoom * 1.2 + 60.0
+	return maxf(DIST, zoom * 1.1) + zoom * 1.2 + 60.0
+
+
+## Ausschnitt so wählen, dass das Rechteck (Boden, x/z) ganz zu sehen ist.
+func frame(r: Rect2, aspect: float) -> void:
+	target = Vector3(r.get_center().x, 0.0, r.get_center().y)
+	# Diagonale der Iso-Projektion: Breite und Tiefe gehen je zur Hälfte in beide Bildachsen
+	var a := deg_to_rad(yaw)
+	var w := absf(r.size.x * cos(a)) + absf(r.size.y * sin(a))
+	var d := absf(r.size.x * sin(a)) + absf(r.size.y * cos(a))
+	zoom_goal = clampf(maxf(w / maxf(aspect, 0.5), d * 0.5) * 1.12, MIN_ZOOM, MAX_ZOOM)

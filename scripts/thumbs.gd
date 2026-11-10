@@ -26,7 +26,7 @@ func render(ids: Array) -> Dictionary:
 			model = Factory.make_tool_thumb(id)
 		else:
 			model = Factory.make_item(id)
-		if id == "stand":
+		if id == "stand" or id == "stand_aussen" or id == "bushalt":
 			Factory.blk(model, Vector3(-24, -0.3, -26), Vector3(24, 0.0, 26), Color(0.47, 0.46, 0.42))
 		elif Catalog.is_inside(id):
 			var sz: Vector2 = Catalog.ITEMS[id]["size"]
