@@ -26,10 +26,13 @@ Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust s
   - Straße, Gehweg, Rollweg und Vorfeld ziehst du durch beliebig viele Punkte. Die Ecken werden automatisch ausgerundet.
   - Die Piste baust du gerade mit zwei Klicks.
   - Jeder Wegtyp hat einen Mindestradius, ein Rollweg zum Beispiel 30 m.
+  - **Einrasten (neu in 0.5):** Wege rasten an Wegenden und irgendwo auf passenden Wegen ein. Klickst du beim Bauen auf einen Weg, schließt der neue Weg dort an und ist sofort fertig. Ohne Ziel rastet die Richtung in 15-Grad-Schritten ein, mit Shift ist sie frei.
+  - **Kreuzungen:** Kreuzt eine Straße eine andere, werden beide dort geteilt und verbunden. Autos biegen dort ab.
+  - **Nichts mehr übereinander:** Wege können nicht durch Gebäude gehen, und Straßen nicht über Rollwege, Vorfeld oder Piste. Eine Straße kann nicht auf einer anderen liegen. Bäume, Kübel, Laternen und Bänke im Weg räumt das Spiel automatisch weg.
 - **Flugbetrieb:**
   - Flüge kommen nach Plan, landen und rollen über dein Rollnetz zu einem freien Stand. Dort werden sie abgefertigt, dann rollen sie zur Piste und starten.
   - Die Piste nutzt immer nur ein Flugzeug, die anderen warten davor.
-  - Ab 1.200 m Pistenlänge kommen ATR 72, ab 1.800 m auch Airbus A320.
+  - Ab 1.700 m Pistenlänge kommen Airbus A320 und Boeing 737-800. Beide sind detailliert nachgebaut, mit Fenstern, Türen, Triebwerken, Fahrwerk, Winglets und Lichtern.
   - Landungen und Abflüge bringen Geld. Rechts siehst du den Flugplan.
   - Rollende Flugzeuge reservieren den Rollweg vor sich (70 m). Ist er belegt, warten sie oder suchen einen anderen Weg.
 - **Bodenabfertigung (neu in v3):**
@@ -57,6 +60,7 @@ Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust s
   - Je mehr Landungen und Starts in der letzten Stunde, desto mehr Autos kommen an offenen Straßenenden herein.
 - **Menü (Esc, neu in v4):** Weiterspielen, Speichern, Laden, Neue Karte, Einstellungen und Beenden. Solange das Menü offen ist, steht das Spiel still.
 - **Einstellungen:** Vollbild, Schatten, Kamera-Tempo, Mausrad umkehren, Scrollen am Bildrand, Bauraster immer zeigen, automatisch um Mitternacht speichern, Tastenhilfe. Sie bleiben gespeichert.
+- **Details (neu in 0.5):** Menschen mit Laufbewegung, Haaren und Gepäck. Autos fahren als Kleinwagen, Limousine, Kombi, SUV, Transporter und Taxi. Dazu Tankwagen, Catering-Hubwagen und Gepäckschlepper mit Wagen.
 - **Speichern und Laden:** über das Menü, oder F5 speichert und F9 lädt. Spielstände aus v3 enthalten noch das alte Fertig-Terminal und laden ohne Terminal.
 
 ## Terminal bauen

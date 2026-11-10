@@ -4,7 +4,9 @@ Flughafen-Aufbauspiel in Godot 4.7 (GDScript), isometrischer Pixel-Look. Sprache
 
 ## Arbeiten am Projekt
 - Selbsttest: `godot --headless --path . -- --selftest` muss mit `SELFTEST BESTANDEN` enden.
-- Vorschaubilder: `--demo --mode=bauen|leitungen|abfertigung|terminal|halle|menu|einstellungen --shot=PFAD` (mit Fenster/xvfb).
+- Vorschaubilder: `--demo --mode=bauen|leitungen|abfertigung|terminal|halle|kreuzung|modelle|modelle_nah|modelle_a320|modelle_b737|menu|einstellungen --shot=PFAD` (mit Fenster/xvfb).
+- Detailmodelle (Flugzeuge, Menschen, Autos, Bodenfahrzeuge) entstehen in `scripts/models.gd` mit dem Baukasten `scripts/mesh_kit.gd` als ein Mesh mit Vertexfarben. Dreiecke im Uhrzeigersinn von außen = Vorderseite.
+- Wegebau-Regeln (Kreuzungen, Kollisionen) stehen in `game_state.gd` (`check_line`, `CROSS_OK`), Einrasten in `builder.gd` (`_snap_line`).
 - Neue Bauteile stehen als Daten in `scripts/catalog.gd`, ihre Form in `scripts/factory.gd`.
 
 ## Version und Updates

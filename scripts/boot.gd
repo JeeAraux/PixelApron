@@ -8,7 +8,7 @@ const UPDATE_DIR := "user://update"
 
 func _ready() -> void:
 	var pck := UPDATE_DIR + "/PixelApron.pck"
-	if FileAccess.file_exists(pck):
+	if FileAccess.file_exists(pck) and not OS.has_feature("editor"):
 		var installed := read_version("res://version.txt")
 		var update := read_version(UPDATE_DIR + "/version.txt")
 		if is_newer(update[0], installed[0]) and update[1] == installed[1]:

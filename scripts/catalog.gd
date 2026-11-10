@@ -128,10 +128,12 @@ const HALL_POWER_M2 := 0.03
 
 ## Flugzeugtypen: Pistenlänge, Sitzplätze, Abfertigungszeit in Spielminuten, Landeentgelt.
 const PLANES := {
-	"atr": {"name": "ATR 72", "min_rwy": 1200.0, "pax": 68, "turn": 30.0, "fee": 900, "vapp": 60.0, "vr": 55.0},
-	"a320": {"name": "A320", "min_rwy": 1800.0, "pax": 170, "turn": 40.0, "fee": 2400, "vapp": 75.0, "vr": 72.0},
+	"a320": {"name": "Airbus A320", "min_rwy": 1700.0, "pax": 180, "turn": 40.0, "fee": 2400, "vapp": 70.0, "vr": 72.0, "nose": 18.8},
+	"b737": {"name": "Boeing 737-800", "min_rwy": 1700.0, "pax": 189, "turn": 42.0, "fee": 2500, "vapp": 72.0, "vr": 74.0, "nose": 19.75},
 }
-const AIRLINES := [["IF", Color(0.59, 0.24, 0.19)], ["DJ", Color(0.24, 0.34, 0.45)], ["BW", Color(0.21, 0.40, 0.39)]]
+## Ausgedachte Airlines mit Hausfarbe
+const AIRLINES := [["IF", Color(0.62, 0.22, 0.18)], ["DJ", Color(0.18, 0.30, 0.52)], ["BW", Color(0.16, 0.42, 0.40)],
+	["WZ", Color(0.85, 0.55, 0.12)], ["NX", Color(0.35, 0.22, 0.48)]]
 const DESTINATIONS := ["Hamburg", "Berlin", "Palma", "Wien", "Zürich", "London", "Antalya", "Rom", "Paris", "Amsterdam"]
 const TICKET_FEE := 14
 ## Laufende Kosten pro Spieltag als Anteil der Baukosten.

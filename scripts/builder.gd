@@ -12,6 +12,10 @@ const Factory = preload("res://scripts/factory.gd")
 const GameState = preload("res://scripts/game_state.gd")
 
 const SNAP_DIST := 7.0
+## An welche Wege ein neuer Weg einrastet
+const SNAP_GROUPS := {"strasse": ["strasse"], "gehweg": ["gehweg", "strasse"], "rollweg": ["rollweg", "vorfeld", "piste"],
+	"vorfeld": ["vorfeld", "rollweg"], "piste": ["piste"]}
+const ANGLE_STEP := 15.0
 
 var game: GameState
 var root3d: Node3D
@@ -30,6 +34,8 @@ var mat_ok: StandardMaterial3D
 var mat_bad: StandardMaterial3D
 var mat_mark: StandardMaterial3D
 var mat_overlay: StandardMaterial3D
+var mat_snap: StandardMaterial3D
+var snap_kind := ""          # "ende" (Wegende), "weg" (auf einem Weg) oder leer
 
 
 func setup(g: GameState, r: Node3D) -> void:
@@ -39,6 +45,7 @@ func setup(g: GameState, r: Node3D) -> void:
 	mat_bad = _tmat(Color(1.0, 0.32, 0.25, 0.55))
 	mat_mark = _tmat(Color(0.92, 0.98, 1.0, 0.95))
 	mat_overlay = _tmat(Color(1.0, 0.25, 0.2, 0.45))
+	mat_snap = _tmat(Color(1.0, 0.85, 0.2, 0.95))
 	preview = MeshInstance3D.new()
 	preview.name = "Vorschau"
 	preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -141,7 +148,8 @@ func on_click(p: Vector3) -> void:
 				return
 		points.append(hover)
 		var def: Dictionary = Catalog.LINES[tool]
-		if bool(def["straight"]) and points.size() >= 2:
+		if points.size() >= 2 and (bool(def["straight"]) or snap_kind != ""):
+			# Gerade Wege sind nach zwei Klicks fertig, alle anderen, sobald sie an einen Weg anschließen
 			finish()
 			return
 		_refresh()
@@ -215,18 +223,7 @@ func _snap(p: Vector3) -> Vector3:
 		var g: float = Catalog.ITEMS[tool]["grid"]
 		return Vector3(snappedf(p.x, g), 0.0, snappedf(p.z, g))
 	if is_line_tool():
-		var best := SNAP_DIST
-		var found := false
-		var q := Vector3.ZERO
-		for e: Vector3 in game.endpoints(Catalog.utility_of(tool) != ""):
-			var d := Vector2(e.x - p.x, e.z - p.z).length()
-			if d < best:
-				best = d
-				q = e
-				found = true
-		if found:
-			return Vector3(q.x, 0.0, q.z)
-		return Vector3(roundf(p.x), 0.0, roundf(p.z))
+		return _snap_line(p)
 	if is_item_tool():
 		var g: float = Catalog.ITEMS[tool]["grid"]
 		var s: Vector2 = Catalog.ITEMS[tool]["size"]
@@ -236,6 +233,62 @@ func _snap(p: Vector3) -> Vector3:
 		var oz := fmod(s.y * 0.5, g)
 		return Vector3(snappedf(p.x - ox, g) + ox, 0.0, snappedf(p.z - oz, g) + oz)
 	return Vector3(p.x, 0.0, p.z)
+
+
+## Wege rasten an Wegenden ein, dann irgendwo auf passenden Wegen, sonst an 15-Grad-Schritten
+## zum letzten Punkt (Shift hält den Winkel frei) und auf ganze Meter.
+func _snap_line(p: Vector3) -> Vector3:
+	snap_kind = ""
+	var util := Catalog.utility_of(tool)
+	var group: Array = SNAP_GROUPS.get(tool, [tool])
+	var candidates := []
+	for l: Dictionary in game.lines:
+		var k: String = l["kind"]
+		var ok := false
+		if util != "":
+			ok = Catalog.utility_of(k) != ""
+		elif Catalog.is_wall(tool):
+			ok = Catalog.is_wall(k)
+		else:
+			ok = k in group
+		if ok:
+			candidates.append(l)
+	var best := SNAP_DIST
+	var q := Vector3.ZERO
+	for l: Dictionary in candidates:
+		var smp: PackedVector3Array = l["samples"]
+		for e: Vector3 in [smp[0], smp[smp.size() - 1]]:
+			var d := Vector2(e.x - p.x, e.z - p.z).length()
+			if d < best:
+				best = d
+				q = e
+				snap_kind = "ende"
+	if snap_kind != "":
+		return Vector3(q.x, 0.0, q.z)
+	best = INF
+	for l: Dictionary in candidates:
+		var reach := maxf(4.5, float(Catalog.LINES[l["kind"]]["width"]) * 0.5) if util == "" else 3.0
+		var b: Rect2 = (l["bounds"] as Rect2).grow(reach)
+		if not b.has_point(Vector2(p.x, p.z)):
+			continue
+		for v: Vector3 in (l["samples"] as PackedVector3Array):
+			var d := Vector2(v.x - p.x, v.z - p.z).length()
+			if d < reach and d < best:
+				best = d
+				q = v
+				snap_kind = "weg"
+	if snap_kind != "":
+		return Vector3(q.x, 0.0, q.z)
+	if not points.is_empty() and not Input.is_key_pressed(KEY_SHIFT):
+		var last: Vector3 = points[points.size() - 1]
+		var d := Vector2(p.x - last.x, p.z - last.z)
+		if d.length() > 1.0:
+			var ang := atan2(d.y, d.x)
+			var stepr := deg_to_rad(ANGLE_STEP)
+			var snapped_ang := roundf(ang / stepr) * stepr
+			var length := roundf(d.length())
+			return last + Vector3(cos(snapped_ang), 0.0, sin(snapped_ang)) * length
+	return Vector3(roundf(p.x), 0.0, roundf(p.z))
 
 
 # ---------------------------------------------------------------- Vorschau
@@ -250,8 +303,12 @@ func _line_state(pts: Array) -> Dictionary:
 	var min_len: float = def["min_len"]
 	var cost := game.line_cost(tool, samples)
 	var why := ""
+	var check := {"why": "", "decor": [], "junctions": []}
 	if Catalog.is_wall(tool) and pts.size() >= 2:
 		why = game.can_place_wall(pts[0], pts[pts.size() - 1])
+	elif samples.size() >= 2:
+		check = game.check_line(tool, samples)
+		why = String(check["why"])
 	if why != "":
 		pass
 	elif length < min_len:
@@ -260,7 +317,8 @@ func _line_state(pts: Array) -> Dictionary:
 		why = "Kurve zu eng: Radius %d m, nötig sind %d m" % [int(minr), int(need)]
 	elif cost > game.money:
 		why = "Nicht genug Geld"
-	return {"ok": why == "", "why": why, "samples": samples, "length": length, "minr": minr, "cost": cost}
+	return {"ok": why == "", "why": why, "samples": samples, "length": length, "minr": minr, "cost": cost,
+		"decor": (check["decor"] as Array).size(), "junctions": check["junctions"]}
 
 
 func _refresh() -> void:
@@ -290,7 +348,7 @@ func _refresh_line() -> void:
 		_marker(p, 1.4)
 	var pts := points.duplicate()
 	if has_hover:
-		_marker(hover, 0.9)
+		_marker(hover, 2.0 if snap_kind != "" else 0.9, mat_snap if snap_kind != "" else mat_mark)
 		var add_hover := pts.is_empty()
 		if not add_hover:
 			var last: Vector3 = pts[pts.size() - 1]
@@ -298,7 +356,7 @@ func _refresh_line() -> void:
 		if add_hover:
 			pts.append(hover)
 	if pts.size() < 2:
-		var how := "Klicke Start- und Endpunkt." if bool(def["straight"]) else "Klicke den Startpunkt, dann weitere Punkte für Kurven."
+		var how := "Klicke Start- und Endpunkt." if bool(def["straight"]) else "Klicke den Startpunkt, dann weitere Punkte für Kurven. Klickst du auf einen Weg, schließt der neue Weg dort an und ist fertig."
 		if Catalog.is_wall(tool):
 			how = "Klicke Anfang und Ende der Wand, innerhalb einer Halle. Endpunkte rasten ein."
 		info.emit(title, how + "\n" + per_m, 0)
@@ -315,10 +373,19 @@ func _refresh_line() -> void:
 	var minr: float = st["minr"]
 	if minr < 100000.0:
 		body += "\nEngster Radius %d m (nötig %d m)" % [int(minr), int(def["min_r"])]
+	for jn: Array in st["junctions"]:
+		_marker(jn[1], 2.4, mat_snap)
+	if bool(st["ok"]):
+		if (st["junctions"] as Array).size() > 0:
+			body += "\n%d Kreuzung(en) werden angelegt" % (st["junctions"] as Array).size()
+		if int(st["decor"]) > 0:
+			body += "\n%d Bäume oder Deko werden weggeräumt" % int(st["decor"])
+	if snap_kind != "" and not points.is_empty():
+		body += "\nSchließt hier an: Klick baut den Weg"
 	if not bool(st["ok"]):
 		body += "\n" + String(st["why"])
 	elif not bool(def["straight"]):
-		body += "\nRechtsklick oder Enter: fertig"
+		body += "\nRechtsklick oder Enter: fertig · Shift: freier Winkel"
 	info.emit(title, body, 1 if bool(st["ok"]) else 2)
 
 
@@ -410,12 +477,12 @@ func _num(v: float) -> String:
 	return str(int(v)) if is_equal_approx(v, roundf(v)) else str(snappedf(v, 0.1)).replace(".", ",")
 
 
-func _marker(p: Vector3, size: float) -> void:
+func _marker(p: Vector3, size: float, m: Material = null) -> void:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = Vector3(size, size, size)
 	mi.mesh = bm
-	mi.material_override = mat_mark
+	mi.material_override = m if m != null else mat_mark
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.position = p + Vector3(0, size * 0.5 + 0.3, 0)
 	marker_root.add_child(mi)

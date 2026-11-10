@@ -116,8 +116,11 @@ func check_operation() -> String:
 	if rwy.is_empty():
 		return "Keine Piste"
 	var length := float((rwy["samples"] as PackedVector3Array).size() - 1)
-	if length < float(Catalog.PLANES["atr"]["min_rwy"]):
-		return "Piste zu kurz (mindestens 1.200 m)"
+	var need := INF
+	for kind: String in Catalog.PLANES:
+		need = minf(need, float(Catalog.PLANES[kind]["min_rwy"]))
+	if length < need:
+		return "Piste zu kurz (mindestens %d m)" % int(need)
 	var towers := game.items_of("tower")
 	if towers.is_empty():
 		return "Kein Tower"
@@ -177,9 +180,11 @@ func _try_spawn() -> void:
 		reason = "Kein Rollweg zwischen Piste und Stand"
 		return
 	var length := float(s.size() - 1)
-	var kind := "atr"
-	if length >= float(Catalog.PLANES["a320"]["min_rwy"]) and randf() < 0.6:
-		kind = "a320"
+	var kinds := []
+	for k: String in Catalog.PLANES:
+		if length >= float(Catalog.PLANES[k]["min_rwy"]):
+			kinds.append(k)
+	var kind: String = kinds[randi() % kinds.size()]
 	var airline: Array = Catalog.AIRLINES[randi() % Catalog.AIRLINES.size()]
 	counter += 1
 	var dir := (s[s.size() - 1] - s[0]).normalized()
@@ -451,8 +456,8 @@ func _park(p: Dictionary) -> void:
 	var node: Node3D = st["node"]
 	_reserve(graph.stand_node.get(node.get_instance_id(), -1), id)
 	var fwd := node.global_transform.basis.z.normalized()
-	var nose := 18.6 if p["kind"] == "a320" else 13.6
-	p["pos"] = (st["pos"] as Vector3) + fwd * (14.0 - nose)
+	var nose := float(Catalog.PLANES[p["kind"]]["nose"])
+	p["pos"] = (st["pos"] as Vector3) + fwd * (17.0 - nose)
 	p["heading"] = fwd
 	p["state"] = "abfertigung"
 	var plane: Dictionary = Catalog.PLANES[p["kind"]]
@@ -487,12 +492,10 @@ func _spawn_gse(p: Dictionary) -> void:
 	var depots := game.items_of("vorfelddepot")
 	if depot_ok() and not depots.is_empty():
 		home = depots[0]["pos"]
-	var big: bool = p["kind"] == "a320"
-	var span := 7.5 if big else 6.0
 	var spots := [
-		["tank", c + side * span + fwd * 1.5, fwd],
-		["gepaeck", c - side * 3.5 - fwd * (10.0 if big else 7.0), side],
-		["catering", c + side * 3.6 + fwd * (11.0 if big else 6.0), side],
+		["tank", c + side * 8.5 + fwd * 3.0, fwd],
+		["gepaeck", c - side * 4.6 - fwd * 9.5, side],
+		["catering", c + side * 4.4 + fwd * 11.5, side],
 	]
 	var list := []
 	for i in range(spots.size()):

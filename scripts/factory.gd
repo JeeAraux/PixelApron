@@ -5,6 +5,7 @@ extends RefCounted
 const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
 const LINE_SHADER = preload("res://shaders/line.gdshader")
+const Models = preload("res://scripts/models.gd")
 
 const WALL := Color(0.78, 0.75, 0.67)
 const GLASS := Color(0.17, 0.24, 0.29)
@@ -392,73 +393,30 @@ static func _depot(n: Node3D) -> void:
 
 static func make_gse(kind: String) -> Node3D:
 	var n := Node3D.new()
-	var yellow := Color(0.86, 0.69, 0.22)
-	match kind:
-		"tank":
-			blk(n, Vector3(-1.2, 0.4, -4.5), Vector3(1.2, 2.6, -2.3), yellow)
-			blk(n, Vector3(-1.1, 1.4, -4.3), Vector3(1.1, 2.3, -3.6), GLASS)
-			var t := cyl(n, Vector3.ZERO, 1.15, 1.15, 6.0, Color(0.85, 0.85, 0.82), 10)
-			t.rotation_degrees = Vector3(90, 0, 0)
-			t.position = Vector3(0, 1.75, 0.9)
-		"catering":
-			blk(n, Vector3(-1.1, 0.4, -3.6), Vector3(1.1, 2.4, -1.8), yellow)
-			blk(n, Vector3(-1.3, 2.0, -1.6), Vector3(1.3, 4.6, 3.4), Color(0.88, 0.87, 0.84))
-			blk(n, Vector3(-1.2, 0.5, -1.8), Vector3(1.2, 2.0, 3.4), DARK)
-		_:
-			blk(n, Vector3(-0.8, 0.3, -1.4), Vector3(0.8, 1.4, 0.6), yellow)
-			for i in range(2):
-				var z := 2.2 + float(i) * 3.4
-				blk(n, Vector3(-0.85, 0.4, z - 1.4), Vector3(0.85, 1.9, z + 1.4), Color(0.24, 0.34, 0.45))
+	var mi := MeshInstance3D.new()
+	mi.mesh = Models.gse_mesh(kind)
+	n.add_child(mi)
 	return n
 
 
-
-
-static func make_car(c: Color) -> Node3D:
+## Auto in zufälliger Bauart (Kleinwagen, Limousine, Kombi, SUV, Transporter, Taxi).
+static func make_car(c: Color, kind: String = "") -> Node3D:
+	if kind == "":
+		var r := randf()
+		kind = "kompakt" if r < 0.25 else "limousine" if r < 0.45 else "kombi" if r < 0.65 else "suv" if r < 0.82 else "transporter" if r < 0.93 else "taxi"
 	var n := Node3D.new()
-	blk(n, Vector3(-0.9, 0.25, -2.2), Vector3(0.9, 0.95, 2.2), c)
-	blk(n, Vector3(-0.8, 0.95, -1.0), Vector3(0.8, 1.45, 1.1), c.darkened(0.55))
+	var mi := MeshInstance3D.new()
+	mi.mesh = Models.car_mesh(kind, c)
+	n.add_child(mi)
 	return n
 
 
 static func make_plane(kind: String, livery: Color) -> Node3D:
 	var n := Node3D.new()
-	var white := Color(0.86, 0.85, 0.82)
-	var grey := Color(0.74, 0.74, 0.72)
-	var big := kind == "a320"
-	var r := 2.0 if big else 1.45
-	var length := 37.0 if big else 27.0
-	var zc := 3.2 if big else 2.4
-	var body := MeshInstance3D.new()
-	var cap := CapsuleMesh.new()
-	cap.radius = r
-	cap.height = length
-	cap.radial_segments = 10
-	cap.rings = 2
-	body.mesh = cap
-	body.material_override = mat(white)
-	body.rotation_degrees = Vector3(90, 0, 0)
-	body.position = Vector3(0, zc, 0)
-	n.add_child(body)
-	var half := length * 0.5
-	blk(n, Vector3(-r - 0.02, zc - 0.7, -half + 3.5), Vector3(r + 0.02, zc - 0.25, half - 4.0), livery)
-	if big:
-		blk(n, Vector3(-17, 2.3, -2.0), Vector3(17, 2.7, 3.5), grey)
-		for x: float in [-5.8, 5.8]:
-			var eng := cyl(n, Vector3.ZERO, 1.0, 1.0, 4.5, livery, 8)
-			eng.rotation_degrees = Vector3(90, 0, 0)
-			eng.position = Vector3(x, 1.4, -1.5)
-		blk(n, Vector3(-0.25, 4.5, 13.0), Vector3(0.25, 11.5, 18.0), livery)
-		blk(n, Vector3(-6.0, 4.6, 15.0), Vector3(6.0, 4.9, 18.0), grey)
-	else:
-		blk(n, Vector3(-13.5, 3.75, -2.5), Vector3(13.5, 4.1, 0.2), grey)
-		for x: float in [-4.1, 4.1]:
-			var eng := cyl(n, Vector3.ZERO, 0.7, 0.7, 5.0, white, 8)
-			eng.rotation_degrees = Vector3(90, 0, 0)
-			eng.position = Vector3(x, 3.4, -2.0)
-			blk(n, Vector3(x - 1.9, 3.4 - 1.9, -4.62), Vector3(x + 1.9, 3.4 + 1.9, -4.52), Color(0.2, 0.2, 0.2, 1.0))
-		blk(n, Vector3(-0.2, 3.3, 9.5), Vector3(0.2, 7.6, 13.4), livery)
-		blk(n, Vector3(-3.7, 7.35, 11.5), Vector3(3.7, 7.6, 13.6), grey)
+	n.name = kind
+	var mi := MeshInstance3D.new()
+	mi.mesh = Models.plane_mesh(kind, livery)
+	n.add_child(mi)
 	return n
 
 
@@ -675,11 +633,20 @@ static func _inside(n: Node3D, id: String) -> void:
 			ball(n, Vector3(0.4, 2.9, 0.2), 0.45, YELLOW, 7)
 
 
-## Passagier oder Personal, etwa 1,7 m groß. skin_i wählt die Hautfarbe.
+## Passagier oder Personal, etwa 1,75 m groß. Der Körper ist ein Mesh mit drei Posen (stehen, Schritt links, Schritt rechts);
+## set_pose() wechselt sie beim Laufen.
 static func make_person(shirt: Color, skin_i: int = -1) -> Node3D:
 	var n := Node3D.new()
-	var skin: Color = SKINS[(skin_i if skin_i >= 0 else randi()) % SKINS.size()]
-	blk(n, Vector3(-0.17, 0, -0.1), Vector3(0.17, 0.82, 0.1), Color(0.18, 0.18, 0.22))
-	blk(n, Vector3(-0.22, 0.82, -0.13), Vector3(0.22, 1.42, 0.13), shirt)
-	ball(n, Vector3(0, 1.58, 0), 0.15, skin, 5)
+	var look := Models.random_look(shirt, skin_i)
+	var mi := MeshInstance3D.new()
+	mi.name = "Body"
+	mi.mesh = Models.person_mesh(look, 0)
+	n.add_child(mi)
+	n.set_meta("look", look)
 	return n
+
+
+static func set_pose(person: Node3D, pose: int) -> void:
+	var mi := person.get_node_or_null("Body") as MeshInstance3D
+	if mi != null and person.has_meta("look"):
+		mi.mesh = Models.person_mesh(person.get_meta("look"), pose)

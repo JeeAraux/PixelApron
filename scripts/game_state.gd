@@ -144,7 +144,10 @@ func line_cost(kind: String, samples: PackedVector3Array) -> int:
 	return roundi(Spline.length(samples) * float(cpm) / 100.0) * 100
 
 
-func build_line(kind: String, points: Array, free: bool = false) -> Dictionary:
+## Baut einen Weg durch die Klickpunkte. Prüft Kollisionen, räumt Bäume und Deko weg und legt
+## bei Straßen Kreuzungen an (beide Straßen werden am Kreuzungspunkt geteilt).
+## plain: ohne Prüfung und ohne Kreuzungen (Laden von Spielständen).
+func build_line(kind: String, points: Array, free: bool = false, plain: bool = false) -> Dictionary:
 	var def: Dictionary = Catalog.LINES[kind]
 	var straight: bool = def["straight"]
 	var samples := Spline.path(points, straight)
@@ -154,23 +157,212 @@ func build_line(kind: String, points: Array, free: bool = false) -> Dictionary:
 	if cost > money:
 		toast.emit("Nicht genug Geld: " + fmt_money(cost) + " nötig")
 		return {}
+	var check := {"why": "", "decor": [], "junctions": []}
+	if not plain:
+		check = check_line(kind, samples)
+		if String(check["why"]) != "" and not free:
+			toast.emit(String(check["why"]))
+			return {}
+	for d: Dictionary in check["decor"]:
+		_remove_one(d, 0.0)
+	if not (check["decor"] as Array).is_empty():
+		items_changed.emit()
+	var rec := _make_line(kind, points, samples, cost)
+	_spend(cost)
+	var group := [rec]
+	if kind == "strasse" and not (check["junctions"] as Array).is_empty():
+		group = _make_junctions(rec, check["junctions"])
+	history.append(group if group.size() > 1 else rec)
+	if Catalog.utility_of(kind) != "":
+		evaluate_supply()
+	else:
+		network_changed.emit()
+	return group[0]
+
+
+## Legt den Datensatz und das Modell eines Weges an (ohne Geld, ohne Verlauf).
+func _make_line(kind: String, points: Array, samples: PackedVector3Array, cost: int, raw: bool = false) -> Dictionary:
+	var def: Dictionary = Catalog.LINES[kind]
 	var base_y: float = def["y"]
 	var node := Factory.make_line(kind, samples, base_y + 0.0004 * float(lines.size() % 20))
 	line_root.add_child(node)
 	var w: float = def["width"]
 	var rec := {"type": "line", "kind": kind, "points": points.duplicate(), "samples": samples,
-		"bounds": Spline.bounds(samples, w * 0.5), "node": node, "cost": cost}
+		"bounds": Spline.bounds(samples, w * 0.5), "node": node, "cost": cost, "raw": raw}
 	if Catalog.is_wall(kind):
 		rec["hall"] = hall_at(Spline.sample_at(samples, Spline.length(samples) * 0.5))
 	lines.append(rec)
-	history.append(rec)
-	_spend(cost)
+	_grid_dirty = true
 	_apply_visibility(rec)
-	if Catalog.utility_of(kind) != "":
-		evaluate_supply()
-	else:
-		network_changed.emit()
 	return rec
+
+
+# ---------------------------------------------------------------- Kollisionen und Kreuzungen
+
+## Welche Wege einander kreuzen dürfen
+const CROSS_OK := {
+	"strasse": ["strasse", "gehweg"],
+	"gehweg": ["strasse", "gehweg"],
+	"rollweg": ["rollweg", "vorfeld", "piste"],
+	"vorfeld": ["rollweg", "vorfeld", "piste"],
+	"piste": ["rollweg", "vorfeld", "piste"],
+}
+## Kleine Deko, die ein neuer Weg einfach wegräumt
+const DECOR := ["baum", "kuebel", "laterne", "bank"]
+const GRID_CELL := 16.0
+
+var _grid: Dictionary = {}
+var _grid_dirty := true
+
+
+func _ensure_grid() -> void:
+	if not _grid_dirty:
+		return
+	_grid_dirty = false
+	_grid = {}
+	for li in range(lines.size()):
+		var l: Dictionary = lines[li]
+		var k: String = l["kind"]
+		if Catalog.utility_of(k) != "" or Catalog.is_wall(k):
+			continue
+		var s: PackedVector3Array = l["samples"]
+		for j in range(s.size()):
+			var key := Vector2i(floori(s[j].x / GRID_CELL), floori(s[j].z / GRID_CELL))
+			if not _grid.has(key):
+				_grid[key] = []
+			(_grid[key] as Array).append(Vector2i(li, j))
+
+
+## Prüft einen geplanten Weg.
+## Ergebnis: why (leer = erlaubt), decor (wird weggeräumt), junctions ([Straße, Kreuzungspunkt, Index im neuen Weg]).
+func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
+	var out := {"why": "", "decor": [], "junctions": []}
+	if Catalog.utility_of(kind) != "" or Catalog.is_wall(kind) or samples.size() < 2:
+		return out
+	var w: float = Catalog.LINES[kind]["width"]
+	var bounds := Spline.bounds(samples, w * 0.5)
+	var step := 2 if w > 20.0 else 1
+	# Gebäude und Deko
+	for it: Dictionary in items:
+		var id: String = it["id"]
+		if Catalog.is_inside(id):
+			continue
+		if String(Catalog.ITEMS[id].get("on", "")) == kind:
+			continue
+		var r: Rect2 = (it["rect"] as Rect2).grow(w * 0.5 - 0.25)
+		if not r.intersects(bounds):
+			continue
+		for i in range(0, samples.size(), step):
+			if r.has_point(Vector2(samples[i].x, samples[i].z)):
+				if id in DECOR:
+					(out["decor"] as Array).append(it)
+				else:
+					out["why"] = "Geht durch: " + Catalog.label(id)
+					return out
+				break
+	# Andere Wege
+	_ensure_grid()
+	var hits := {}   # Weg -> {Index im neuen Weg: [Abstand, Index im alten Weg]}
+	var reach := ceili((w * 0.5 + 30.0) / GRID_CELL)
+	for i in range(0, samples.size(), step):
+		var v := samples[i]
+		var c := Vector2i(floori(v.x / GRID_CELL), floori(v.z / GRID_CELL))
+		for dx in range(-reach, reach + 1):
+			for dz in range(-reach, reach + 1):
+				for e: Vector2i in _grid.get(c + Vector2i(dx, dz), []):
+					var l: Dictionary = lines[e.x]
+					var j: int = e.y
+					var w2: float = Catalog.LINES[l["kind"]]["width"]
+					var p: Vector3 = (l["samples"] as PackedVector3Array)[j]
+					var d := Vector2(p.x - v.x, p.z - v.z).length()
+					if d >= (w + w2) * 0.5 - 0.6:
+						continue
+					if not hits.has(e.x):
+						hits[e.x] = {}
+					var h: Dictionary = hits[e.x]
+					if not h.has(i) or d < float(h[i][0]):
+						h[i] = [d, j]
+	for li: int in hits:
+		var l: Dictionary = lines[li]
+		var hl: Dictionary = hits[li]
+		var k2: String = l["kind"]
+		if not (k2 in CROSS_OK.get(kind, [])):
+			out["why"] = "Überschneidet " + Catalog.label(k2)
+			return out
+		if kind != "strasse" or k2 != "strasse":
+			continue
+		# zusammenhängende Abschnitte: kurz = Kreuzung, lang = liegt auf der Straße
+		var idx: Array = hl.keys()
+		idx.sort()
+		var runs := []
+		var cur := [idx[0]]
+		for n in range(1, idx.size()):
+			if int(idx[n]) - int(cur[cur.size() - 1]) <= step + 1:
+				cur.append(idx[n])
+			else:
+				runs.append(cur)
+				cur = [idx[n]]
+		runs.append(cur)
+		var w2: float = Catalog.LINES[k2]["width"]
+		for run: Array in runs:
+			if float(int(run[run.size() - 1]) - int(run[0])) > (w + w2) * 1.6 + 3.0:
+				out["why"] = "Liegt auf einer Straße oder kreuzt zu flach"
+				return out
+			var best_i: int = run[0]
+			for i: int in run:
+				if float(hl[i][0]) < float(hl[best_i][0]):
+					best_i = i
+			var ls: PackedVector3Array = l["samples"]
+			(out["junctions"] as Array).append([l, ls[int(hl[best_i][1])], best_i])
+	return out
+
+
+## Teilt Straßen an den Kreuzungspunkten. Gibt die Stücke des neuen Weges zurück.
+func _make_junctions(rec: Dictionary, junctions: Array) -> Array:
+	var cuts := []
+	for jn: Array in junctions:
+		var old: Dictionary = jn[0]
+		var still := false
+		for l: Dictionary in lines:
+			still = still or is_same(l, old)
+		if still:
+			_split_at(old, jn[1])
+		cuts.append(int(jn[2]))
+	var pieces := [rec]
+	cuts.sort()
+	cuts.reverse()
+	for c: int in cuts:
+		var last: Dictionary = pieces[0]
+		var parts := _split_at(last, (rec["samples"] as PackedVector3Array)[c])
+		if parts.size() == 2:
+			pieces[0] = parts[1]
+			pieces.push_front(parts[0])
+	return pieces
+
+
+## Teilt einen Weg an dem Stützpunkt, der p am nächsten liegt. Liegt p nah am Ende, bleibt er ganz.
+func _split_at(l: Dictionary, p: Vector3) -> Array:
+	var s: PackedVector3Array = l["samples"]
+	var best := 0
+	var bd := INF
+	for i in range(s.size()):
+		var d := s[i].distance_squared_to(p)
+		if d < bd:
+			bd = d
+			best = i
+	if best < 4 or best > s.size() - 5:
+		return [l]
+	var a := s.slice(0, best + 1)
+	var b := s.slice(best)
+	var cost: int = l["cost"]
+	var ca := roundi(float(cost) * float(best) / float(s.size() - 1))
+	var in_history := history.has(l)
+	_remove_one(l, 0.0)
+	var ra := _make_line(String(l["kind"]), Array(a), a, ca, true)
+	var rb := _make_line(String(l["kind"]), Array(b), b, cost - ca, true)
+	if in_history:
+		history.append([ra, rb])
+	return [ra, rb]
 
 
 func endpoints(utility_only: bool = false) -> Array:
@@ -711,6 +903,13 @@ func _remove_one(rec: Dictionary, refund: float) -> void:
 	lines.erase(rec)
 	items.erase(rec)
 	history.erase(rec)
+	for h: Variant in history.duplicate():
+		if h is Array:
+			(h as Array).erase(rec)
+			if (h as Array).is_empty():
+				history.erase(h)
+	if rec["type"] == "line":
+		_grid_dirty = true
 	var cost: int = rec["cost"]
 	_spend(-int(float(cost) * refund))
 
@@ -719,7 +918,19 @@ func undo_last() -> void:
 	if history.is_empty():
 		toast.emit("Nichts zum Rückgängigmachen")
 		return
-	var rec: Dictionary = history[history.size() - 1]
+	var entry: Variant = history[history.size() - 1]
+	if entry is Array:
+		var group: Array = (entry as Array).duplicate()
+		history.pop_back()
+		for rec: Dictionary in group:
+			if rec in lines or rec in items:
+				_remove_one(rec, 1.0)
+		evaluate_supply()
+		network_changed.emit()
+		items_changed.emit()
+		toast.emit("Rückgängig: " + describe(group[0]))
+		return
+	var rec: Dictionary = entry
 	remove(rec, 1.0)
 	toast.emit("Rückgängig: " + describe(rec))
 
@@ -732,6 +943,7 @@ func clear_all() -> void:
 	lines.clear()
 	items.clear()
 	history.clear()
+	_grid_dirty = true
 	money = START_MONEY
 	satisfaction = 75.0
 	day_income = 0
@@ -750,7 +962,11 @@ func save_game(quiet: bool = false) -> void:
 		var pts := []
 		for p: Vector3 in l["points"]:
 			pts.append([snappedf(p.x, 0.01), snappedf(p.z, 0.01)])
-		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"]})
+		if bool(l.get("raw", false)):
+			pts = []
+			for p: Vector3 in (l["samples"] as PackedVector3Array):
+				pts.append([snappedf(p.x, 0.01), snappedf(p.z, 0.01)])
+		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"], "raw": bool(l.get("raw", false))})
 	var its: Array = data["items"]
 	for it: Dictionary in items:
 		var p: Vector3 = it["pos"]
@@ -794,7 +1010,10 @@ func load_game() -> bool:
 		var pts := []
 		for p: Array in l["points"]:
 			pts.append(Vector3(float(p[0]), 0.0, float(p[1])))
-		var rec := build_line(String(l["kind"]), pts, true)
+		if bool(l.get("raw", false)):
+			_make_line(String(l["kind"]), pts, PackedVector3Array(pts), int(l.get("cost", 0)), true)
+			continue
+		var rec := build_line(String(l["kind"]), pts, true, true)
 		if not rec.is_empty():
 			rec["cost"] = int(l.get("cost", 0))
 	for it: Dictionary in data.get("items", []):
@@ -804,6 +1023,7 @@ func load_game() -> bool:
 		if not rec.is_empty():
 			rec["cost"] = int(it.get("cost", 0))
 	history.clear()
+	network_changed.emit()
 	money = int(data.get("money", START_MONEY))
 	minutes = float(data.get("minutes", 360.0))
 	last_day = int(minutes / 1440.0)

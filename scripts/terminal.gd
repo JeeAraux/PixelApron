@@ -411,6 +411,8 @@ func _update_person(per: Dictionary, sim: float) -> void:
 					look = target - pos
 					pos += look / d * budget
 					budget = 0.0
+			per["walk"] = float(per.get("walk", 0.0)) + WALK * sim - budget
+			Factory.set_pose(node, 1 + int(float(per["walk"]) / 0.42) % 2)
 			per["pos"] = pos
 			per["pi"] = pi
 			node.position = pos
@@ -419,6 +421,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 			if pi >= path.size():
 				per["path"] = []
 				per["si"] = si + 1
+				Factory.set_pose(node, 0)
 		"stay":
 			pass
 		"end":

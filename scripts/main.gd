@@ -406,6 +406,49 @@ func _demo(args: PackedStringArray) -> void:
 		builder.on_click(Vector3(-150, 0, -95))
 		builder.on_click(Vector3(-190, 0, -120))
 		builder.on_move(Vector3(-200, 0, -170))
+	elif mode.begins_with("modelle"):
+		# Schaufenster aller Detailmodelle auf einer freien Wiese
+		var base := Vector3(600, 0, 600)
+		var Factory = load("res://scripts/factory.gd")
+		var showcase := Node3D.new()
+		world.add_child(showcase)
+		var i := 0
+		for kind: String in Catalog.PLANES:
+			var pl: Node3D = Factory.make_plane(kind, Catalog.AIRLINES[i][1])
+			pl.position = base + Vector3(-22 + 44 * i, 0, 0)
+			pl.rotation.y = deg_to_rad(-90)
+			showcase.add_child(pl)
+			i += 1
+		var gx := -20.0
+		for g: String in ["tank", "catering", "gepaeck"]:
+			var v: Node3D = Factory.make_gse(g)
+			v.position = base + Vector3(gx, 0, 26)
+			showcase.add_child(v)
+			gx += 7.0
+		var cx := 4.0
+		for kind: String in ["kompakt", "limousine", "kombi", "suv", "transporter", "taxi"]:
+			var car: Node3D = Factory.make_car(Factory.CAR_COLORS[int(cx) % Factory.CAR_COLORS.size()], kind)
+			car.position = base + Vector3(cx, 0, 26)
+			showcase.add_child(car)
+			cx += 3.0
+		for k in range(12):
+			var per: Node3D = Factory.make_person(Factory.SHIRTS[k % Factory.SHIRTS.size()])
+			per.position = base + Vector3(-20 + k * 1.0, 0, 34)
+			Factory.set_pose(per, k % 3)
+			showcase.add_child(per)
+		cam_rig.target = base + (Vector3(0, 0, 10) if mode == "modelle" else Vector3(-10, 0, 28))
+		cam_rig.zoom_goal = 75.0 if mode == "modelle" else 22.0
+		if mode == "modelle_a320" or mode == "modelle_b737":
+			cam_rig.target = base + Vector3(-22 if mode == "modelle_a320" else 22, 0, 0)
+			cam_rig.zoom_goal = 34.0
+		cam_rig.zoom = cam_rig.zoom_goal
+	elif mode == "kreuzung":
+		cam_rig.target = Vector3(-110, 0, 60)
+		cam_rig.zoom_goal = 120.0
+		cam_rig.zoom = 120.0
+		builder.set_tool("strasse")
+		builder.on_click(Vector3(-130, 0, 130))
+		builder.on_move(Vector3(-100, 0, -10))
 	elif mode == "halle":
 		cam_rig.target = Vector3(-120, 0, 40)
 		cam_rig.zoom_goal = 150.0
