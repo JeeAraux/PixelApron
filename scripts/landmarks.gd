@@ -958,14 +958,29 @@ static func fire_truck_mesh() -> ArrayMesh:
 			k.cyl(Vector3(sx * 1.48, 0.68, z), Vector3(sx * 1.54, 0.68, z), 0.13, 0.1, Models.DARK_METAL, 8)
 			k.box(Vector3(sx * 1.0, 1.42, z - 0.85), Vector3(sx * 1.5, 1.5, z + 0.85), DARK)
 	# Kabine
-	k.rounded_box(Vector3(-1.45, 1.0, -5.5), Vector3(1.45, 3.25, -2.95), 0.32, red, 3)
-	k.panel(Vector3(0, 2.6, -5.51), Vector3(1.32, 0, 0), Vector3(0, 0.58, 0), DARK, Vector3(0, 0, -1))
-	k.panel(Vector3(0, 2.6, -5.52), Vector3(1.24, 0, 0), Vector3(0, 0.5, 0), Models.GLASS, Vector3(0, 0, -1))
-	k.panel(Vector3(0, 2.6, -5.53), Vector3(0.04, 0, 0), Vector3(0, 0.5, 0), DARK, Vector3(0, 0, -1))
+	# Kabine nach dem Vorbild der großen Flugfeldlöschfahrzeuge: weit nach vorn geneigte Panoramascheibe
+	var cst := [
+		[-5.64, 1.12, 1.9, 2.25, 1.18, 1.08, 4.0, 5.0],
+		[-5.52, 1.0, 1.9, 2.5, 1.4, 1.3, 5.0, 6.0],
+		[-5.05, 1.0, 1.9, 3.12, 1.45, 1.36, 6.0, 7.0],
+		[-4.55, 1.0, 1.9, 3.25, 1.45, 1.38, 7.0, 7.0],
+		[-2.98, 1.0, 1.9, 3.25, 1.45, 1.38, 7.0, 7.0],
+		[-2.9, 1.05, 1.9, 3.18, 1.4, 1.32, 7.0, 7.0],
+	]
+	var cab_col := func(m: Vector3, _p: Array) -> Color:
+		var ax := absf(m.x)
+		if m.z < -4.55 and m.y > 2.0 and m.y < 3.18:
+			return DARK if absf(m.x) < 0.035 else Models.GLASS
+		if m.z > -4.5 and m.z < -3.35 and m.y > 2.05 and m.y < 3.05 and ax > 1.2:
+			return Models.GLASS
+		if absf(m.z + 3.3) < 0.025 and ax > 1.2 and m.y > 1.1:
+			return red.darkened(0.35)
+		if m.y < 1.2:
+			return DARK
+		return red
+	Models._shell(k, cst, cab_col, 36, 0.2, [-4.55, -4.5, -3.35, -3.325, -3.275])
 	for sx: float in [-1.0, 1.0]:
-		k.panel(Vector3(sx * 1.455, 2.55, -4.25), Vector3(0, 0, 1.0), Vector3(0, 0.45, 0), Models.GLASS, Vector3(sx, 0, 0))
-		k.panel(Vector3(sx * 1.456, 2.55, -4.25), Vector3(0, 0, 0.02), Vector3(0, 0.45, 0), DARK, Vector3(sx, 0, 0))
-		k.box(Vector3(sx * 1.45, 1.9, -3.25), Vector3(sx * 1.47, 1.95, -3.0), STEEL)
+		k.box(Vector3(minf(sx * 1.45, sx * 1.47), 1.9, -3.25), Vector3(maxf(sx * 1.45, sx * 1.47), 1.95, -3.0), STEEL)
 		PixelFont.draw(k, "FEUERWEHR", Vector3(sx * 1.462, 1.8, -4.25), Vector3(0, 0, -sx), Vector3.UP, Vector3(sx, 0, 0), 0.04, WHITE)
 		# Spiegel
 		k.box(Vector3(sx * 1.45, 2.6, -5.3), Vector3(sx * 1.75, 2.64, -5.25), DARK)
@@ -984,15 +999,25 @@ static func fire_truck_mesh() -> ArrayMesh:
 	k.box(Vector3(-0.15, 1.1, -5.7), Vector3(0.15, 1.3, -5.55), STEEL)
 	k.cyl(Vector3(0, 1.22, -5.7), Vector3(0, 1.28, -6.15), 0.07, 0.05, silver, 8)
 	# Dach der Kabine: Blaulichtbalken und Dachwerfer
-	k.box(Vector3(-1.15, 3.25, -5.3), Vector3(1.15, 3.36, -4.9), DARK)
-	k.box(Vector3(-1.12, 3.27, -5.33), Vector3(-0.55, 3.45, -4.87), BLUE_LAMP)
-	k.box(Vector3(0.55, 3.27, -5.33), Vector3(1.12, 3.45, -4.87), BLUE_LAMP)
-	k.box(Vector3(-0.3, 3.3, -5.33), Vector3(0.3, 3.4, -5.2), LAMP)
+	k.box(Vector3(-1.15, 3.25, -4.45), Vector3(1.15, 3.36, -4.05), DARK)
+	k.box(Vector3(-1.12, 3.27, -4.48), Vector3(-0.55, 3.45, -4.02), BLUE_LAMP)
+	k.box(Vector3(0.55, 3.27, -4.48), Vector3(1.12, 3.45, -4.02), BLUE_LAMP)
+	k.box(Vector3(-0.3, 3.3, -4.48), Vector3(0.3, 3.4, -4.35), LAMP)
 	k.cyl(Vector3(0, 3.25, -3.9), Vector3(0, 3.5, -3.9), 0.32, 0.28, silver, 12)
 	k.cyl(Vector3(0, 3.62, -3.9), Vector3(0, 3.78, -5.6), 0.13, 0.08, silver, 10)
 	k.sphere(Vector3(0, 3.6, -3.9), 0.17, silver, 8, 4)
 	# Aufbau mit Rollläden
-	k.rounded_box(Vector3(-1.45, 1.0, -2.85), Vector3(1.45, 3.45, 5.5), 0.22, red, 3)
+	var bst := [
+		[-2.86, 1.06, 2.2, 3.38, 1.38, 1.3, 7.0, 8.0],
+		[-2.78, 1.0, 2.2, 3.45, 1.45, 1.38, 8.0, 8.0],
+		[5.42, 1.0, 2.2, 3.45, 1.45, 1.38, 8.0, 8.0],
+		[5.5, 1.06, 2.2, 3.38, 1.38, 1.3, 7.0, 8.0],
+	]
+	var body_col := func(m: Vector3, _p: Array) -> Color:
+		if m.y < 1.12:
+			return DARK
+		return red
+	Models._shell(k, bst, body_col, 36, 0.4)
 	for sx: float in [-1.0, 1.0]:
 		for cz: Vector2 in [Vector2(-2.6, -0.35), Vector2(-0.15, 2.4), Vector2(2.6, 5.25)]:
 			var cz0 := cz.x
@@ -1104,7 +1129,7 @@ static func _car_park(n: Node3D, k: Kit, opts: Dictionary) -> void:
 				var col: Color = car_cols[rng.randi() % car_cols.size()]
 				var r2 := rot + (PI if rng.randf() < 0.3 else 0.0) + rng.randf_range(-0.04, 0.04)
 				var off := Vector3(-sin(rot) * 0.1 + rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.1, 0.1))
-				k.add_mesh(Models.car_mesh(kind, col), Transform3D(Basis(Vector3.UP, r2), Vector3(cx, fy, cz) + off), true)
+				k.add_mesh(Models.car_mesh(kind, col, true), Transform3D(Basis(Vector3.UP, r2), Vector3(cx, fy, cz) + off), true)
 	# Stützen
 	var col_x := [-15.75, -10.6, 5.1, 10.6, 15.75]
 	for cx: float in col_x:

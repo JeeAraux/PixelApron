@@ -1365,11 +1365,12 @@ func _train(at: Vector3, heading: Vector3, full: bool) -> Dictionary:
 		cars.append(car)
 	v["cars"] = cars
 	v["car_pos"] = []
-	v["trail"] = PackedVector3Array()
+	var trail := PackedVector3Array()
 	var h := heading.normalized()
 	for k in range(30):
-		(v["trail"] as PackedVector3Array).append(at - h * (14.0 - float(k) * 0.5))
-	(v["trail"] as PackedVector3Array).append(at)
+		trail.append(at - h * (14.0 - float(k) * 0.5))
+	trail.append(at)
+	v["trail"] = trail
 	v["bags"] = 24 if full else 0
 	_place_cars(v)
 	return v

@@ -357,6 +357,116 @@ func lathe(rings: Array, seg: int, col_fn: Callable, cap_front: bool = true, cap
 			tri(c, pts[i][k], pts[i][(k + 1) % seg], col, inner)
 
 
+## Freiformfläche aus Querschnitten (Rumpf, Flügel, Karosserie): rings ist eine Liste gleich langer
+## Punktlisten. Normalen werden über die Nachbarflächen gemittelt (weich), außer an Punkten, die
+## doppelt hintereinander stehen (dort bleibt eine Kante, z. B. Flügelhinterkante, Farbgrenze).
+## col_fn(Mitte: Vector3, i: int, j: int) -> Color färbt jedes Viereck. closed: Ring schließt sich.
+## cap0/cap1: Enden mit einem Fächer zum Mittelpunkt schließen.
+func loft(rings: Array, col_fn: Callable, closed: bool = true, cap0: bool = false, cap1: bool = false) -> void:
+	var nr := rings.size()
+	if nr < 2:
+		return
+	var np: int = (rings[0] as PackedVector3Array).size()
+	var nseg := np if closed else np - 1
+	# Flächennormalen in Laufrichtung (i: entlang, j: um den Ring)
+	var nrm := []
+	for i in range(nr):
+		var row := []
+		row.resize(np)
+		row.fill(Vector3.ZERO)
+		nrm.append(row)
+	var fns := []
+	for i in range(nr - 1):
+		var r0: PackedVector3Array = rings[i]
+		var r1: PackedVector3Array = rings[i + 1]
+		var frow := []
+		for j in range(nseg):
+			var j2 := (j + 1) % np
+			var d1 := (r0[j2] - r0[j]) + (r1[j2] - r1[j])
+			var d2 := (r1[j] - r0[j]) + (r1[j2] - r0[j2])
+			var fn := d1.cross(d2)
+			frow.append(fn)
+			if fn.length_squared() < 1e-12:
+				continue
+			fn = fn.normalized()
+			for e: Array in [[i, j], [i, j2], [i + 1, j], [i + 1, j2]]:
+				nrm[e[0]][e[1]] += fn
+		fns.append(frow)
+	# Ausrichtung: zeigen die Normalen überwiegend zur Mitte, umdrehen
+	var cen := Vector3.ZERO
+	var cnt := 0
+	for r: PackedVector3Array in rings:
+		for q: Vector3 in r:
+			cen += q
+			cnt += 1
+	cen /= float(cnt)
+	var score := 0.0
+	for i in range(nr - 1):
+		for j in range(nseg):
+			var mid: Vector3 = ((rings[i] as PackedVector3Array)[j] + (rings[i + 1] as PackedVector3Array)[j]) * 0.5
+			score += (fns[i][j] as Vector3).dot(mid - cen)
+	var flip := score < 0.0
+	# harte Kanten an doppelten Punkten im Ring: Normale nur von der eigenen Seite
+	for i in range(nr):
+		var r: PackedVector3Array = rings[i]
+		for j in range(np):
+			var jn := (j + 1) % np
+			if (closed or j < np - 1) and r[j].distance_squared_to(r[jn]) < 1e-10:
+				var a := Vector3.ZERO
+				var b := Vector3.ZERO
+				for ii: int in [i - 1, i]:
+					if ii < 0 or ii >= nr - 1:
+						continue
+					var jp := (j - 1 + np) % np
+					if closed or j > 0:
+						var f1: Vector3 = fns[ii][jp] if jp < nseg else Vector3.ZERO
+						if f1.length_squared() > 1e-12:
+							a += f1.normalized()
+					var jq := (jn + 1) % np
+					if jn < nseg and (closed or jn < np - 1):
+						var f2: Vector3 = fns[ii][jn]
+						if f2.length_squared() > 1e-12:
+							b += f2.normalized()
+				nrm[i][j] = a
+				nrm[i][jn] = b
+	for i in range(nr - 1):
+		var r0: PackedVector3Array = rings[i]
+		var r1: PackedVector3Array = rings[i + 1]
+		for j in range(nseg):
+			var fn: Vector3 = fns[i][j]
+			if fn.length_squared() < 1e-12:
+				continue
+			var j2 := (j + 1) % np
+			var na: Vector3 = nrm[i][j]
+			var nb: Vector3 = nrm[i][j2]
+			var nc: Vector3 = nrm[i + 1][j2]
+			var nd: Vector3 = nrm[i + 1][j]
+			var o := fn.normalized() * (-1.0 if flip else 1.0)
+			var m := (r0[j] + r0[j2] + r1[j] + r1[j2]) * 0.25
+			var col: Color = col_fn.call(m, i, j)
+			var ns := []
+			for nn: Vector3 in [na, nb, nc, nd]:
+				var u := nn * (-1.0 if flip else 1.0)
+				ns.append(u.normalized() if u.length_squared() > 1e-12 else o)
+			quad_n(r0[j], r0[j2], r1[j2], r1[j], ns[0], ns[1], ns[2], ns[3], col, m - o)
+	for e: Array in [[0, cap0, 1], [nr - 1, cap1, nr - 2]]:
+		if not bool(e[1]):
+			continue
+		var r: PackedVector3Array = rings[e[0]]
+		var c := Vector3.ZERO
+		for q: Vector3 in r:
+			c += q
+		c /= float(r.size())
+		var inner: Vector3 = c + ((rings[e[2]] as PackedVector3Array)[0] - r[0]) * 0.1 + (c - cen) * -0.0
+		var other_c := Vector3.ZERO
+		for q: Vector3 in (rings[e[2]] as PackedVector3Array):
+			other_c += q
+		other_c /= float(r.size())
+		var col: Color = col_fn.call(c, int(e[0]), -1)
+		for j in range(nseg):
+			tri(c, r[j], r[(j + 1) % np], col, other_c)
+
+
 ## Prisma zwischen zwei konvexen Vielecken gleicher Eckenzahl (z. B. Flügel: unten und oben).
 func prism(bottom: Array, top: Array, col: Color, side_col: Variant = null) -> void:
 	var n := bottom.size()

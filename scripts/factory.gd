@@ -1320,7 +1320,7 @@ static func make_car(c: Color, kind: String = "") -> Node3D:
 	var d: Array = Models.CAR_DIMS[kind]
 	var hl: float = float(d[0]) * 0.5
 	var hw: float = float(d[1]) * 0.5
-	var belt := 0.92 if kind != "transporter" else (1.05 if kind != "linienbus" else 1.0)
+	var belt := Models.car_light_y(kind) + 0.16
 	var brake := Node3D.new()
 	brake.name = "Bremslicht"
 	brake.visible = false

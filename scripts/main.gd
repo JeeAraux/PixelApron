@@ -887,6 +887,7 @@ func _demo(args: PackedStringArray) -> void:
 		for kind: String in ["kompakt", "limousine", "kombi", "suv", "transporter", "taxi"]:
 			var car: Node3D = Factory.make_car(Factory.CAR_COLORS[int(cx) % Factory.CAR_COLORS.size()], kind)
 			car.position = base + Vector3(cx, 0, 26)
+			car.rotation.y = PI if int(cx) % 2 == 1 else 0.0
 			showcase.add_child(car)
 			cx += 3.0
 		for k in range(12):
@@ -894,11 +895,47 @@ func _demo(args: PackedStringArray) -> void:
 			per.position = base + Vector3(-20 + k * 1.0, 0, 34)
 			Factory.set_pose(per, k % 6)
 			showcase.add_child(per)
+		# Fahrzeugreihe: alle Bodenfahrzeuge, Busse und Feuerwehr nebeneinander
+		var Lm = load("res://scripts/landmarks.gd")
+		var Mo = load("res://scripts/models.gd")
+		var row := [["linienbus", 9.0], ["bus", 10.0], ["schlepper", 9.0], ["gepaeckschlepper", 4.0], ["wagen", 4.0], ["bandlader", 5.0],
+			["catering_basis", 6.0], ["tank", 6.0], ["gpu", 4.0], ["treppe", 6.0], ["feuer", 7.0]]
+		var fx := -30.0
+		for e: Array in row:
+			var mi := MeshInstance3D.new()
+			var kind: String = e[0]
+			match kind:
+				"linienbus":
+					mi.mesh = Mo.city_bus_mesh(Color(0.86, 0.72, 0.16))
+				"treppe":
+					mi.mesh = Mo.stairs_mesh(3.4)
+				"feuer":
+					mi.mesh = Lm.fire_truck_mesh()
+				_:
+					mi.mesh = Mo.gse_mesh(kind)
+			mi.position = base + Vector3(fx, 0, 50)
+			showcase.add_child(mi)
+			fx += float(e[1])
 		cam_rig.target = base + (Vector3(0, 0, 10) if mode == "modelle" else Vector3(-14, 0, 33))
 		cam_rig.zoom_goal = 75.0 if mode == "modelle" else 14.0
+		if mode == "modelle_fahrzeuge":
+			cam_rig.target = base + Vector3(10, 0, 50)
+			cam_rig.zoom_goal = 34.0
+		if mode == "modelle_autos":
+			cam_rig.target = base + Vector3(12, 0, 26)
+			cam_rig.zoom_goal = 11.0
 		if mode == "modelle_a320" or mode == "modelle_b737":
 			cam_rig.target = base + Vector3(-22 if mode == "modelle_a320" else 22, 0, 0)
 			cam_rig.zoom_goal = 26.0
+		for a in args:
+			if a.begins_with("--at="):
+				var axz := a.substr(5).split(",")
+				cam_rig.target = base + Vector3(float(axz[0]), 0, float(axz[1]))
+			elif a.begins_with("--zoom="):
+				cam_rig.zoom_goal = float(a.substr(7))
+			elif a.begins_with("--yaw="):
+				cam_rig.yaw = float(a.substr(6))
+				cam_rig.yaw_goal = cam_rig.yaw
 		cam_rig.zoom = cam_rig.zoom_goal
 	elif mode == "tower" or mode == "hangar" or mode == "feuerwache":
 		var at: Vector3 = Vector3.ZERO
