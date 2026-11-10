@@ -347,6 +347,7 @@ func _update(p: Dictionary, sim: float) -> void:
 					game.satisfaction = minf(100.0, game.satisfaction + 0.6)
 				_remove(p, "")
 				return
+	_animate(p, sim)
 	_place(p)
 
 
@@ -506,6 +507,15 @@ func _spawn_gse(p: Dictionary) -> void:
 		var start: Vector3 = home + side * float(i) * 4.0
 		v.position = start
 		list.append({"node": v, "home": start, "spot": spot[1], "face": spot[2], "delay": 0.04 * float(i)})
+	# Vorfeldpersonal in Warnwesten: Einweiser vor der Nase, Lader am Gepäckwagen
+	var crew := [[c + fwd * (float(Catalog.PLANES[p["kind"]]["nose"]) + 3.0), -fwd], [c - side * 3.2 - fwd * 7.5, side],
+		[c + side * 6.8 + fwd * 3.5, -side]]
+	for i in range(crew.size()):
+		var w := Factory.make_staff(Color(0.95, 0.85, 0.1), Color(0.15, 0.18, 0.28), i, true)
+		add_child(w)
+		w.position = crew[i][0]
+		w.basis = Basis.looking_at(crew[i][1], Vector3.UP)
+		list.append({"node": w, "static": true})
 	p["gse"] = list
 
 
@@ -513,6 +523,8 @@ func _update_gse(p: Dictionary, _sim: float) -> void:
 	var total: float = p["turn"]
 	var f := 1.0 - float(p["timer"]) / maxf(total, 0.01)
 	for g: Dictionary in p["gse"]:
+		if bool(g.get("static", false)):
+			continue
 		var v: Node3D = g["node"]
 		var home: Vector3 = g["home"]
 		var spot: Vector3 = g["spot"]
@@ -540,6 +552,37 @@ func _clear_gse(p: Dictionary) -> void:
 		if is_instance_valid(v):
 			(v as Node).queue_free()
 	p["gse"] = []
+
+
+## Bewegliche Teile: Fans drehen, Fahrwerk ein- und ausfahren, Beacon und Blitzlichter blinken.
+func _animate(p: Dictionary, sim: float) -> void:
+	var node: Node3D = p["node"]
+	var state: String = p["state"]
+	var target := 0.0
+	match state:
+		"anflug", "landung", "start":
+			target = 34.0
+		"rollt_ein", "rollt_aus", "wartet":
+			target = 16.0
+		"abfertigung":
+			target = 0.0 if float(p["timer"]) > 3.0 and float(p["timer"]) < float(p["turn"]) - 2.0 else 10.0
+	var rate := lerpf(float(p.get("fan_rate", 0.0)), target, clampf(sim * 0.6, 0.0, 1.0))
+	p["fan_rate"] = rate
+	p["spin"] = fmod(float(p.get("spin", 0.0)) + rate * sim, TAU)
+	p["t"] = float(p.get("t", 0.0)) + sim
+	for fan: String in ["FanL", "FanR"]:
+		var f := node.get_node_or_null(fan) as Node3D
+		if f != null:
+			f.rotation.z = float(p["spin"])
+	var gear := node.get_node_or_null("Fahrwerk") as Node3D
+	if gear != null:
+		gear.visible = float(p["alt"]) < (140.0 if state == "anflug" else 35.0)
+	var beacon := node.get_node_or_null("Beacon") as Node3D
+	if beacon != null:
+		beacon.visible = rate > 2.0 and fmod(float(p["t"]), 1.1) < 0.18
+	var strobe := node.get_node_or_null("Strobe") as Node3D
+	if strobe != null:
+		strobe.visible = state in ["anflug", "landung", "start"] and fmod(float(p["t"]), 1.4) < 0.08
 
 
 func _place(p: Dictionary) -> void:

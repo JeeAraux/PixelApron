@@ -61,11 +61,61 @@ static func plane_mesh(kind: String, livery: Color) -> ArrayMesh:
 	_tail(k, s, livery)
 	for side: float in [-1.0, 1.0]:
 		_engine(k, s, livery, side)
-	_gear(k, s)
 	_lights(k, s)
+	_wordmark(k, s, livery)
 	var mesh := k.commit()
 	_cache[key] = mesh
 	return mesh
+
+
+## Fahrwerk als eigenes Mesh, damit es nach dem Start einfahren kann.
+static func gear_mesh(kind: String) -> ArrayMesh:
+	var key := "gear_" + kind
+	if _cache.has(key):
+		return _cache[key]
+	var k := Kit.new()
+	_gear(k, SPECS.get(kind, SPECS["a320"]))
+	var mesh := k.commit()
+	_cache[key] = mesh
+	return mesh
+
+
+## Fan mit Schaufeln und Spinner, dreht sich um die eigene z-Achse.
+static func fan_mesh(kind: String) -> ArrayMesh:
+	var key := "fan_" + kind
+	if _cache.has(key):
+		return _cache[key]
+	var s: Dictionary = SPECS.get(kind, SPECS["a320"])
+	var r: float = float(s["eng_r"]) * 0.84
+	var flat: float = s["eng_flat"]
+	var k := Kit.new()
+	k.cyl(Vector3(0, 0, 0.0), Vector3(0, 0, 0.06), r, r, Color(0.12, 0.13, 0.15), 20)
+	for i in range(18):
+		var a := TAU * float(i) / 18.0
+		var dir := Vector3(cos(a), sin(a) * flat, 0)
+		var tang := Vector3(-sin(a), cos(a) * flat, 0).normalized()
+		var p0 := dir * 0.3
+		var p1 := dir * r * 0.97
+		k.quad(p0 - tang * 0.05 + Vector3(0, 0, -0.02), p1 - tang * 0.11 + Vector3(0, 0, -0.02),
+			p1 + tang * 0.11 + Vector3(0, 0, -0.06), p0 + tang * 0.05 + Vector3(0, 0, -0.06), Color(0.42, 0.44, 0.47), Vector3(0, 0, 1))
+	k.cyl(Vector3(0, 0, -0.38), Vector3(0, 0, -0.02), 0.02, 0.3, METAL, 12)
+	k.panel(Vector3(0.12, 0.05, -0.2), Vector3(0.05, 0.0, 0.0), Vector3(0, 0.05, 0.05), Color(0.2, 0.2, 0.22), Vector3(0, 0, -1))
+	var mesh := k.commit()
+	_cache[key] = mesh
+	return mesh
+
+
+## Schriftzug der Airline als Pixelmuster über den Fenstern (aus der Hausfarbe abgeleitet).
+static func _wordmark(k: Kit, s: Dictionary, livery: Color) -> void:
+	var pattern := absi(livery.to_html().hash())
+	var dy: float = float(s["win_dy"]) + 0.52
+	var z := -11.8
+	for i in range(22):
+		var bits := (pattern >> (i % 24)) & 3
+		if bits != 0 and i % 4 != 3:
+			for side: float in [-1.0, 1.0]:
+				_on_skin(k, s, side, z, dy + (0.08 if bits == 2 else 0.0), 0.11, 0.17 if bits != 2 else 0.1, livery.darkened(0.15), 0.03)
+		z += 0.27
 
 
 ## Querschnitt des Rumpfs an der Stelle z: [Mitte y, Radius quer, Radius hoch]
@@ -109,16 +159,17 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color) -> void:
 	for zz: float in zs:
 		var p := _profile(s, zz)
 		rings.append([zz, p[0], p[1], p[2]])
-	var cock_a := z0 + nose_len * 0.50
+	var cock_a := z0 + nose_len * 0.55
 	var cock_b := z0 + nose_len * 0.80
 	var col_fn := func(fz: float, fx: float, dy: float, ry: float) -> Color:
 		if fz < z0 + 0.45:
 			return Color(0.80, 0.80, 0.79)
 		if fz > z1 - 0.35:
 			return DARK_METAL
-		if fz > cock_a and fz < cock_b and dy > ry * 0.12 and dy < ry * 0.62:
-			if absf(fx) < 0.07 or (absf(fx) > ry * 0.42 and absf(fx) < ry * 0.5):
-				return WHITE
+		if fz > cock_a and fz < cock_b and dy > ry * 0.2 and dy < ry * (0.6 - 0.25 * (fz - cock_a) / (cock_b - cock_a)):
+			var ax := absf(fx) / maxf(ry, 0.01)
+			if absf(fx) < 0.05 or (ax > 0.36 and ax < 0.43) or (ax > 0.72 and ax < 0.79) or ax > 0.95:
+				return Color(0.25, 0.26, 0.28)
 			return GLASS
 		if dy < -ry * 0.48:
 			return BELLY
@@ -147,6 +198,13 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color) -> void:
 			_on_skin(k, s, side, e, 0.12, 0.27, 0.5, DOOR_LINE, 0.015)
 			_on_skin(k, s, side, e, 0.12, 0.23, 0.46, WHITE, 0.025)
 			_on_skin(k, s, side, e, wdy, 0.1, 0.13, WIN, 0.035)
+	# Frachttüren rechts unten, Antennen und Ablaufmasten am Bauch
+	for cz: float in [float(s["wing_z"]) - 5.5, float(s["tail_start"]) - 1.0]:
+		_on_skin(k, s, 1.0, cz, -float(s["r"]) * 0.5, 0.9, 0.62, DOOR_LINE, 0.015)
+		_on_skin(k, s, 1.0, cz, -float(s["r"]) * 0.5, 0.84, 0.56, BELLY, 0.025)
+	var by := float(s["cy"]) - float(s["r"])
+	for az: float in [-10.0, -3.0, 8.0]:
+		k.box(Vector3(-0.03, by - 0.35, az), Vector3(0.03, by + 0.05, az + 0.4), DARK_METAL)
 	# Rumpf-Flügel-Verkleidung unter dem Mittelrumpf
 	var cy: float = s["cy"]
 	var r: float = s["r"]
@@ -222,6 +280,30 @@ static func _wings(k: Kit, s: Dictionary, livery: Color) -> void:
 				Vector3(side * (stations[i + 1] - (0.6 if i == 1 else 0.0)), yb + 0.01, float(wb[0]) + float(wb[2]) * 0.76),
 				Vector3(side * (stations[i] + 0.2), ya + 0.01, float(wa[0]) + float(wa[2]) * 0.76),
 				WING_DARK, Vector3(0, -10, 0))
+		# Querruder außen und Vorflügel-Linie
+		var ail_a := tip_x - 6.5
+		var ail_b := tip_x - 1.2
+		var wa2 := _wing_at(s, ail_a)
+		var wb2 := _wing_at(s, ail_b)
+		for f: Array in [[0.8, 0.97, WING_DARK.lightened(0.08)], [0.09, 0.12, WING_DARK]]:
+			k.quad(Vector3(side * ail_a, float(wa2[1]) + 0.06, float(wa2[0]) + float(wa2[2]) * float(f[0])),
+				Vector3(side * ail_b, float(wb2[1]) + 0.04, float(wb2[0]) + float(wb2[2]) * float(f[0])),
+				Vector3(side * ail_b, float(wb2[1]) + 0.04, float(wb2[0]) + float(wb2[2]) * float(f[1])),
+				Vector3(side * ail_a, float(wa2[1]) + 0.06, float(wa2[0]) + float(wa2[2]) * float(f[1])), f[2], Vector3(0, -10, 0))
+		var wr2 := _wing_at(s, float(s["r"]) * 0.9)
+		k.quad(Vector3(side * float(s["r"]) * 0.9, float(wr2[1]) + 0.3, float(wr2[0]) + float(wr2[2]) * 0.09),
+			Vector3(side * ail_a, float(wa2[1]) + 0.08, float(wa2[0]) + float(wa2[2]) * 0.09),
+			Vector3(side * ail_a, float(wa2[1]) + 0.08, float(wa2[0]) + float(wa2[2]) * 0.12),
+			Vector3(side * float(s["r"]) * 0.9, float(wr2[1]) + 0.3, float(wr2[0]) + float(wr2[2]) * 0.12), WING_DARK, Vector3(0, -10, 0))
+		# Spoiler
+		for i in range(4):
+			var sx0 := float(s["eng_x"]) + 0.4 + float(i) * 1.6
+			var sw0 := _wing_at(s, sx0)
+			var sw1 := _wing_at(s, sx0 + 1.4)
+			k.quad(Vector3(side * sx0, float(sw0[1]) + 0.2, float(sw0[0]) + float(sw0[2]) * 0.55),
+				Vector3(side * (sx0 + 1.4), float(sw1[1]) + 0.19, float(sw1[0]) + float(sw1[2]) * 0.55),
+				Vector3(side * (sx0 + 1.4), float(sw1[1]) + 0.19, float(sw1[0]) + float(sw1[2]) * 0.7),
+				Vector3(side * sx0, float(sw0[1]) + 0.2, float(sw0[0]) + float(sw0[2]) * 0.7), WING.darkened(0.06), Vector3(0, -10, 0))
 		# Klappenschienen-Verkleidungen unter der Hinterkante
 		for fx: float in [kink_x - 1.6, kink_x + 2.2, kink_x + 5.2, kink_x + 8.0]:
 			var w := _wing_at(s, fx)
@@ -248,6 +330,13 @@ static func _tail(k: Kit, s: Dictionary, livery: Color) -> void:
 	for side: float in [-1.0, 1.0]:
 		_surface(k, Vector3(side * 0.3, sy, sz), float(s["stab_c"]), Vector3(side * span, sy + span * 0.09, sz + (span - 0.3) * sw),
 			float(s["stab_c"]) * 0.38, Vector3.UP, 0.3, 0.1, WING, WING_DARK)
+	# Höhenruder-Linie
+	for side: float in [-1.0, 1.0]:
+		var ez0 := sz + float(s["stab_c"]) * 0.7
+		var ez1 := sz + (span - 0.3) * sw + float(s["stab_c"]) * 0.38 * 0.7
+		k.quad(Vector3(side * 0.6, sy + 0.1, ez0), Vector3(side * span * 0.95, sy + span * 0.09 + 0.05, ez1),
+			Vector3(side * span * 0.95, sy + span * 0.09 + 0.05, ez1 + 0.08), Vector3(side * 0.6, sy + 0.1, ez0 + 0.1),
+			WING_DARK, Vector3(0, -10, 0))
 	# Seitenleitwerk in Airline-Farbe mit Emblem
 	var fz: float = s["fin_z"]
 	var fc: float = s["fin_c"]
@@ -258,6 +347,12 @@ static func _tail(k: Kit, s: Dictionary, livery: Color) -> void:
 	_surface(k, Vector3(0, base_y, fz), fc, Vector3(0, base_y + fh, tip_z), float(s["fin_tip_c"]), Vector3(1, 0, 0), 0.42, 0.16, livery)
 	if bool(s["dorsal"]):
 		_surface(k, Vector3(0, base_y - 0.1, fz - 3.6), 3.6, Vector3(0, base_y + 1.2, fz - 0.3), 0.3, Vector3(1, 0, 0), 0.3, 0.2, livery)
+	for side: float in [-1.0, 1.0]:
+		var rz0 := fz + fc * 0.68
+		var rz1 := tip_z + float(s["fin_tip_c"]) * 0.68
+		k.quad(Vector3(side * 0.135, base_y + 0.3, rz0), Vector3(side * 0.06, base_y + fh * 0.97, rz1),
+			Vector3(side * 0.06, base_y + fh * 0.97, rz1 + 0.07), Vector3(side * 0.135, base_y + 0.3, rz0 + 0.07),
+			livery.darkened(0.3), Vector3(-side * 10.0, base_y + fh * 0.5, (rz0 + rz1) * 0.5))
 	var mid_y := base_y + fh * 0.48
 	var mid_z := lerpf(fz, tip_z, 0.48) + lerpf(fc, float(s["fin_tip_c"]), 0.48) * 0.5
 	for side: float in [-1.0, 1.0]:
@@ -280,11 +375,12 @@ static func _engine(k: Kit, s: Dictionary, livery: Color, side: float) -> void:
 			return METAL
 		if fz > z0 + ln * 0.8:
 			return WHITE.darkened(0.08)
+		if fz > z0 + ln * 0.55 and fz < z0 + ln * 0.6:
+			return livery.darkened(0.3)
 		return livery
 	k.lathe(rings, 18, col_fn, false, false, ex)
 	# Fan, Spinner, Schubdüse
-	k.cyl(Vector3(ex, ey, z0 + 0.35), Vector3(ex, ey, z0 + 0.42), r * 0.84, r * 0.84 * flat, Color(0.16, 0.17, 0.19), 18)
-	k.cyl(Vector3(ex, ey, z0 + 0.05), Vector3(ex, ey, z0 + 0.4), 0.03, 0.3, METAL, 10)
+	k.cyl(Vector3(ex, ey, z0 + 0.5), Vector3(ex, ey, z0 + 0.56), r * 0.86, r * 0.86 * flat, Color(0.1, 0.1, 0.12), 18)
 	k.cyl(Vector3(ex, ey, z0 + ln - 0.05), Vector3(ex, ey, z0 + ln + 0.9), r * 0.55, 0.12, DARK_METAL, 12)
 	# Pylon zum Flügel
 	var w := _wing_at(s, absf(ex))
@@ -322,8 +418,7 @@ static func _gear(k: Kit, s: Dictionary) -> void:
 static func _lights(k: Kit, s: Dictionary) -> void:
 	var cy: float = s["cy"]
 	var r: float = s["r"]
-	k.box(Vector3(-0.12, cy + r - 0.02, -1.2), Vector3(0.12, cy + r + 0.16, -0.9), RED)
-	k.box(Vector3(-0.12, cy - r - 0.3, 2.4), Vector3(0.12, cy - r - 0.12, 2.7), RED)
+	k.box(Vector3(-0.1, cy + r - 0.02, -1.15), Vector3(0.1, cy + r + 0.08, -0.95), Color(0.4, 0.1, 0.1))
 	var tip := _wing_at(s, float(s["tip_x"]))
 	for side: float in [-1.0, 1.0]:
 		var x := side * float(s["tip_x"])
@@ -336,50 +431,131 @@ static func _lights(k: Kit, s: Dictionary) -> void:
 
 # ================================================================== Menschen
 
-const HAIR := [Color(0.15, 0.10, 0.07), Color(0.32, 0.21, 0.12), Color(0.72, 0.58, 0.32), Color(0.06, 0.06, 0.06), Color(0.62, 0.62, 0.62), Color(0.55, 0.25, 0.12)]
-const PANTS := [Color(0.16, 0.18, 0.24), Color(0.22, 0.30, 0.45), Color(0.28, 0.26, 0.22), Color(0.12, 0.12, 0.13), Color(0.55, 0.50, 0.40)]
+const HAIR := [Color(0.15, 0.10, 0.07), Color(0.32, 0.21, 0.12), Color(0.72, 0.58, 0.32), Color(0.06, 0.06, 0.06),
+	Color(0.62, 0.62, 0.62), Color(0.55, 0.25, 0.12), Color(0.85, 0.78, 0.6)]
+const PANTS := [Color(0.16, 0.18, 0.24), Color(0.22, 0.30, 0.45), Color(0.28, 0.26, 0.22), Color(0.12, 0.12, 0.13),
+	Color(0.55, 0.50, 0.40), Color(0.35, 0.38, 0.30)]
+const JACKETS := [Color(0.2, 0.22, 0.28), Color(0.45, 0.32, 0.2), Color(0.15, 0.15, 0.16), Color(0.55, 0.15, 0.15),
+	Color(0.2, 0.35, 0.3), Color(0.75, 0.72, 0.65)]
+const SKIN_TONES := [Color(0.93, 0.78, 0.65), Color(0.82, 0.62, 0.47), Color(0.58, 0.40, 0.28), Color(0.38, 0.26, 0.18)]
+const HIVIS := Color(0.95, 0.85, 0.1)
+
+## Posen: 0 stehen, 1 bis 4 Gangzyklus, 5 sitzen.
+const POSES := 6
 
 
-## Drei Posen: 0 stehen, 1 und 2 Schritt. look: [Hemd, Hose, Haut, Haar, langes Haar?]
-static func person_mesh(look: Array, pose: int) -> ArrayMesh:
-	var key := "p_%s_%s_%s_%s_%s_%d" % [(look[0] as Color).to_html(), (look[1] as Color).to_html(), (look[2] as Color).to_html(),
-		(look[3] as Color).to_html(), str(look[4]), pose]
+static func random_look(shirt: Color, skin_i: int = -1) -> Dictionary:
+	var skirt := randf() < 0.18
+	return {
+		"shirt": shirt, "pants": PANTS[randi() % PANTS.size()],
+		"skin": SKIN_TONES[(skin_i if skin_i >= 0 else randi()) % SKIN_TONES.size()],
+		"hair": HAIR[randi() % HAIR.size()], "style": randi() % 5 if randf() < 0.9 else 3,
+		"jacket": JACKETS[randi() % JACKETS.size()] if randf() < 0.4 else null,
+		"skirt": skirt, "shoes": [Color(0.1, 0.09, 0.08), Color(0.9, 0.9, 0.88), Color(0.35, 0.22, 0.12)][randi() % 3],
+		"bag": randi() % 3 if randf() < 0.55 else 0, "vest": false,
+	}
+
+
+## Uniform für Personal: Hemd und Hose fest, ohne Tasche. vest = Warnweste (Vorfeld).
+static func staff_look(shirt: Color, pants: Color, skin_i: int, vest: bool = false) -> Dictionary:
+	return {"shirt": shirt, "pants": pants, "skin": SKIN_TONES[skin_i % SKIN_TONES.size()], "hair": HAIR[skin_i % HAIR.size()],
+		"style": 4 if vest else skin_i % 3, "jacket": null, "skirt": false, "shoes": Color(0.08, 0.08, 0.08), "bag": 0, "vest": vest}
+
+
+static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
+	var key := "p_%s_%d" % [str(look.values()), pose]
 	if _cache.has(key):
 		return _cache[key]
-	var shirt: Color = look[0]
-	var pants: Color = look[1]
-	var skin: Color = look[2]
-	var hair: Color = look[3]
 	var k := Kit.new()
-	var stride: float = [0.0, 0.14, -0.14][pose]
-	var shoe := Color(0.1, 0.09, 0.08)
+	var shirt: Color = look["shirt"]
+	var pants: Color = look["pants"]
+	var skin: Color = look["skin"]
+	var hair: Color = look["hair"]
+	var shoes: Color = look["shoes"]
+	var jacket: Variant = look["jacket"]
+	var top: Color = jacket if jacket != null else shirt
+	if bool(look["vest"]):
+		top = HIVIS
+	var sit := pose == 5
+	var stride: float = [0.0, 0.17, 0.05, -0.17, -0.05, 0.0][pose]
+	var lift: float = [0.0, 0.0, 0.05, 0.0, 0.05, 0.0][pose]
+	var y0 := -0.4 if sit else 0.0   # Oberkörper beim Sitzen tiefer
+	# Beine
 	for side: float in [-1.0, 1.0]:
-		var dz: float = stride * side
-		k.box(Vector3(side * 0.02, 0.0, -0.13 + dz), Vector3(side * 0.16, 0.08, 0.07 + dz), shoe)
-		k.box(Vector3(side * 0.025, 0.08, -0.07 + dz * 0.8), Vector3(side * 0.155, 0.86, 0.07 + dz * 0.5), pants)
-	k.box(Vector3(-0.17, 0.8, -0.09), Vector3(0.17, 0.92, 0.09), pants)
-	k.box(Vector3(-0.2, 0.9, -0.11), Vector3(0.2, 1.42, 0.11), shirt)
-	k.box(Vector3(-0.22, 1.32, -0.12), Vector3(0.22, 1.44, 0.12), shirt.darkened(0.08))
+		var x0 := side * 0.025
+		var x1 := side * 0.16
+		if sit:
+			k.box(Vector3(x0, 0.42, -0.42), Vector3(x1, 0.54, 0.05), pants)
+			k.box(Vector3(x0, 0.08, -0.44), Vector3(x1, 0.48, -0.32), pants if not bool(look["skirt"]) else skin)
+			k.box(Vector3(x0 - side * 0.005, 0.0, -0.56), Vector3(x1 + side * 0.005, 0.08, -0.3), shoes)
+			continue
+		var dz := stride * side
+		var ly := lift if dz < 0.0 else 0.0
+		k.box(Vector3(x0 - side * 0.005, ly, -0.15 + dz), Vector3(x1 + side * 0.005, 0.08 + ly, 0.08 + dz), shoes)
+		var leg_col := skin if bool(look["skirt"]) else pants
+		k.box(Vector3(x0, 0.08 + ly, -0.075 + dz * 0.85), Vector3(x1, 0.5, 0.065 + dz * 0.85), leg_col)
+		k.box(Vector3(x0, 0.48, -0.08 + dz * 0.4), Vector3(x1, 0.9, 0.07 + dz * 0.4), leg_col)
+	if bool(look["skirt"]):
+		k.prism([Vector3(-0.24, 0.5 + y0 * 0.0, -0.15), Vector3(0.24, 0.5, -0.15), Vector3(0.24, 0.5, 0.15), Vector3(-0.24, 0.5, 0.15)],
+			[Vector3(-0.18, 0.95 + y0, -0.11), Vector3(0.18, 0.95 + y0, -0.11), Vector3(0.18, 0.95 + y0, 0.11), Vector3(-0.18, 0.95 + y0, 0.11)],
+			pants)
+	else:
+		k.box(Vector3(-0.175, 0.84 + y0, -0.1), Vector3(0.175, 0.92 + y0, 0.1), Color(0.12, 0.1, 0.08))
+	# Oberkörper: unten Hüfte, oben breite Schultern
+	k.prism([Vector3(-0.18, 0.9 + y0, -0.105), Vector3(0.18, 0.9 + y0, -0.105), Vector3(0.18, 0.9 + y0, 0.105), Vector3(-0.18, 0.9 + y0, 0.105)],
+		[Vector3(-0.235, 1.42 + y0, -0.12), Vector3(0.235, 1.42 + y0, -0.12), Vector3(0.235, 1.42 + y0, 0.12), Vector3(-0.235, 1.42 + y0, 0.12)], top)
+	if jacket != null and not bool(look["vest"]):
+		k.panel(Vector3(0, 1.17 + y0, -0.118), Vector3(0.045, 0, 0), Vector3(0, 0.24, 0.0), shirt, Vector3(0, 0, -1))
+	if bool(look["vest"]):
+		for vy: float in [1.04, 1.24]:
+			k.box(Vector3(-0.215, vy + y0, -0.125), Vector3(0.215, vy + 0.05 + y0, 0.125), Color(0.82, 0.84, 0.86))
+	k.box(Vector3(-0.08, 1.4 + y0, -0.09), Vector3(0.08, 1.45 + y0, 0.07), shirt.lightened(0.1))
+	# Arme schwingen gegengleich
 	for side: float in [-1.0, 1.0]:
-		var dz: float = -stride * side * 0.8
-		k.box(Vector3(side * 0.2, 0.98, -0.06 + dz), Vector3(side * 0.29, 1.42, 0.06 + dz * 0.4), shirt.darkened(0.04))
-		k.box(Vector3(side * 0.205, 0.88, -0.05 + dz), Vector3(side * 0.285, 0.99, 0.05 + dz), skin)
-	k.box(Vector3(-0.06, 1.42, -0.05), Vector3(0.06, 1.48, 0.05), skin)
-	k.box(Vector3(-0.1, 1.47, -0.11), Vector3(0.1, 1.71, 0.11), skin)
-	k.box(Vector3(-0.11, 1.66, -0.12), Vector3(0.11, 1.75, 0.12), hair)
-	k.box(Vector3(-0.11, 1.5 if bool(look[4]) else 1.58, 0.07), Vector3(0.11, 1.72, 0.13), hair)
-	if bool(look[4]):
-		k.box(Vector3(-0.115, 1.45, -0.02), Vector3(-0.1, 1.7, 0.12), hair)
-		k.box(Vector3(0.1, 1.45, -0.02), Vector3(0.115, 1.7, 0.12), hair)
+		var dz := -stride * side * 0.9
+		if sit:
+			dz = -0.18
+		k.box(Vector3(side * 0.235, 1.12 + y0, -0.06 + dz * 0.4), Vector3(side * 0.32, 1.42 + y0, 0.06 + dz * 0.4), top.darkened(0.05))
+		k.box(Vector3(side * 0.24, 0.92 + y0, -0.055 + dz), Vector3(side * 0.315, 1.14 + y0, 0.055 + dz), top.darkened(0.05))
+		k.box(Vector3(side * 0.245, 0.84 + y0, -0.045 + dz), Vector3(side * 0.31, 0.93 + y0, 0.045 + dz), skin)
+	# Kopf mit Augen und Nase
+	k.box(Vector3(-0.055, 1.44 + y0, -0.05), Vector3(0.055, 1.5 + y0, 0.05), skin)
+	k.box(Vector3(-0.1, 1.49 + y0, -0.11), Vector3(0.1, 1.73 + y0, 0.11), skin)
+	for ex: float in [-0.045, 0.045]:
+		k.box(Vector3(ex - 0.018, 1.61 + y0, -0.114), Vector3(ex + 0.018, 1.64 + y0, -0.108), Color(0.08, 0.07, 0.07))
+	k.box(Vector3(-0.02, 1.56 + y0, -0.13), Vector3(0.02, 1.61 + y0, -0.105), skin.darkened(0.08))
+	_hair(k, int(look["style"]), hair, y0, top)
+	# Tasche
+	match int(look["bag"]):
+		1:
+			k.box(Vector3(-0.17, 1.0 + y0, 0.12), Vector3(0.17, 1.38 + y0, 0.28), JACKETS[(int(str(hair.to_html()).hash()) & 0x7fffffff) % JACKETS.size()])
+		2:
+			k.box(Vector3(0.3, 0.85 + y0, -0.08), Vector3(0.38, 1.05 + y0, 0.12), Color(0.35, 0.2, 0.12))
 	var mesh := k.commit()
 	_cache[key] = mesh
 	return mesh
 
 
-static func random_look(shirt: Color, skin_i: int = -1) -> Array:
-	const SKINS := [Color(0.93, 0.78, 0.65), Color(0.82, 0.62, 0.47), Color(0.58, 0.40, 0.28), Color(0.38, 0.26, 0.18)]
-	var skin: Color = SKINS[(skin_i if skin_i >= 0 else randi()) % SKINS.size()]
-	return [shirt, PANTS[randi() % PANTS.size()], skin, HAIR[randi() % HAIR.size()], randf() < 0.35]
+static func _hair(k: Kit, style: int, hair: Color, y0: float, cap_col: Color) -> void:
+	match style:
+		0:
+			k.box(Vector3(-0.11, 1.68 + y0, -0.12), Vector3(0.11, 1.77 + y0, 0.12), hair)
+			k.box(Vector3(-0.11, 1.56 + y0, 0.06), Vector3(0.11, 1.74 + y0, 0.125), hair)
+		1:
+			k.box(Vector3(-0.115, 1.68 + y0, -0.12), Vector3(0.115, 1.78 + y0, 0.125), hair)
+			k.box(Vector3(-0.115, 1.38 + y0, 0.04), Vector3(0.115, 1.74 + y0, 0.14), hair)
+			for side: float in [-1.0, 1.0]:
+				k.box(Vector3(side * 0.1, 1.42 + y0, -0.06), Vector3(side * 0.12, 1.74 + y0, 0.12), hair)
+		2:
+			k.box(Vector3(-0.112, 1.68 + y0, -0.12), Vector3(0.112, 1.77 + y0, 0.125), hair)
+			k.box(Vector3(-0.11, 1.55 + y0, 0.06), Vector3(0.11, 1.74 + y0, 0.13), hair)
+			k.box(Vector3(-0.04, 1.42 + y0, 0.13), Vector3(0.04, 1.66 + y0, 0.2), hair)
+		3:
+			k.box(Vector3(-0.105, 1.55 + y0, 0.05), Vector3(0.105, 1.64 + y0, 0.115), hair)
+		_:
+			k.box(Vector3(-0.115, 1.7 + y0, -0.12), Vector3(0.115, 1.8 + y0, 0.12), cap_col.darkened(0.2))
+			k.box(Vector3(-0.1, 1.7 + y0, -0.24), Vector3(0.1, 1.73 + y0, -0.11), cap_col.darkened(0.2))
+			k.box(Vector3(-0.11, 1.56 + y0, 0.06), Vector3(0.11, 1.7 + y0, 0.12), hair)
 
 
 # ================================================================== Autos

@@ -51,6 +51,15 @@ func tri(a: Vector3, b: Vector3, c: Vector3, col: Color, center: Vector3) -> voi
 	count += 1
 
 
+## Dreieck unverändert übernehmen (Reihenfolge und Normale wie gegeben), z. B. beim Backen.
+func tri_raw(a: Vector3, b: Vector3, c: Vector3, n: Vector3, col: Color) -> void:
+	for v: Vector3 in [a, b, c]:
+		st.set_color(col)
+		st.set_normal(n)
+		st.add_vertex(v)
+	count += 1
+
+
 func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color, center: Vector3) -> void:
 	tri(a, b, c, col, center)
 	tri(a, c, d, col, center)

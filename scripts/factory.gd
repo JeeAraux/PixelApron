@@ -6,6 +6,7 @@ const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
 const LINE_SHADER = preload("res://shaders/line.gdshader")
 const Models = preload("res://scripts/models.gd")
+const Kit = preload("res://scripts/mesh_kit.gd")
 
 const WALL := Color(0.78, 0.75, 0.67)
 const GLASS := Color(0.17, 0.24, 0.29)
@@ -20,6 +21,7 @@ const FLOOR := Color(0.72, 0.70, 0.65)
 const WHITE := Color(0.90, 0.89, 0.86)
 const SEAT := Color(0.22, 0.35, 0.55)
 const YELLOW := Color(0.86, 0.69, 0.22)
+const YELLOW_SIGN := Color(0.95, 0.78, 0.15)
 const SHIRTS := [Color(0.75, 0.24, 0.2), Color(0.22, 0.38, 0.62), Color(0.9, 0.88, 0.82), Color(0.2, 0.2, 0.22),
 	Color(0.36, 0.55, 0.32), Color(0.85, 0.66, 0.22), Color(0.55, 0.32, 0.55), Color(0.4, 0.6, 0.75)]
 const SKINS := [Color(0.93, 0.78, 0.65), Color(0.80, 0.6, 0.45), Color(0.55, 0.38, 0.27), Color(0.36, 0.25, 0.18)]
@@ -217,12 +219,105 @@ static func make_hall(w: float, d: float) -> Node3D:
 		var ux := -hw + (float(i) + 0.5) * w / float(units)
 		var uz := (hd * 0.45) * (1.0 if i % 2 == 0 else -1.0)
 		blk(roof, Vector3(ux - 2.0, 9.6, uz - 1.5), Vector3(ux + 2.0, 10.9, uz + 1.5), Color(0.45, 0.47, 0.47))
+		for gx in range(3):
+			blk(roof, Vector3(ux - 1.6 + float(gx) * 1.2, 10.9, uz - 1.2), Vector3(ux - 0.8 + float(gx) * 1.2, 11.0, uz + 1.2), Color(0.3, 0.32, 0.33))
+	# Attika und Schriftzug TERMINAL über der Landseite
+	blk(roof, Vector3(-hw - 0.4, 9.6, hd + 0.1), Vector3(hw + 0.4, 10.1, hd + 0.4), WALL)
+	blk(roof, Vector3(-hw - 0.4, 9.6, -hd - 0.4), Vector3(hw + 0.4, 10.1, -hd - 0.1), WALL)
+	if w >= 30.0:
+		_letters(high, "TERMINAL", Vector3(0, 7.55, hd + 0.02), 0.27, Color(0.16, 0.25, 0.45))
+	bake(n)
 	return n
+
+
+const FONT := {
+	"T": ["111", "010", "010", "010", "010"], "E": ["111", "100", "110", "100", "111"],
+	"R": ["110", "101", "110", "101", "101"], "M": ["10001", "11011", "10101", "10001", "10001"],
+	"I": ["1", "1", "1", "1", "1"], "N": ["1001", "1101", "1011", "1001", "1001"],
+	"A": ["010", "101", "111", "101", "101"], "L": ["100", "100", "100", "100", "111"],
+	"P": ["110", "101", "110", "100", "100"], "O": ["111", "101", "101", "101", "111"],
+	"W": ["10001", "10001", "10101", "11011", "10001"], "F": ["111", "100", "110", "100", "100"],
+	"H": ["101", "101", "111", "101", "101"], "G": ["111", "100", "101", "101", "111"],
+	"U": ["101", "101", "101", "101", "111"], "C": ["111", "100", "100", "100", "111"],
+}
+
+
+## Klötzchenschrift an einer Fassade (zeigt nach +z), Mitte bei c.
+static func _letters(parent: Node3D, text: String, c: Vector3, px: float, col: Color, facing: float = 1.0) -> void:
+	var widths := []
+	var total := 0.0
+	for ch in text:
+		var rows: Array = FONT.get(ch, ["1"])
+		widths.append(String(rows[0]).length())
+		total += float(String(rows[0]).length() + 1) * px
+	var x := c.x - total * 0.5
+	for i in range(text.length()):
+		var rows: Array = FONT.get(text[i], ["1"])
+		for r in range(rows.size()):
+			var row: String = rows[r]
+			for k in range(row.length()):
+				if row[k] == "1":
+					var y := c.y + float(rows.size() - 1 - r) * px
+					var xa := x + float(k) * px
+					var xb := xa + px
+					if facing < 0.0:
+						xa = 2.0 * c.x - xa
+						xb = 2.0 * c.x - xb
+					blk(parent, Vector3(xa, y, c.z), Vector3(xb, y + px, c.z + 0.12 * facing), col)
+		x += float(int(widths[i]) + 1) * px
+
+
+## Fasst alle einfarbigen Teile eines Modells zu einem Mesh zusammen (ein Draw-Call).
+## Benannte Gruppen (Dach, Schranken ...) bleiben eigene Knoten, Glas und Leuchtteile bleiben einzeln.
+static func bake(root: Node3D) -> void:
+	var kit := Kit.new()
+	var merged := []
+	for c in root.get_children():
+		if c is MeshInstance3D:
+			var mi := c as MeshInstance3D
+			var m := mi.material_override as StandardMaterial3D
+			if m == null or mi.mesh == null or m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED or m.emission_enabled:
+				continue
+			_bake_mesh(kit, mi.mesh, mi.transform, m.albedo_color)
+			merged.append(mi)
+		elif c is Node3D and (c as Node).get_child_count() > 0 and not (c as Node).has_meta("no_bake"):
+			bake(c as Node3D)
+	if merged.size() < 2:
+		return
+	for mi: MeshInstance3D in merged:
+		root.remove_child(mi)
+		mi.free()
+	var out := kit.instance("Gebacken")
+	root.add_child(out)
+	out.owner = null
+
+
+static func _bake_mesh(kit: Kit, mesh: Mesh, xf: Transform3D, col: Color) -> void:
+	for si in range(mesh.get_surface_count()):
+		var arr := mesh.surface_get_arrays(si)
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+		if idx.is_empty():
+			for i in range(verts.size()):
+				idx.append(i)
+		for t in range(0, idx.size() - 2, 3):
+			var a := xf * verts[idx[t]]
+			var b := xf * verts[idx[t + 1]]
+			var c := xf * verts[idx[t + 2]]
+			var n := (xf.basis * norms[idx[t]]).normalized() if norms.size() > 0 else Vector3.UP
+			kit.tri_raw(a, b, c, n, col)
 
 
 static func make_item(id: String) -> Node3D:
 	if id == "halle":
 		return make_hall(24.0, 16.0)
+	var n := _make_item_raw(id)
+	bake(n)
+	return n
+
+
+static func _make_item_raw(id: String) -> Node3D:
 	var n := Node3D.new()
 	n.name = id
 	if Catalog.is_inside(id):
@@ -284,22 +379,66 @@ static func _terminal_old(n: Node3D) -> void:
 
 
 static func _hangar(n: Node3D) -> void:
-	blk(n, Vector3(-22, 0, -18), Vector3(22, 13, 18), Color(0.62, 0.66, 0.68))
-	blk(n, Vector3(-22.3, 13, -18.3), Vector3(22.3, 14.2, 18.3), Color(0.44, 0.47, 0.49))
-	blk(n, Vector3(-19, 0, -18.25), Vector3(19, 11.5, -17.95), Color(0.38, 0.42, 0.45))
-	for x in range(-17, 18, 4):
-		blk(n, Vector3(x - 0.12, 0, -18.4), Vector3(x + 0.12, 11.5, -18.2), Color(0.28, 0.31, 0.34))
-	blk(n, Vector3(-22.1, 9, -14), Vector3(22.1, 10.2, 14), GLASS)
+	var clad := Color(0.62, 0.66, 0.68)
+	blk(n, Vector3(-22, 0, -18), Vector3(22, 12, 18), clad)
+	# Tonnendach in Stufen (Achse quer zum Tor)
+	for i in range(6):
+		var t := float(i) / 6.0
+		var hz := 18.3 * sqrt(1.0 - t * t)
+		blk(n, Vector3(-22.3, 12.0 + float(i) * 0.45, -hz), Vector3(22.3, 12.45 + float(i) * 0.45, hz),
+			Color(0.44, 0.47, 0.49).lightened(float(i) * 0.02))
+	# Faltschiebetor mit Paneelen, Fensterreihe und Toranzeige
+	blk(n, Vector3(-20, 0, -18.25), Vector3(20, 11.2, -17.95), Color(0.40, 0.44, 0.47))
+	for x in range(-19, 20, 2):
+		blk(n, Vector3(float(x) - 0.06, 0, -18.4), Vector3(float(x) + 0.06, 11.2, -18.2), Color(0.30, 0.33, 0.36))
+	blk(n, Vector3(-20, 8.0, -18.42), Vector3(20, 9.0, -18.3), GLASS)
+	blk(n, Vector3(-20.6, 0, -18.6), Vector3(-20.0, 11.6, -17.8), Color(0.75, 0.62, 0.15))
+	blk(n, Vector3(20.0, 0, -18.6), Vector3(20.6, 11.6, -17.8), Color(0.75, 0.62, 0.15))
+	blk(n, Vector3(-20.6, 11.2, -18.6), Vector3(20.6, 11.8, -17.8), Color(0.75, 0.62, 0.15))
+	# Seitenfenster, Nebengebäude mit Werkstatt, Rolltor
+	for side: float in [-1.0, 1.0]:
+		blk(n, Vector3(side * 22.05 - 0.05, 7.5, -14), Vector3(side * 22.05 + 0.05, 9.5, 14), GLASS)
+	blk(n, Vector3(-22, 0, 18), Vector3(-6, 6.5, 24), Color(0.78, 0.76, 0.7))
+	blk(n, Vector3(-22.2, 6.5, 17.8), Vector3(-5.8, 6.9, 24.2), ROOF)
+	for x in range(-20, -7, 3):
+		blk(n, Vector3(float(x), 2.5, 24.0), Vector3(float(x) + 1.8, 4.5, 24.1), GLASS)
+	blk(n, Vector3(4, 0, 17.95), Vector3(10, 4.5, 18.15), STEEL)
+	_letters(n, "HANGAR", Vector3(0, 9.4, -18.45), 0.42, Color(0.92, 0.92, 0.9), -1.0)
 
 
 static func _tower(n: Node3D) -> void:
+	# Sockelbau mit Fensterbändern und Eingang
 	blk(n, Vector3(-6, 0, -6), Vector3(6, 5, 6), WALL)
+	for y: float in [1.2, 3.2]:
+		blk(n, Vector3(-6.05, y, -5), Vector3(6.05, y + 1.1, 5), GLASS)
+	blk(n, Vector3(-1.2, 0, 5.95), Vector3(1.2, 2.4, 6.1), GLASS)
 	blk(n, Vector3(-6.3, 5, -6.3), Vector3(6.3, 5.5, 6.3), ROOF)
-	cyl(n, Vector3(0, 5.5, 0), 2.4, 2.2, 23.0, Color(0.84, 0.82, 0.76), 10)
-	cyl(n, Vector3(0, 28.5, 0), 3.4, 4.6, 1.0, ROOF, 8)
-	cyl(n, Vector3(0, 29.5, 0), 4.4, 4.4, 3.8, GLASS, 8)
-	cyl(n, Vector3(0, 33.3, 0), 5.0, 4.6, 0.8, ROOF, 8)
-	blk(n, Vector3(-0.15, 34.1, -0.15), Vector3(0.15, 39.0, 0.15), DARK)
+	# Schaft mit Treppenhausfenstern
+	cyl(n, Vector3(0, 5.5, 0), 2.4, 2.2, 23.0, Color(0.84, 0.82, 0.76), 12)
+	for i in range(9):
+		blk(n, Vector3(-0.35, 7.0 + float(i) * 2.4, 2.2), Vector3(0.35, 7.9 + float(i) * 2.4, 2.45), GLASS)
+	blk(n, Vector3(-2.6, 18.0, -2.6), Vector3(2.6, 18.3, 2.6), ROOF)
+	# Kanzel: Unterbau, Galerie mit Geländer, schräg gestellte Scheiben mit Pfosten, Dach
+	cyl(n, Vector3(0, 28.5, 0), 3.4, 4.8, 1.0, ROOF, 12)
+	cyl(n, Vector3(0, 29.5, 0), 5.3, 5.3, 0.15, ROOF, 12)
+	for i in range(24):
+		var a := TAU * float(i) / 24.0
+		var p := Vector3(cos(a), 0, sin(a)) * 5.15
+		blk(n, p + Vector3(-0.04, 29.65, -0.04), p + Vector3(0.04, 30.6, 0.04), STEEL)
+	cyl(n, Vector3(0, 30.55, 0), 5.2, 5.2, 0.06, STEEL, 24)
+	cyl(n, Vector3(0, 29.6, 0), 4.3, 4.7, 3.6, GLASS, 12)
+	for i in range(12):
+		var a := TAU * float(i) / 12.0
+		var p := Vector3(cos(a), 0, sin(a)) * 4.55
+		blk(n, p + Vector3(-0.08, 29.6, -0.08), p + Vector3(0.08, 33.2, 0.08), Color(0.35, 0.37, 0.4))
+	cyl(n, Vector3(0, 33.2, 0), 5.2, 4.4, 0.9, ROOF, 12)
+	cyl(n, Vector3(0, 34.1, 0), 2.0, 1.6, 0.6, Color(0.6, 0.6, 0.58), 10)
+	# Antennen und Radarkuppel
+	blk(n, Vector3(-0.12, 34.7, -0.12), Vector3(0.12, 40.0, 0.12), DARK)
+	blk(n, Vector3(-0.8, 38.6, -0.04), Vector3(0.8, 38.7, 0.04), DARK)
+	blk(n, Vector3(1.0, 34.7, -0.06), Vector3(1.12, 37.0, 0.06), DARK)
+	ball(n, Vector3(-1.1, 35.4, 0.5), 0.75, Color(0.92, 0.92, 0.9), 8)
+	blk(n, Vector3(-0.1, 39.9, -0.1), Vector3(0.1, 40.2, 0.1), Color(0.9, 0.15, 0.1))
 
 
 static func _parkhaus(n: Node3D) -> void:
@@ -356,18 +495,82 @@ static func _parkhaus(n: Node3D) -> void:
 static func _feuerwache(n: Node3D) -> void:
 	blk(n, Vector3(-15, 0, -10), Vector3(15, 7, 10), BRICK)
 	blk(n, Vector3(-15.3, 7, -10.3), Vector3(15.3, 7.6, 10.3), ROOF)
-	for x: float in [-9.0, 0.0, 9.0]:
-		blk(n, Vector3(x - 3.5, 0, 10.0), Vector3(x + 3.5, 5.4, 10.18), Color(0.70, 0.16, 0.12))
-	blk(n, Vector3(11, 0, -10), Vector3(15, 12.5, -6), BRICK)
-	blk(n, Vector3(10.8, 12.5, -10.2), Vector3(15.2, 13.0, -5.8), ROOF)
+	# drei Fahrzeughallentore mit Fensterreihe, das mittlere offen
+	for i in range(3):
+		var x := -9.0 + float(i) * 9.0
+		blk(n, Vector3(x - 3.6, 0, 10.0), Vector3(x + 3.6, 5.6, 10.1), Color(0.85, 0.84, 0.8))
+		if i == 1:
+			blk(n, Vector3(x - 3.3, 0, 10.05), Vector3(x + 3.3, 5.3, 10.2), Color(0.1, 0.1, 0.11))
+		else:
+			blk(n, Vector3(x - 3.3, 0, 10.05), Vector3(x + 3.3, 5.3, 10.2), Color(0.72, 0.16, 0.12))
+			for y: float in [1.3, 2.6, 3.9]:
+				blk(n, Vector3(x - 3.3, y, 10.2), Vector3(x + 3.3, y + 0.06, 10.25), Color(0.55, 0.12, 0.1))
+			blk(n, Vector3(x - 3.0, 4.2, 10.2), Vector3(x + 3.0, 4.9, 10.26), GLASS)
+	blk(n, Vector3(-15.05, 4.5, -8), Vector3(15.05, 6.0, -6), GLASS)
+	# Schlauchturm mit Fenstern, Sirene, Blaulicht
+	blk(n, Vector3(11, 0, -10), Vector3(15, 13.5, -6), BRICK)
+	blk(n, Vector3(10.8, 13.5, -10.2), Vector3(15.2, 14.0, -5.8), ROOF)
+	for y: float in [3.0, 6.5, 10.0]:
+		blk(n, Vector3(12.3, y, -5.95), Vector3(13.7, y + 1.4, -5.85), GLASS)
+	blk(n, Vector3(12.6, 14.0, -8.4), Vector3(13.4, 14.6, -7.6), DARK)
+	blk(n, Vector3(-13, 7.6, 6.5), Vector3(-11, 8.2, 8.5), Color(0.2, 0.35, 0.9))
+	_letters(n, "FEUERWEHR", Vector3(0, 6.0, 10.12), 0.18, Color(0.95, 0.95, 0.92))
+	# Flugfeldlöschfahrzeuge vor der Halle
+	for i in range(2):
+		var t := _fire_truck()
+		t.position = Vector3(-9.0 + float(i) * 18.0, 0, 16.5)
+		t.rotation.y = PI
+		n.add_child(t)
+
+
+## Großes Flugfeldlöschfahrzeug (8x8, Wasserwerfer auf dem Dach)
+static func _fire_truck() -> Node3D:
+	var t := Node3D.new()
+	var red := Color(0.82, 0.14, 0.1)
+	var k := Kit.new()
+	k.box(Vector3(-1.4, 0.7, -5.5), Vector3(1.4, 3.3, 5.5), red)
+	k.box(Vector3(-1.42, 2.2, -5.5), Vector3(1.42, 3.0, -3.6), Models.GLASS)
+	k.box(Vector3(-1.45, 1.4, -5.5), Vector3(1.45, 1.6, 5.5), Color(0.95, 0.85, 0.15))
+	k.box(Vector3(-0.6, 3.3, -3.0), Vector3(0.6, 3.7, -2.0), Color(0.2, 0.2, 0.22))
+	k.cyl(Vector3(0, 3.7, -2.5), Vector3(0, 3.8, -5.0), 0.15, 0.1, Color(0.5, 0.5, 0.52), 8)
+	k.box(Vector3(-0.5, 3.3, -5.0), Vector3(0.5, 3.45, -4.6), Color(0.2, 0.35, 0.95))
+	for z: float in [-3.8, -1.6, 1.8, 4.0]:
+		for sx: float in [-1.0, 1.0]:
+			k.cyl(Vector3(sx * 1.05, 0.65, z), Vector3(sx * 1.5, 0.65, z), 0.65, 0.65, Models.TYRE, 12, true, Models.METAL)
+	var mi := MeshInstance3D.new()
+	mi.mesh = k.commit()
+	t.add_child(mi)
+	return t
 
 
 static func _trafo(n: Node3D) -> void:
-	blk(n, Vector3(-5, 0, -3.5), Vector3(5, 3.4, 3.5), CONCRETE)
-	blk(n, Vector3(-5.2, 3.4, -3.7), Vector3(5.2, 3.7, 3.7), ROOF)
-	for x: float in [-2.8, 0.6]:
-		blk(n, Vector3(x, 0, 3.5), Vector3(x + 2.2, 2.5, 3.62), STEEL)
-	blk(n, Vector3(3.2, 2.6, 3.5), Vector3(3.8, 3.1, 3.64), Color(0.82, 0.68, 0.2))
+	# Betonhaus mit Lüftungsgittern, daneben zwei Transformatoren mit Kühlrippen, Zaun
+	blk(n, Vector3(-5, 0, -3.5), Vector3(0.5, 3.4, 3.5), CONCRETE)
+	blk(n, Vector3(-5.2, 3.4, -3.7), Vector3(0.7, 3.7, 3.7), ROOF)
+	for x: float in [-4.2, -2.0]:
+		blk(n, Vector3(x, 0, 3.5), Vector3(x + 1.6, 2.4, 3.62), STEEL)
+		for y: float in [0.4, 0.8, 1.2, 1.6, 2.0]:
+			blk(n, Vector3(x + 0.1, y, 3.62), Vector3(x + 1.5, y + 0.08, 3.66), DARK)
+	blk(n, Vector3(-0.8, 2.6, 3.5), Vector3(-0.2, 3.1, 3.64), Color(0.82, 0.68, 0.2))
+	for z: float in [-1.8, 1.8]:
+		blk(n, Vector3(1.4, 0, z - 1.2), Vector3(3.8, 0.3, z + 1.2), CONCRETE)
+		blk(n, Vector3(1.8, 0.3, z - 0.9), Vector3(3.4, 2.2, z + 0.9), Color(0.42, 0.48, 0.45))
+		for i in range(6):
+			var fz := z - 0.8 + float(i) * 0.32
+			blk(n, Vector3(1.6, 0.4, fz), Vector3(3.6, 2.0, fz + 0.06), Color(0.36, 0.42, 0.39))
+		for ix: float in [2.1, 2.6, 3.1]:
+			cyl(n, Vector3(ix, 2.2, z), 0.08, 0.06, 0.7, Color(0.75, 0.55, 0.4), 6)
+	for pr: Array in [[Vector3(-5.3, 0, -3.9), Vector3(4.6, 0, -3.9)], [Vector3(4.6, 0, -3.9), Vector3(4.6, 0, 3.9)], [Vector3(0.7, 0, 3.9), Vector3(4.6, 0, 3.9)]]:
+		var a: Vector3 = pr[0]
+		var b: Vector3 = pr[1]
+		var lo := Vector3(minf(a.x, b.x) - 0.03, 1.8, minf(a.z, b.z) - 0.03)
+		var hi := Vector3(maxf(a.x, b.x) + 0.03, 1.85, maxf(a.z, b.z) + 0.03)
+		blk(n, lo, hi, STEEL)
+		blk(n, Vector3(lo.x, 0.1, lo.z), Vector3(hi.x, 0.15, hi.z), STEEL)
+		var steps := int(a.distance_to(b) / 1.2)
+		for i in range(steps + 1):
+			var q := a.lerp(b, float(i) / float(maxi(steps, 1)))
+			blk(n, q + Vector3(-0.03, 0, -0.03), q + Vector3(0.03, 1.85, 0.03), STEEL)
 
 
 static func _heizzentrale(n: Node3D) -> void:
@@ -377,7 +580,17 @@ static func _heizzentrale(n: Node3D) -> void:
 		blk(n, Vector3(x, 0, 7.5), Vector3(x + 4.0, 4.2, 7.65), STEEL)
 	for x in range(-9, 10, 3):
 		blk(n, Vector3(x, 4.8, 7.5), Vector3(x + 1.4, 6.4, 7.6), GLASS)
-	cyl(n, Vector3(8, 7.9, -4), 0.9, 0.8, 15.0, STEEL, 8)
+	# Schornstein mit Steigleiter und Ringen, Lüfter auf dem Dach, Rohrleitungen
+	cyl(n, Vector3(8, 7.9, -4), 0.9, 0.8, 15.0, STEEL, 10)
+	for y: float in [12.0, 17.0, 21.5]:
+		cyl(n, Vector3(8, y, -4), 0.95, 0.95, 0.25, DARK, 10)
+	blk(n, Vector3(8.85, 8.0, -4.2), Vector3(8.95, 22.5, -3.8), DARK)
+	for x: float in [-6.0, -2.0, 2.0]:
+		cyl(n, Vector3(x, 7.9, 0), 0.9, 0.9, 0.9, Color(0.5, 0.52, 0.54), 10)
+		blk(n, Vector3(x - 0.7, 8.8, -0.05), Vector3(x + 0.7, 8.85, 0.05), DARK)
+	for z: float in [3.0, 4.2]:
+		blk(n, Vector3(-11.1, 2.75, z - 0.25), Vector3(-11.0, 3.25, z + 0.25), DARK)
+		blk(n, Vector3(-11.5, 2.8, z - 0.2), Vector3(-11.0, 3.2, z + 0.2), Color(0.85, 0.35, 0.2) if z < 4.0 else Color(0.25, 0.45, 0.75))
 
 
 static func _baum(n: Node3D) -> void:
@@ -479,12 +692,40 @@ static func _glow(parent: Node3D, pos: Vector3, size: Vector3, c: Color) -> void
 	parent.add_child(mi)
 
 
+## Flugzeug aus Rumpf-Mesh plus beweglichen Teilen: Fahrwerk, zwei Fans, Blinklichter.
 static func make_plane(kind: String, livery: Color) -> Node3D:
 	var n := Node3D.new()
 	n.name = kind
+	var s: Dictionary = Models.SPECS.get(kind, Models.SPECS["a320"])
 	var mi := MeshInstance3D.new()
 	mi.mesh = Models.plane_mesh(kind, livery)
 	n.add_child(mi)
+	var gear := MeshInstance3D.new()
+	gear.name = "Fahrwerk"
+	gear.mesh = Models.gear_mesh(kind)
+	n.add_child(gear)
+	for side: Array in [["FanL", -1.0], ["FanR", 1.0]]:
+		var fan := MeshInstance3D.new()
+		fan.name = side[0]
+		fan.mesh = Models.fan_mesh(kind)
+		fan.position = Vector3(float(side[1]) * float(s["eng_x"]), float(s["eng_y"]), float(s["eng_z"]) + 0.42)
+		n.add_child(fan)
+	var cy: float = s["cy"]
+	var r: float = s["r"]
+	var beacon := Node3D.new()
+	beacon.name = "Beacon"
+	n.add_child(beacon)
+	_glow(beacon, Vector3(0, cy + r + 0.1, -1.05), Vector3(0.24, 0.18, 0.3), Color(1.0, 0.1, 0.05))
+	_glow(beacon, Vector3(0, cy - r - 0.22, 2.55), Vector3(0.24, 0.18, 0.3), Color(1.0, 0.1, 0.05))
+	var strobe := Node3D.new()
+	strobe.name = "Strobe"
+	strobe.visible = false
+	n.add_child(strobe)
+	var tip_x: float = s["tip_x"]
+	var tip: Array = Models._wing_at(s, tip_x)
+	for sx: float in [-1.0, 1.0]:
+		_glow(strobe, Vector3(sx * (tip_x + 0.05), float(tip[1]), float(tip[0]) + 0.6), Vector3(0.25, 0.25, 0.25), Color(1, 1, 1))
+	_glow(strobe, Vector3(0, cy + r - float(s["tail_drop"]) - 0.1, float(s["len"]) * 0.5 - 0.1), Vector3(0.25, 0.25, 0.25), Color(1, 1, 1))
 	return n
 
 
@@ -564,18 +805,27 @@ static func _inside(n: Node3D, id: String) -> void:
 			for x: float in [-1.5, 1.5]:
 				blk(n, Vector3(x - 1.2, 0, -0.2), Vector3(x + 1.2, 1.05, 0.5), WHITE)
 				blk(n, Vector3(x - 1.25, 1.05, -0.25), Vector3(x + 1.25, 1.12, 0.55), DARK)
-				var staff := make_person(Color(0.2, 0.28, 0.45), 0)
+				var staff := make_staff(Color(0.2, 0.28, 0.45), Color(0.12, 0.14, 0.2), 0 if x < 0.0 else 2)
 				staff.position = Vector3(x, 0, -0.75)
 				n.add_child(staff)
 			blk(n, Vector3(-0.3, 0, -0.2), Vector3(0.3, 0.45, 0.5), DARK)
 			blk(n, Vector3(-3, 0, -1.5), Vector3(3, 0.5, -1.15), DARK)
 			blk(n, Vector3(-3, 0, -1.5), Vector3(3, 2.9, -1.38), Color(0.24, 0.34, 0.45))
 			blk(n, Vector3(-2.2, 2.3, -1.38), Vector3(2.2, 2.6, -1.32), Color(0.95, 0.85, 0.4))
-			var px := -2.8
-			while px <= 2.85:
-				cyl(n, Vector3(px, 0, 1.35), 0.05, 0.05, 0.95, STEEL, 5)
-				px += 1.4
-			blk(n, Vector3(-2.8, 0.85, 1.32), Vector3(2.8, 0.9, 1.38), Color(0.6, 0.15, 0.15))
+			for x: float in [-1.5, 1.5]:
+				blk(n, Vector3(x - 0.35, 1.12, -0.05), Vector3(x + 0.35, 1.5, 0.0), DARK)
+				blk(n, Vector3(x - 0.05, 1.12, 0.0), Vector3(x + 0.05, 1.2, 0.12), STEEL)
+				blk(n, Vector3(x + 0.55, 1.05, 0.1), Vector3(x + 0.95, 1.1, 0.45), STEEL)
+			# Wartegasse im Zickzack mit Gurtpfosten
+			for row in range(3):
+				var z := 1.35 + float(row) * 0.95
+				var px := -2.8
+				while px <= 2.85:
+					cyl(n, Vector3(px, 0, z), 0.05, 0.05, 0.95, STEEL, 5)
+					cyl(n, Vector3(px, 0, z), 0.16, 0.16, 0.04, DARK, 6)
+					px += 1.4
+				var gap_left := row % 2 == 1
+				blk(n, Vector3(-2.8 if not gap_left else -1.4, 0.85, z - 0.03), Vector3(2.8 if gap_left else 1.4, 0.9, z + 0.03), Color(0.6, 0.15, 0.15))
 		"gepaeckanlage":
 			blk(n, Vector3(-4, 0, -3), Vector3(4, 0.15, 3), Color(0.55, 0.55, 0.52))
 			for e: Array in [[Vector3(-3.5, 0.8, -2.5), Vector3(3.5, 1.1, -1.7)], [Vector3(-3.5, 0.8, 1.7), Vector3(3.5, 1.1, 2.5)],
@@ -597,10 +847,26 @@ static func _inside(n: Node3D, id: String) -> void:
 				blk(n, Vector3(x + 0.15, 0.78, -2.6), Vector3(x + 1.05, 0.82, 3.2), DARK)
 				blk(n, Vector3(x - 0.05, 0, -0.6), Vector3(x + 1.25, 1.7, 1.0), Color(0.7, 0.72, 0.72))
 				blk(n, Vector3(x + 0.15, 0.82, 0.98), Vector3(x + 1.05, 1.3, 1.04), DARK)
-				blk(n, Vector3(x - 1.05, 0, -0.2), Vector3(x - 0.9, 2.2, 0.2), WHITE)
-				blk(n, Vector3(x - 0.3, 0, -0.2), Vector3(x - 0.15, 2.2, 0.2), WHITE)
-				blk(n, Vector3(x - 1.05, 2.1, -0.2), Vector3(x - 0.15, 2.3, 0.2), WHITE)
-				var officer := make_person(Color(0.15, 0.2, 0.3), 1)
+				if x < 0.0:
+					blk(n, Vector3(x - 1.05, 0, -0.2), Vector3(x - 0.9, 2.2, 0.2), WHITE)
+					blk(n, Vector3(x - 0.3, 0, -0.2), Vector3(x - 0.15, 2.2, 0.2), WHITE)
+					blk(n, Vector3(x - 1.05, 2.1, -0.2), Vector3(x - 0.15, 2.3, 0.2), WHITE)
+				else:
+					# Körperscanner: runde Kabine mit Glasflügeln
+					cyl(n, Vector3(x - 0.6, 0, 0), 0.75, 0.75, 0.12, Color(0.6, 0.62, 0.65), 12)
+					cyl(n, Vector3(x - 0.6, 2.2, 0), 0.75, 0.75, 0.25, Color(0.85, 0.86, 0.88), 12)
+					for side: float in [-1.0, 1.0]:
+						blk(n, Vector3(x - 0.6 + side * 0.62 - 0.08, 0.12, -0.45), Vector3(x - 0.6 + side * 0.62 + 0.08, 2.2, 0.45), Color(0.85, 0.86, 0.88))
+				# Rollenbahn und Wannen
+				var rz := -2.5
+				while rz < 3.1:
+					blk(n, Vector3(x + 0.15, 0.82, rz), Vector3(x + 1.05, 0.84, rz + 0.04), Color(0.3, 0.31, 0.33))
+					rz += 0.25
+				for tz: float in [-2.2, 1.6, 2.4]:
+					blk(n, Vector3(x + 0.2, 0.84, tz), Vector3(x + 1.0, 0.95, tz + 0.55), Color(0.55, 0.57, 0.6))
+					blk(n, Vector3(x + 0.35, 0.95, tz + 0.1), Vector3(x + 0.75, 1.05, tz + 0.4), SHIRTS[int(absf(tz) * 10.0) % SHIRTS.size()].darkened(0.3))
+				blk(n, Vector3(x + 1.3, 0, 1.2), Vector3(x + 2.0, 0.85, 2.2), STEEL)
+				var officer := make_staff(Color(0.82, 0.84, 0.88), Color(0.1, 0.1, 0.12), 1 if x < 0.0 else 3)
 				officer.position = Vector3(x - 0.6, 0, -1.4)
 				n.add_child(officer)
 				for i in range(3):
@@ -610,11 +876,19 @@ static func _inside(n: Node3D, id: String) -> void:
 			blk(n, Vector3(-5, 0, -4), Vector3(5, 0.06, 4), Color(0.30, 0.33, 0.42))
 			blk(n, Vector3(-1.5, 0, -3.3), Vector3(1.5, 1.05, -2.5), WHITE)
 			blk(n, Vector3(-1.55, 1.05, -3.35), Vector3(1.55, 1.12, -2.45), DARK)
-			var agent := make_person(Color(0.24, 0.34, 0.45), 2)
+			var agent := make_staff(Color(0.24, 0.34, 0.45), Color(0.12, 0.14, 0.2), 2)
 			agent.position = Vector3(0, 0, -3.7)
 			n.add_child(agent)
 			blk(n, Vector3(2.4, 0, -4.0), Vector3(4.6, 2.7, -3.75), STEEL)
 			blk(n, Vector3(2.6, 0, -3.9), Vector3(4.4, 2.5, -3.7), DARK)
+			for mx: float in [-0.8, 0.8]:
+				blk(n, Vector3(mx - 0.3, 1.12, -2.95), Vector3(mx + 0.3, 1.45, -2.9), DARK)
+			# Boarding-Schleuse mit Glasklappen und Anzeige über der Tür
+			for gx: float in [2.7, 3.5, 4.3]:
+				blk(n, Vector3(gx - 0.12, 0, -3.3), Vector3(gx + 0.12, 1.0, -2.6), Color(0.75, 0.76, 0.78))
+				blk(n, Vector3(gx + 0.12, 0.3, -2.98), Vector3(gx + 0.42, 0.95, -2.92), Color(0.6, 0.8, 0.9))
+			blk(n, Vector3(2.6, 2.75, -3.9), Vector3(4.4, 3.2, -3.82), Color(0.08, 0.08, 0.1))
+			blk(n, Vector3(2.75, 2.9, -3.83), Vector3(3.9, 3.05, -3.8), YELLOW_SIGN)
 			blk(n, Vector3(-4.7, 0, -3.6), Vector3(-4.5, 3.0, -3.4), STEEL)
 			blk(n, Vector3(-4.95, 2.4, -3.62), Vector3(-3.2, 3.1, -3.44), Color(0.12, 0.15, 0.22))
 			blk(n, Vector3(-4.8, 2.6, -3.44), Vector3(-3.4, 2.85, -3.4), YELLOW)
@@ -628,11 +902,14 @@ static func _inside(n: Node3D, id: String) -> void:
 			blk(n, Vector3(-4.5, 0, -1.8), Vector3(4.5, 0.55, 1.8), STEEL)
 			blk(n, Vector3(-4.3, 0.55, -1.6), Vector3(4.3, 0.6, 1.6), DARK)
 			blk(n, Vector3(-3.6, 0, -0.75), Vector3(3.6, 0.85, 0.75), Color(0.62, 0.64, 0.64))
-			var k := 1
-			for p: Vector3 in [Vector3(-3.4, 0.6, 1.2), Vector3(-0.8, 0.6, 1.2), Vector3(2.4, 0.6, 1.2), Vector3(3.95, 0.6, 0.0),
-					Vector3(1.2, 0.6, -1.2), Vector3(-2.2, 0.6, -1.2)]:
-				blk(n, p - Vector3(0.35, 0, 0.22), p + Vector3(0.35, 0.32, 0.22), SHIRTS[k % SHIRTS.size()])
-				k += 3
+			# Koffer auf dem Band: eigene Knoten, terminal.gd lässt sie umlaufen
+			var cases := Node3D.new()
+			cases.name = "Koffer"
+			cases.set_meta("no_bake", true)
+			n.add_child(cases)
+			for i in range(9):
+				var bag := blk(cases, Vector3(-0.35, 0.6, -0.22), Vector3(0.35, 0.92, 0.22), SHIRTS[(i * 3 + 1) % SHIRTS.size()].darkened(0.25))
+				bag.name = "K%d" % i
 			blk(n, Vector3(4.6, 0, -0.15), Vector3(4.8, 2.2, 0.15), STEEL)
 			blk(n, Vector3(4.5, 1.6, -0.7), Vector3(4.9, 2.3, 0.7), DARK)
 			blk(n, Vector3(4.9, 1.9, -0.5), Vector3(4.93, 2.05, 0.5), YELLOW)
@@ -729,20 +1006,29 @@ static func _inside(n: Node3D, id: String) -> void:
 			ball(n, Vector3(0.4, 2.9, 0.2), 0.45, YELLOW, 7)
 
 
-## Passagier oder Personal, etwa 1,75 m groß. Der Körper ist ein Mesh mit drei Posen (stehen, Schritt links, Schritt rechts);
-## set_pose() wechselt sie beim Laufen.
-static func make_person(shirt: Color, skin_i: int = -1) -> Node3D:
+## Passagier oder Personal, etwa 1,75 m groß. Der Körper ist ein Mesh in sechs Posen
+## (stehen, vier Gangphasen, sitzen); set_pose() wechselt sie.
+static func make_person(shirt: Color, skin_i: int = -1, look: Dictionary = {}) -> Node3D:
 	var n := Node3D.new()
-	var look := Models.random_look(shirt, skin_i)
+	if look.is_empty():
+		look = Models.random_look(shirt, skin_i)
 	var mi := MeshInstance3D.new()
 	mi.name = "Body"
 	mi.mesh = Models.person_mesh(look, 0)
 	n.add_child(mi)
 	n.set_meta("look", look)
+	n.set_meta("pose", 0)
 	return n
 
 
+static func make_staff(shirt: Color, pants: Color, skin_i: int, vest: bool = false) -> Node3D:
+	return make_person(shirt, skin_i, Models.staff_look(shirt, pants, skin_i, vest))
+
+
 static func set_pose(person: Node3D, pose: int) -> void:
+	if int(person.get_meta("pose", -1)) == pose:
+		return
 	var mi := person.get_node_or_null("Body") as MeshInstance3D
 	if mi != null and person.has_meta("look"):
 		mi.mesh = Models.person_mesh(person.get_meta("look"), pose)
+		person.set_meta("pose", pose)

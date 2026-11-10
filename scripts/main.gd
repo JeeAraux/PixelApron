@@ -450,14 +450,19 @@ func _demo(args: PackedStringArray) -> void:
 		for k in range(12):
 			var per: Node3D = Factory.make_person(Factory.SHIRTS[k % Factory.SHIRTS.size()])
 			per.position = base + Vector3(-20 + k * 1.0, 0, 34)
-			Factory.set_pose(per, k % 3)
+			Factory.set_pose(per, k % 6)
 			showcase.add_child(per)
-		cam_rig.target = base + (Vector3(0, 0, 10) if mode == "modelle" else Vector3(-10, 0, 28))
-		cam_rig.zoom_goal = 75.0 if mode == "modelle" else 22.0
+		cam_rig.target = base + (Vector3(0, 0, 10) if mode == "modelle" else Vector3(-14, 0, 33))
+		cam_rig.zoom_goal = 75.0 if mode == "modelle" else 14.0
 		if mode == "modelle_a320" or mode == "modelle_b737":
 			cam_rig.target = base + Vector3(-22 if mode == "modelle_a320" else 22, 0, 0)
-			cam_rig.zoom_goal = 34.0
+			cam_rig.zoom_goal = 26.0
 		cam_rig.zoom = cam_rig.zoom_goal
+	elif mode == "tower" or mode == "hangar" or mode == "feuerwache":
+		var at := {"tower": Vector3(190, 0, -40), "hangar": Vector3(-200, 0, -48), "feuerwache": Vector3(330, 0, -55)}
+		cam_rig.target = at[mode]
+		cam_rig.zoom_goal = 70.0
+		cam_rig.zoom = 70.0
 	elif mode == "parkhaus":
 		game.traffic_demand = 6
 		for i in range(900):

@@ -22,6 +22,13 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Details (neu in 0.7):**
+  - **Flugzeuge:** Die Fans drehen sich, das Fahrwerk fährt nach dem Start ein und vor der Landung aus. Beacon und Blitzlichter blinken. Dazu kommen genauere Cockpitscheiben, Frachttüren, Querruder, Spoiler, Höhen- und Seitenruder sowie ein Airline-Schriftzug.
+  - **Fluggastbrücken:** Jedes Gate hat eine Brücke an der Außenwand. Sie fährt zum Flugzeug aus, dockt an der vorderen Tür an und fährt nach dem Boarding wieder ein (Reichweite etwa 36 m).
+  - **Menschen:** Schultern, Jacken, Röcke, fünf Frisuren, Mützen, Rucksäcke und Rollkoffer, auch Kinder. Sie bewegen sich mit einem Gangzyklus in vier Phasen und setzen sich am Gate auf die Sitze. Auf dem Vorfeld stehen Einweiser und Lader in Warnwesten.
+  - **Terminal:** Check-in mit Monitoren und Wartegassen im Zickzack, Kontrolle mit Körperscanner, Rollenbahn und Wannen, Boarding-Schleusen am Gate. Die Koffer laufen auf dem Gepäckband um.
+  - **Gebäude:** Tower mit Galerie, Geländer, Radarkuppel und Antennen. Hangar mit Tonnendach, Falttor und Werkstatt. Feuerwache mit Toren, Schlauchturm und zwei Flugfeldlöschfahrzeugen. Trafostation mit Transformatoren und Zaun. Heizzentrale mit Schornsteinleiter und Lüftern. Schriftzug TERMINAL auf der Halle.
+  - **Leistung:** Jedes Gebäude wird zu einem einzigen Mesh zusammengefasst. So bleiben viele Details flüssig.
 - **Straßennetz (neu in 0.6):**
   - **Straßentypen:** 2-spurig, 4-spurig (zwei Spuren je Richtung) und Einbahnstraße. Mit dem Werkzeug *Spuren ändern* klickst du eine Straße durch alle Typen, auch die Richtung der Einbahnstraße.
   - **Kreuzungen:** Sie bekommen eine eigene Fläche, Haltelinien und Schilder.

@@ -23,6 +23,10 @@ var gate_use: Dictionary = {}  # Instanz-ID des Gates -> Flug-ID
 var demand_dep := 0.0          # abfliegende Passagiere pro Stunde
 var demand_arr := 0.0
 var hint := ""
+var bridges: Dictionary = {}   # Instanz-ID des Gates -> Fluggastbrücke
+const Models = preload("res://scripts/models.gd")
+const Kit = preload("res://scripts/mesh_kit.gd")
+const BRIDGE_REACH := 36.0
 
 
 func setup(g: GameState) -> void:
@@ -72,6 +76,7 @@ func _analyze() -> void:
 			"wc": int(counts.get("wc", 0)) if game.supplied(h, "wasser") else 0,
 		}
 		halls.append(info)
+	_rebuild_bridges()
 	# Personen in abgerissenen Hallen verschwinden, die anderen suchen ihren Weg neu
 	for per: Dictionary in people.duplicate():
 		if not grids.has(int(per["hall_id"])):
@@ -291,6 +296,9 @@ func _front(it: Dictionary, spread: float, depth: float) -> Vector3:
 func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 	if gate.is_empty():
 		return
+	var gid := (gate["node"] as Node).get_instance_id()
+	if bridges.has(gid):
+		bridges[gid]["plane"] = p
 	var hall: Dictionary = gate["hall"]
 	var n := ceili(float(Catalog.PLANES[p["kind"]]["pax"]) / float(PAX_PER_FIGURE))
 	var band := _any(hall, "gepaeckband")
@@ -325,8 +333,13 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 		_maybe(plan, hall, "shop", 0.25)
 		_maybe(plan, hall, "cafe", 0.2)
 		_maybe(plan, hall, "wc", 0.15)
-		var rows := [-1.0, 0.6, 2.4]
-		plan.append(["go", _pt(gate, Vector3(randf_range(-3.4, 3.4), 0, float(rows[randi() % 3]) + 0.45))])
+		var row: float = [-1.0, 0.6, 2.4][randi() % 3]
+		var flip := 1.0 if row > 0.0 else -1.0
+		var seat_x := -3.25 + float(randi() % 8) * 0.93
+		plan.append(["go", _pt(gate, Vector3(seat_x, 0, row + 0.55 * -flip))])
+		plan.append(["go", _pt(gate, Vector3(seat_x, 0, row - 0.05 * flip))])
+		var face := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, -flip)
+		plan.append(["sit", face])
 		plan.append(["stay"])
 		_spawn(p, hall, true, _pt(door, Vector3(randf_range(-2.0, 2.0), 0, 0.3)), plan)
 
@@ -344,8 +357,20 @@ func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> void:
 
 func _spawn(p: Dictionary, hall: Dictionary, dep: bool, start: Vector3, plan: Array) -> void:
 	var node := Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
-	if dep and randf() < 0.6:
-		Factory.blk(node, Vector3(0.24, 0.05, -0.18), Vector3(0.46, 0.62, 0.22), Factory.SHIRTS[randi() % Factory.SHIRTS.size()].darkened(0.3))
+	if randf() < 0.1:
+		node.scale = Vector3.ONE * randf_range(0.58, 0.7)   # Kinder
+	elif randf() < 0.65:
+		# Rollkoffer mit ausgezogenem Griff, an der rechten Hand
+		var bag := Node3D.new()
+		bag.name = "Koffer"
+		bag.position = Vector3(0.36, 0, 0.32)
+		node.add_child(bag)
+		var c: Color = Factory.SHIRTS[randi() % Factory.SHIRTS.size()].darkened(0.35)
+		Factory.blk(bag, Vector3(-0.12, 0.06, -0.2), Vector3(0.12, 0.62, 0.2), c)
+		Factory.blk(bag, Vector3(-0.02, 0.62, -0.12), Vector3(0.02, 0.95, -0.08), Color(0.2, 0.2, 0.22))
+		Factory.blk(bag, Vector3(-0.08, 0.93, -0.13), Vector3(0.08, 0.97, -0.07), Color(0.2, 0.2, 0.22))
+		for wz: float in [-0.15, 0.15]:
+			Factory.blk(bag, Vector3(-0.1, 0.0, wz - 0.03), Vector3(0.1, 0.06, wz + 0.03), Color(0.08, 0.08, 0.08))
 	node.visible = false
 	node.position = start
 	add_child(node)
@@ -356,6 +381,10 @@ func _spawn(p: Dictionary, hall: Dictionary, dep: bool, start: Vector3, plan: Ar
 ## Das Flugzeug rollt los: wer am Gate wartet (oder noch unterwegs ist), ist eingestiegen.
 func flight_left(p: Dictionary) -> void:
 	var fid: int = p["id"]
+	for gid: int in bridges:
+		var b: Dictionary = bridges[gid]
+		if not (b["plane"] as Dictionary).is_empty() and int(b["plane"]["id"]) == fid:
+			b["plane"] = {}
 	_release_gate(fid)
 	for per: Dictionary in people.duplicate():
 		if int(per["flight"]) == fid and bool(per["dep"]):
@@ -378,6 +407,8 @@ func clear_people() -> void:
 func step(sim: float) -> void:
 	if dirty:
 		_analyze()
+	_move_bridges(sim)
+	_belts(sim)
 	for per: Dictionary in people.duplicate():
 		_update_person(per, sim)
 
@@ -422,7 +453,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 					pos += look / d * budget
 					budget = 0.0
 			per["walk"] = float(per.get("walk", 0.0)) + WALK * sim - budget
-			Factory.set_pose(node, 1 + int(float(per["walk"]) / 0.42) % 2)
+			Factory.set_pose(node, 1 + int(float(per["walk"]) / 0.3) % 4)
 			per["pos"] = pos
 			per["pi"] = pi
 			node.position = pos
@@ -432,6 +463,13 @@ func _update_person(per: Dictionary, sim: float) -> void:
 				per["path"] = []
 				per["si"] = si + 1
 				Factory.set_pose(node, 0)
+		"sit":
+			Factory.set_pose(node, 5)
+			node.basis = Basis.looking_at(st[1], Vector3.UP)
+			var luggage := node.get_node_or_null("Koffer") as Node3D
+			if luggage != null:
+				luggage.position = Vector3(0.45, 0, -0.3)
+			per["si"] = si + 1
 		"stay":
 			pass
 		"end":
@@ -566,3 +604,182 @@ func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true) -> Array:
 		out.append(Vector3(float(ids[i].x) + 0.5, 0.0, float(ids[i].y) + 0.5))
 	out.append(b)
 	return out
+
+
+# ---------------------------------------------------------------- Fluggastbrücken
+
+## Je Gate eine Brücke an der Außenwand. Sie fährt aus und dockt an Tür L1 an, wenn das
+## zugeteilte Flugzeug in Reichweite am Stand steht, und fährt danach wieder ein.
+func _rebuild_bridges() -> void:
+	var old := bridges
+	bridges = {}
+	for info: Dictionary in halls:
+		var h: Dictionary = info["hall"]
+		var hr: Rect2 = h["rect"]
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] != "gate":
+				continue
+			var gid := (it["node"] as Node).get_instance_id()
+			var gr: Rect2 = it["rect"]
+			var c := gr.get_center()
+			var cand := [[gr.position.y - hr.position.y, Vector3(0, 0, -1), Vector3(c.x, 0, hr.position.y)],
+				[hr.end.y - gr.end.y, Vector3(0, 0, 1), Vector3(c.x, 0, hr.end.y)],
+				[gr.position.x - hr.position.x, Vector3(-1, 0, 0), Vector3(hr.position.x, 0, c.y)],
+				[hr.end.x - gr.end.x, Vector3(1, 0, 0), Vector3(hr.end.x, 0, c.y)]]
+			cand.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+			var n: Vector3 = cand[0][1]
+			var anchor: Vector3 = cand[0][2] + n * 2.2
+			var b: Dictionary
+			if old.has(gid) and (old[gid]["anchor"] as Vector3).is_equal_approx(anchor):
+				b = old[gid]
+				old.erase(gid)
+			else:
+				b = _make_bridge(anchor, n)
+			bridges[gid] = b
+	for gid: int in old:
+		var node: Variant = old[gid]["node"]
+		if is_instance_valid(node):
+			(node as Node).queue_free()
+
+
+func _make_bridge(anchor: Vector3, n: Vector3) -> Dictionary:
+	var root := Node3D.new()
+	root.name = "Fluggastbruecke"
+	add_child(root)
+	var grey := Color(0.72, 0.73, 0.74)
+	var dark := Color(0.25, 0.26, 0.28)
+	var k := Kit.new()
+	k.cyl(anchor, anchor + Vector3(0, 3.0, 0), 0.9, 0.9, dark, 10)
+	k.cyl(anchor + Vector3(0, 3.0, 0), anchor + Vector3(0, 6.0, 0), 1.9, 1.9, grey, 12)
+	k.cyl(anchor + Vector3(0, 6.0, 0), anchor + Vector3(0, 6.2, 0), 2.0, 2.0, dark, 12)
+	k.box(anchor - n * 2.3 + Vector3(-1.2, 3.0, -1.2) + n * 0.0, anchor + Vector3(1.2, 6.0, 1.2) - n * 1.2, grey)
+	var rot := MeshInstance3D.new()
+	rot.mesh = k.commit()
+	root.add_child(rot)
+	var tunnel := MeshInstance3D.new()
+	tunnel.name = "Tunnel"
+	var tk := Kit.new()
+	tk.box(Vector3(-1.3, -1.35, -0.5), Vector3(1.3, 1.35, 0.5), grey)
+	for side: float in [-1.0, 1.0]:
+		tk.box(Vector3(side * 1.31, 0.1, -0.5), Vector3(side * 1.33, 0.75, 0.5), Models.GLASS)
+	tk.box(Vector3(-1.35, 1.35, -0.5), Vector3(1.35, 1.45, 0.5), dark)
+	tunnel.mesh = tk.commit()
+	root.add_child(tunnel)
+	var cab := Node3D.new()
+	cab.name = "Kabine"
+	root.add_child(cab)
+	var ck := Kit.new()
+	ck.box(Vector3(-1.7, -0.1, -2.4), Vector3(1.7, 2.9, 0.4), grey)
+	ck.box(Vector3(-1.5, 0.0, -3.0), Vector3(1.5, 2.6, -2.4), dark)
+	ck.box(Vector3(-1.72, 1.2, -2.0), Vector3(1.72, 2.0, -0.6), Models.GLASS)
+	cab.add_child(_mi(ck))
+	var leg := MeshInstance3D.new()
+	leg.name = "Fahrwerk"
+	var lk := Kit.new()
+	lk.cyl(Vector3(0, 0.55, 0), Vector3(0, 1.0, 0), 0.25, 0.25, dark, 8)
+	lk.box(Vector3(-1.4, 0.35, -0.5), Vector3(1.4, 0.65, 0.5), dark)
+	for wx: float in [-1.1, 1.1]:
+		lk.cyl(Vector3(wx - 0.2, 0.42, 0), Vector3(wx + 0.2, 0.42, 0), 0.42, 0.42, Models.TYRE, 10, true, Models.METAL)
+	leg.mesh = lk.commit()
+	root.add_child(leg)
+	var rest := anchor + n * 11.0
+	var b := {"node": root, "anchor": anchor, "normal": n, "end": rest, "rest": rest, "plane": {}, "height": 3.0}
+	_pose_bridge(b)
+	return b
+
+
+func _mi(k: Kit) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = k.commit()
+	return mi
+
+
+func _move_bridges(sim: float) -> void:
+	for gid: int in bridges:
+		var b: Dictionary = bridges[gid]
+		var goal: Vector3 = b["rest"]
+		var goal_h := 3.0
+		var p: Dictionary = b["plane"]
+		if not p.is_empty() and p.get("state", "") == "abfertigung" and is_instance_valid(p.get("node")):
+			var s: Dictionary = Models.SPECS.get(p["kind"], Models.SPECS["a320"])
+			var pn := p["node"] as Node3D
+			var door: Vector3 = pn.global_transform * Vector3(-(float(s["r"]) + 2.9), 0.0, float(s["doors"][0]))
+			if Vector2(door.x - (b["anchor"] as Vector3).x, door.z - (b["anchor"] as Vector3).z).length() < BRIDGE_REACH:
+				goal = Vector3(door.x, 0, door.z)
+				goal_h = float(s["cy"]) - 0.8
+		var cur: Vector3 = b["end"]
+		var step := 1.6 * sim
+		if cur.distance_to(goal) <= step:
+			cur = goal
+		else:
+			cur += (goal - cur).normalized() * step
+		b["end"] = cur
+		b["height"] = move_toward(float(b["height"]), goal_h, 0.4 * sim)
+		_pose_bridge(b)
+
+
+func _pose_bridge(b: Dictionary) -> void:
+	var root: Node3D = b["node"]
+	if not is_instance_valid(root):
+		return
+	var a: Vector3 = b["anchor"] + Vector3(0, 4.4, 0)
+	var e: Vector3 = b["end"]
+	var h: float = b["height"]
+	var tip := Vector3(e.x, h + 1.35, e.z)
+	var dir := tip - a
+	var flat := Vector3(dir.x, 0, dir.z)
+	if flat.length() < 0.5:
+		return
+	var tunnel := root.get_node("Tunnel") as Node3D
+	tunnel.global_transform = Transform3D(Basis.looking_at(dir.normalized(), Vector3.UP).scaled(Vector3(1, 1, maxf(dir.length() - 1.5, 1.0))), (a + tip) * 0.5)
+	var cab := root.get_node("Kabine") as Node3D
+	cab.global_transform = Transform3D(Basis.looking_at(flat.normalized(), Vector3.UP), Vector3(e.x, h, e.z))
+	var leg := root.get_node("Fahrwerk") as Node3D
+	var lp := e - flat.normalized() * 4.0
+	leg.global_transform = Transform3D(Basis.looking_at(flat.normalized(), Vector3.UP), Vector3(lp.x, 0, lp.z))
+
+
+# ---------------------------------------------------------------- Gepäckbänder
+
+var belt_phase := 0.0
+
+
+## Koffer laufen auf dem Band um (Umfang einer flachen Ellipse um die Insel).
+func _belts(sim: float) -> void:
+	var busy := false
+	for per: Dictionary in people:
+		busy = busy or not bool(per["dep"])
+	if not busy:
+		return
+	belt_phase += sim * 0.9
+	var straight := 7.2
+	var r := 1.17
+	var perim := 2.0 * straight + TAU * r
+	for h: Dictionary in game.items_of("halle"):
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] != "gepaeckband":
+				continue
+			var cases := (it["node"] as Node3D).get_node_or_null("Koffer")
+			if cases == null:
+				continue
+			var n := cases.get_child_count()
+			for i in range(n):
+				var d := fmod(belt_phase + float(i) * perim / float(n), perim)
+				var pos := Vector3.ZERO
+				var yaw := 0.0
+				if d < straight:
+					pos = Vector3(-3.6 + d, 0, r)
+				elif d < straight + PI * r:
+					var a := (d - straight) / r
+					pos = Vector3(3.6 + sin(a) * r, 0, cos(a) * r)
+					yaw = a
+				elif d < 2.0 * straight + PI * r:
+					pos = Vector3(3.6 - (d - straight - PI * r), 0, -r)
+					yaw = PI
+				else:
+					var a := (d - 2.0 * straight - PI * r) / r
+					pos = Vector3(-3.6 - sin(a) * r, 0, -cos(a) * r)
+					yaw = PI + a
+				var c := cases.get_child(i) as Node3D
+				c.position = pos + Vector3(0, 0.76, 0)
+				c.rotation.y = yaw
