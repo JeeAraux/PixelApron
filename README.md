@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.14: Neue Bauleiste und Wegebau wie in Städtebauspielen**
+  - **Bauleiste:** Dock mit Kategorie-Bildern, zuletzt benutzten Bauteilen, Blaupause, Zurück und Abriss. Darüber die Ablage mit Abschnitten als Sprungmarken, Suche über alle Bauteile (Strg+F) und einem Streifen, der waagrecht blättert (Mausrad, Pfeile) und nie über den Bildschirmrand ragt. Die Kopfzeile verdichtet sich bei kleinen Fenstern.
+  - **Wegebau-Leiste:** Gerade, Kurve, Freihand und Ersetzen, Einrasten an/aus (G) und immer der nächste Schritt im Klartext.
+  - **Ersetzen:** Bestehende Straße oder Rollweg anklicken und an Ort und Stelle umbauen (2-spurig, 4-spurig, Einbahn, Rollweg schmal/breit), Einbahnstraßen drehen. Kreuzungen und Anschlüsse bleiben.
 - **Update 0.13: Wetter, Fracht, Verträge, Lotsenmodus und vieles mehr**
   - **Wetter:** Regen, Nebel und Schnee mit Winterdienst (Räumkonvoi auf der Piste, Enteisung vor dem Start); nachts Scheinwerferkegel von Autos, Bodenfahrzeugen und Flugzeugen, Lichtfelder unter den Flutlichtmasten.
   - **Flugbetrieb:** Bei mehreren Pisten wird nach dem Wind auf eine zum Landen und eine zum Starten verteilt. Frachtterminal mit Frachtflügen (777F und Frachtversionen), Wartungschecks im Hangar, Flugplan mit geplanten Zeiten und Verspätungen, Lotsenmodus mit Freigaben per Knopf.
@@ -180,6 +184,11 @@ Beim ersten Öffnen legt Godot den Ordner `.godot/` an. Den musst du nicht siche
 | Mausrad | Zoom |
 | Q / E | Ansicht um 90 Grad drehen |
 | F5 / F9 | Speichern / Laden |
+| Tab | Zeichenart beim Wegebau wechseln (Gerade, Kurve, Freihand, Ersetzen) |
+| G | Einrasten von Winkel und Länge an/aus (Shift kehrt es kurz um) |
+| B | Ablage der Bauleiste ein-/ausklappen |
+| Alt+1 … Alt+7 | Kategorie der Bauleiste öffnen |
+| Strg+F | Bauteil suchen, Enter wählt den ersten Treffer |
 
 ## Aufbau
 

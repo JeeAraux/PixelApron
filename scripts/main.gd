@@ -246,6 +246,7 @@ func _make_thumbs() -> void:
 	var ids := []
 	for cat: Array in Catalog.CATEGORIES:
 		ids.append_array(cat[2])
+	ids.append("kopieren")
 	var t := Thumbs.new()
 	add_child(t)
 	var textures: Dictionary = await t.render(ids)
@@ -280,6 +281,8 @@ func _connect() -> void:
 	builder.mode_changed.connect(hud.show_draw_modes)
 	builder.hint.connect(hud.set_hint)
 	hud.draw_mode_selected.connect(builder.set_mode)
+	hud.snap_toggled.connect(builder.set_snapping)
+	builder.steps.connect(hud.set_steps)
 	hud.ops_ref = betrieb
 	hud.clearance_requested.connect(_on_clearance)
 	hud.atc_toggled.connect(_on_atc)
@@ -622,6 +625,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton
 		if not mb.pressed:
 			return
+		hud.release_search()
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			var p: Variant = ground_at(mb.position)
 			if p != null:
@@ -632,11 +636,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		var k := event as InputEventKey
 		if not k.pressed or k.echo:
 			return
+		if k.alt_pressed and k.keycode >= KEY_1 and k.keycode <= KEY_9:
+			hud.open_category(int(k.keycode - KEY_1))
+			return
+		if k.ctrl_pressed and k.keycode == KEY_F:
+			hud.focus_search()
+			return
 		match k.keycode:
 			KEY_ENTER, KEY_KP_ENTER:
 				builder.finish()
 			KEY_TAB:
 				builder.cycle_mode()
+			KEY_G:
+				builder.set_snapping(not builder.snapping)
+				hud.show_snapping(builder.snapping)
+				game.toast.emit("Einrasten " + ("an" if builder.snapping else "aus"))
 			KEY_R:
 				builder.rotate()
 			KEY_L:
@@ -953,6 +967,20 @@ func _demo(args: PackedStringArray) -> void:
 		builder.on_move(Vector3(-215, 0, 110))
 		builder.on_click(Vector3(-215, 0, 110))
 		builder.on_move(Vector3(-235, 0, 200))
+	elif mode == "ersetzen":
+		# Ersetzen: Bestandsstraße unter dem Zeiger wird zur 4-spurigen
+		cam_rig.target = Vector3(-200, 0, 120)
+		cam_rig.zoom_goal = 120.0
+		cam_rig.zoom = 120.0
+		builder.set_tool("strasse4")
+		builder.set_mode("ersetzen")
+		var on_road := Vector3(-215, 0, 110)
+		for l: Dictionary in game.lines:
+			var sm: PackedVector3Array = l["samples"]
+			if l["kind"] == "strasse" and (sm[0].distance_to(on_road) < 3.0 or sm[sm.size() - 1].distance_to(on_road) < 3.0):
+				on_road = sm[mini(14, sm.size() - 1)] if sm[0].distance_to(on_road) < 3.0 else sm[maxi(sm.size() - 15, 0)]
+		cam_rig.target = on_road
+		builder.on_move(on_road)
 	elif mode.begins_with("modelle"):
 		# Schaufenster aller Detailmodelle auf einer freien Wiese
 		var base := Vector3(600, 0, 600)
@@ -1173,7 +1201,19 @@ func _demo(args: PackedStringArray) -> void:
 	if "--lotse" in args:
 		game.atc_manual = true
 		hud.set_atc(true)
-	for i in range(120):
+	var tab := _arg(args, "--tab=", "")
+	if tab != "":
+		hud._show_tab(tab, false)
+	var such := _arg(args, "--suche=", "")
+	if such != "":
+		hud.search_edit.text = such
+		hud._apply_search(such)
+	for i in range(60):
+		await get_tree().process_frame
+	var scroll := _arg(args, "--scroll=", "")
+	if scroll != "":
+		hud.strip_scroll.scroll_horizontal = int(scroll)
+	for i in range(60):
 		await get_tree().process_frame
 	if shot != "":
 		get_viewport().get_texture().get_image().save_png(shot)

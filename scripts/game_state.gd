@@ -275,22 +275,70 @@ func cycle_road(rec: Dictionary) -> String:
 		if order[i][0] == kind and bool(order[i][1]) == flip:
 			idx = i
 	var nxt: Array = order[(idx + 1) % order.size()]
-	var new_kind: String = nxt[0]
+	return upgrade_line(rec, String(nxt[0]), bool(nxt[1]))
+
+
+## Welche Wegarten sich ineinander umbauen lassen (Ersetzen-Werkzeug wie in Städtebauspielen)
+const UPGRADE_FAMILY := {"strasse": "strasse", "strasse4": "strasse", "einbahn": "strasse",
+	"rollweg": "rollweg", "rollweg_breit": "rollweg"}
+
+
+## Kosten des Umbaus (positiv: zahlen, negativ: Erstattung der halben Differenz).
+func upgrade_cost(rec: Dictionary, new_kind: String) -> int:
 	var samples: PackedVector3Array = rec["samples"]
-	var old_cost := line_cost(kind, samples)
-	var new_cost := line_cost(new_kind, samples)
-	var extra := maxi(0, new_cost - old_cost)
+	var diff := line_cost(new_kind, samples) - line_cost(String(rec["kind"]), samples)
+	return diff if diff > 0 else -int(float(-diff) * 0.5)
+
+
+## Prüft, ob ein Weg zu new_kind umgebaut werden kann ("" = ja, sonst der Grund).
+func can_upgrade(rec: Dictionary, new_kind: String, flip: bool = false) -> String:
+	var kind: String = rec.get("kind", "")
+	if not UPGRADE_FAMILY.has(kind) or UPGRADE_FAMILY.get(new_kind, "") != UPGRADE_FAMILY[kind]:
+		return "Lässt sich nicht in " + Catalog.label(new_kind) + " umbauen"
+	if kind == new_kind and flip == bool(rec.get("flip", false)):
+		return "Ist schon " + Catalog.label(kind)
+	var extra := upgrade_cost(rec, new_kind)
 	if extra > money:
-		return "Nicht genug Geld"
-	# breitere Straße darf nicht in Gebäude ragen
+		return "Nicht genug Geld: " + fmt_money(extra) + " nötig"
+	# breiterer Weg darf nicht in Gebäude ragen (Deko wird weggeräumt)
 	var w: float = Catalog.LINES[new_kind]["width"]
+	if w <= float(Catalog.LINES[kind]["width"]) + 0.01:
+		return ""
+	var samples: PackedVector3Array = rec["samples"]
 	for it: Dictionary in items:
-		if Catalog.is_inside(String(it["id"])) or String(it["id"]) in DECOR:
+		var id: String = it["id"]
+		if Catalog.is_inside(id) or Catalog.is_marker(id) or id in DECOR:
+			continue
+		var on := String(Catalog.ITEMS[id].get("on", ""))
+		if on == kind or on == new_kind:
 			continue
 		var r: Rect2 = (it["rect"] as Rect2).grow(w * 0.5 - 0.25)
 		for i in range(0, samples.size(), 2):
 			if r.has_point(Vector2(samples[i].x, samples[i].z)):
-				return "Zu breit: stößt an " + Catalog.label(String(it["id"]))
+				return "Zu breit: stößt an " + Catalog.label(id)
+	return ""
+
+
+## Baut einen Weg an Ort und Stelle um (andere Spuren, Breite oder Richtung), Verlauf und Anschlüsse bleiben.
+func upgrade_line(rec: Dictionary, new_kind: String, flip: bool = false) -> String:
+	var why := can_upgrade(rec, new_kind, flip)
+	if why != "":
+		return why
+	var samples: PackedVector3Array = rec["samples"]
+	var extra := upgrade_cost(rec, new_kind)
+	var w: float = Catalog.LINES[new_kind]["width"]
+	var removed := false
+	for it: Dictionary in items.duplicate():
+		if not (String(it["id"]) in DECOR):
+			continue
+		var r: Rect2 = (it["rect"] as Rect2).grow(w * 0.5 - 0.25)
+		for i in range(0, samples.size(), 2):
+			if r.has_point(Vector2(samples[i].x, samples[i].z)):
+				_remove_one(it, 0.0)
+				removed = true
+				break
+	if removed:
+		items_changed.emit()
 	var node: Variant = rec["node"]
 	if is_instance_valid(node):
 		(node as Node).queue_free()
@@ -298,10 +346,11 @@ func cycle_road(rec: Dictionary) -> String:
 	line_root.add_child(mesh)
 	rec["node"] = mesh
 	rec["kind"] = new_kind
-	rec["flip"] = bool(nxt[1])
+	rec["flip"] = flip
 	rec["bounds"] = Spline.bounds(samples, w * 0.5)
-	rec["cost"] = int(rec["cost"]) + extra
+	rec["cost"] = maxi(0, int(rec["cost"]) + extra)
 	_spend(extra)
+	_apply_visibility(rec)
 	_grid_dirty = true
 	network_changed.emit()
 	return ""

@@ -299,8 +299,8 @@ const ITEMS := {
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["kopieren", "strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "betriebsstrasse", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude", "frachtterminal", "winterdienst"]],
+	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude", "frachtterminal", "winterdienst"]],
 	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
@@ -309,6 +309,34 @@ const CATEGORIES := [
 	["versorgung", "Versorgung", ["stromkabel", "wasserrohr", "heizrohr", "trafo", "wasseranschluss", "heizzentrale"]],
 	["umfeld", "Umfeld", ["parkhaus", "parkplatz", "mietwagen", "haltestelle", "taxistand", "kissandfly", "bahnhof", "zaun", "baum", "busch", "hecke", "blumenbeet", "teich", "felsen", "kuebel", "laterne", "bank", "picknick"]],
 ]
+
+## Untergruppen der Baukategorien (Abschnitte und Sprungmarken in der Bauleiste)
+const GROUPS := {
+	"wege": [["Straßen", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg"]], ["Verkehr regeln", ["spuren", "kreuzung"]],
+		["Flugfeld", ["rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]]],
+	"flug": [["Stände", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt"]],
+		["Befeuerung", ["flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi"]],
+		["Betrieb", ["tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "personalgebaeude"]],
+		["Werft und Dienste", ["hangar", "feuerwache", "frachtterminal", "winterdienst"]]],
+	"terminal": [["Halle", ["halle", "innenwand", "glaswand", "tuer", "eingang"]],
+		["Bereiche", ["bereich_oeffentlich", "bereich_sicherheit", "bereich_personal"]],
+		["Abflug", ["checkin", "gepaeckanlage", "gepaeckroentgen", "sicherheit", "passkontrolle", "gate", "busgate"]],
+		["Ankunft", ["gepaeckband", "gepaeckermittlung", "zoll", "sb_ausgang"]],
+		["Ebenen", ["rolltreppe", "aufzug", "treppe"]], ["Personal", ["personalraum"]]],
+	"ausstattung": [["Service", ["wc", "infoschalter", "anzeige", "heizkoerper"]], ["Gastro und Shops", ["cafe", "shop", "kiosk", "airline_lounge"]],
+		["Warten", ["sitzreihe", "rollsteig"]], ["Deko", ["pflanze", "kunst"]]],
+	"moebel": [["Sitzen und Essen", ["lounge", "bistrotisch", "massagesessel"]],
+		["Automaten", ["snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "ladestation", "werbebildschirm"]],
+		["Praktisch", ["uhr", "kofferwagen", "muelltrennung", "spielecke"]],
+		["Grün und Deko", ["aquarium", "palme", "baumbeet", "gruenwand", "springbrunnen", "fluegel", "flugzeugmodell", "fahnen"]]],
+	"versorgung": [["Leitungen", ["stromkabel", "wasserrohr", "heizrohr"]], ["Anlagen", ["trafo", "wasseranschluss", "heizzentrale"]]],
+	"umfeld": [["Anreise", ["parkhaus", "parkplatz", "mietwagen", "haltestelle", "taxistand", "kissandfly", "bahnhof"]],
+		["Gelände", ["zaun", "laterne", "bank", "picknick", "kuebel"]],
+		["Natur", ["baum", "busch", "hecke", "blumenbeet", "teich", "felsen"]]],
+}
+## Bild der Kategorie im Dock (ein typisches Bauteil)
+const CATEGORY_ICON := {"wege": "strasse", "flug": "tower", "terminal": "checkin", "ausstattung": "cafe",
+	"moebel": "lounge", "versorgung": "trafo", "umfeld": "baum"}
 
 ## Höhe einer Terminal-Ebene in Metern (Keller = Ebene -1)
 const FLOOR_H := 5.0

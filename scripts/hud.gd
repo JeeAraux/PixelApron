@@ -19,6 +19,7 @@ signal map_requested
 signal floor_step(dir: int)
 signal option_changed(key: String, dir: int)
 signal draw_mode_selected(mode: String)
+signal snap_toggled(on: bool)
 signal clearance_requested(id: int)
 signal atc_toggled(on: bool)
 signal contract_requested(code: String)
@@ -39,6 +40,8 @@ const C_FAINT := Color(0.60, 0.56, 0.45)
 const C_OK := Color(0.66, 0.85, 0.56)
 const C_BAD := Color(1.0, 0.55, 0.45)
 const C_PRICE := Color(0.94, 0.78, 0.36)
+const CARD_W := 94.0
+const RECENT_MAX := 5
 
 var root: Control
 var money_label: Label
@@ -78,7 +81,38 @@ var info_details: Control          # Text und Hilfe im Infofeld (einklappbar)
 var info_toggle: Button
 var flights_details: Control
 var flights_toggle: Button
-var build_pages: Control           # Karten des Baumenüs (einklappbar, Reiter bleiben)
+var build_pages: Control           # Ablage der Bauleiste (einklappbar, das Dock bleibt)
+var dock: PanelContainer
+var tray: PanelContainer
+var tray_title: Label
+var chip_box: HFlowContainer
+var chip_buttons: Array = []       # [Knopf, Abschnitt]
+var search_edit: LineEdit
+var search_text := ""
+var strip_scroll: ScrollContainer
+var strip_row: HBoxContainer
+var arrow_l: Button
+var arrow_r: Button
+var scroll_tween: Tween
+var sections: Array = []           # {cat, name, box, ids}
+var card_meta: Dictionary = {}     # id -> Suchtext (Name, Abschnitt)
+var card_desc: Dictionary = {}     # id -> Beschreibung (wenn der Name nichts findet)
+var cat_icons: Dictionary = {}
+var thumb_tex: Dictionary = {}
+var recent: Array = []
+var recent_box: HBoxContainer
+var recent_sep: Control
+var layout_queued := false
+var line_bar: PanelContainer
+var line_title: Label
+var step_label: Label
+var step_text := ""
+var snap_button: Button
+var modes_shown := false
+var current_tool := ""
+var top_row: HBoxContainer
+var title_box: Control
+var view_buttons: Array = []      # [Knopf, langer Text, kurzer Text]
 var build_open := true
 var current_tab := ""
 var map_button: Button
@@ -218,13 +252,17 @@ func _build_top() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	bar.add_child(row)
+	top_row = row
 	var title := VBoxContainer.new()
+	title_box = title
 	title.add_theme_constant_override("separation", 0)
 	title.add_child(_label("PixelApron", 22, C_TEXT))
 	subtitle_label = _label("Flughafen Wiesenfeld", 13, C_DIM)
 	title.add_child(subtitle_label)
 	row.add_child(title)
-	row.add_child(VSeparator.new())
+	var tsep := VSeparator.new()
+	title.set_meta("sep", tsep)
+	row.add_child(tsep)
 	clock_label = _label("Mo 06:00", 22, C_TEXT)
 	clock_label.custom_minimum_size = Vector2(96, 0)
 	clock_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -272,14 +310,17 @@ func _build_top() -> void:
 	map_button.tooltip_text = "Ganze Karte zeigen und zurück (M)"
 	map_button.toggled.connect(func(_on: bool) -> void: map_requested.emit())
 	row.add_child(map_button)
+	view_buttons = [[ops_button, "Betrieb", "Betr."], [map_button, "Karte", "Karte"]]
 	utility_button = _button("Leitungen", true)
 	utility_button.tooltip_text = "Strom-, Wasser- und Heizleitungen zeigen (L)"
 	utility_button.toggled.connect(func(on: bool) -> void: utility_toggled.emit(on))
 	row.add_child(utility_button)
+	view_buttons.append([utility_button, "Leitungen", "Netz"])
 	interior_button = _button("Innenansicht", true)
 	interior_button.tooltip_text = "Dächer ausblenden und ins Terminal schauen (I)"
 	interior_button.toggled.connect(func(on: bool) -> void: interior_toggled.emit(on))
 	row.add_child(interior_button)
+	view_buttons.append([interior_button, "Innenansicht", "Innen"])
 	# Ebenenwahl (nur in der Innenansicht): Keller, Erdgeschoss, Obergeschosse
 	var fb := HBoxContainer.new()
 	fb.add_theme_constant_override("separation", 4)
@@ -299,6 +340,7 @@ func _build_top() -> void:
 	up.pressed.connect(func() -> void: floor_step.emit(1))
 	fb.add_child(up)
 	floor_box = fb
+	fb.visible = false
 	row.add_child(fb)
 	var menu_b := _button("Menü", false)
 	menu_b.custom_minimum_size = Vector2(76, 40)
@@ -325,21 +367,6 @@ func _build_info() -> void:
 	info_toggle = _fold_button()
 	info_toggle.pressed.connect(func() -> void: _fold(info_details, info_toggle, not info_details.visible))
 	head.add_child(info_toggle)
-	# Zeichenarten beim Wegebau (immer sichtbar, auch eingeklappt)
-	mode_box = HBoxContainer.new()
-	mode_box.add_theme_constant_override("separation", 4)
-	var mg := ButtonGroup.new()
-	for m: Array in [["gerade", "Gerade", "Gerade Stücke, setzt am Ende fort"], ["kurve", "Kurve", "Bögen, am Wegende tangential"], ["frei", "Freihand", "Beliebig viele Punkte, Ecken gerundet"]]:
-		var b := _button(String(m[1]), true)
-		b.button_group = mg
-		b.tooltip_text = String(m[2]) + " (Tab wechselt)"
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var key: String = m[0]
-		b.pressed.connect(func() -> void: draw_mode_selected.emit(key))
-		mode_box.add_child(b)
-		mode_buttons[key] = b
-	mode_box.visible = false
-	col.add_child(mode_box)
 	var details := VBoxContainer.new()
 	details.add_theme_constant_override("separation", 6)
 	col.add_child(details)
@@ -353,7 +380,7 @@ func _build_info() -> void:
 	options_box.add_theme_constant_override("separation", 4)
 	col.add_child(options_box)
 	col.add_child(HSeparator.new())
-	help_label = _label("Linksklick bauen · Rechtsklick fertig oder abwählen · R drehen · Esc Menü\nWASD oder mittlere Maustaste verschieben · Mausrad zoomen · Q/E drehen\nLeertaste Pause · L Leitungen · I Innenansicht · Strg+Z rückgängig", 12, C_FAINT)
+	help_label = _label("Linksklick bauen · Rechtsklick fertig oder abwählen · R drehen · Esc Menü\nWASD oder mittlere Maustaste verschieben · Mausrad zoomen · Q/E drehen\nLeertaste Pause · L Leitungen · I Innenansicht · Strg+Z rückgängig\nWegebau: Tab Zeichenart · G Einrasten · Strg+F Suche · Alt+1…7 Kategorie", 12, C_FAINT)
 	help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help_label.custom_minimum_size = Vector2(336, 0)
 	col.add_child(help_label)
@@ -541,27 +568,26 @@ func _tooltip(id: String) -> String:
 	return Catalog.label(id) + " · " + _price(id) + "\n" + desc
 
 
-func _card(id: String, accent: Color = C_GOLD) -> Button:
+func _card(id: String) -> Button:
 	var b := _button("", true)
-	b.custom_minimum_size = Vector2(108, 116)
+	b.custom_minimum_size = Vector2(CARD_W, 112)
 	b.button_group = tool_group
 	b.tooltip_text = _tooltip(id)
 	b.toggled.connect(_on_tool_toggled.bind(id))
-	if accent != C_GOLD:
-		b.add_theme_stylebox_override("pressed", _box(Color(0.3, 0.1, 0.08), accent, 3, 6))
-		b.add_theme_stylebox_override("hover_pressed", _box(Color(0.34, 0.12, 0.09), accent, 3, 6))
+	b.add_theme_stylebox_override("normal", _box(Color(0.13, 0.12, 0.085, 0.92), Color(0.27, 0.24, 0.17), 1, 4))
+	b.add_theme_stylebox_override("hover", _box(Color(0.2, 0.18, 0.12), Color(0.7, 0.62, 0.4), 2, 4))
 	var col := VBoxContainer.new()
 	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	col.offset_left = 4
-	col.offset_right = -4
+	col.offset_left = 3
+	col.offset_right = -3
 	col.offset_top = 4
-	col.offset_bottom = -4
-	col.add_theme_constant_override("separation", 1)
+	col.offset_bottom = -3
+	col.add_theme_constant_override("separation", 0)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(col)
 	var pic := TextureRect.new()
-	pic.custom_minimum_size = Vector2(72, 72)
+	pic.custom_minimum_size = Vector2(68, 68)
 	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -571,109 +597,430 @@ func _card(id: String, accent: Color = C_GOLD) -> Button:
 	var title := Catalog.label(id)
 	if Catalog.ITEMS.has(id) and Catalog.ITEMS[id].has("short"):
 		title = String(Catalog.ITEMS[id]["short"])
-	var name := _label(title, 13 if title.length() <= 12 else 11, C_TEXT)
+	elif Catalog.LINES.has(id) and Catalog.LINES[id].has("short"):
+		title = String(Catalog.LINES[id]["short"])
+	var name := _label(title, 13 if title.length() <= 11 else 11, C_TEXT)
 	name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name.clip_text = true
+	name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	col.add_child(name)
-	var price := _label(_price(id), 12, C_PRICE if accent == C_GOLD else accent)
+	var price := _label(_price(id), 11, C_PRICE)
 	price.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(price)
 	tool_buttons[id] = b
 	return b
 
 
+## Bauleiste unten, neu aufgebaut:
+## - Dock: Kategorien als Bildknöpfe, zuletzt benutzte Bauteile, Blaupause, Rückgängig, Abriss.
+## - Ablage darüber: Abschnitte der Kategorie (Sprungmarken), Suche über alle Bauteile und ein
+##   waagrecht scrollender Streifen, der nie breiter als der Bildschirm wird (Mausrad, Pfeile).
+## - Wegebau-Leiste: Zeichenart, Einrasten und der nächste Schritt, solange ein Weg gewählt ist.
 func _build_menu() -> void:
-	var panel := PanelContainer.new()
-	panel.anchor_left = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_top = 1.0
-	panel.anchor_bottom = 1.0
-	panel.offset_top = -12.0
-	panel.offset_bottom = -12.0
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	root.add_child(panel)
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 8)
-	panel.add_child(col)
-	var pages := Control.new()
-	pages.custom_minimum_size = Vector2(0, 116)
-	pages.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(pages)
-	build_pages = pages
-	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 6)
-	col.add_child(tabs)
-	var widest := 0.0
+	# Ablage
+	tray = PanelContainer.new()
+	var tsb := _box(Color(0.075, 0.068, 0.05, 0.93), Color(0.52, 0.46, 0.3), 2, 10)
+	tsb.set_corner_radius_all(10)
+	tsb.shadow_color = Color(0, 0, 0, 0.4)
+	tsb.shadow_size = 6
+	tray.add_theme_stylebox_override("panel", tsb)
+	root.add_child(tray)
+	var tcol := VBoxContainer.new()
+	tcol.add_theme_constant_override("separation", 8)
+	tray.add_child(tcol)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	tcol.add_child(head)
+	tray_title = _label("", 18, C_TEXT)
+	tray_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(tray_title)
+	chip_box = HFlowContainer.new()
+	chip_box.add_theme_constant_override("h_separation", 4)
+	chip_box.add_theme_constant_override("v_separation", 4)
+	chip_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(chip_box)
+	search_edit = LineEdit.new()
+	search_edit.placeholder_text = "Suchen …  (Strg+F)"
+	search_edit.custom_minimum_size = Vector2(190, 30)
+	search_edit.clear_button_enabled = true
+	search_edit.add_theme_stylebox_override("normal", _box(Color(0.05, 0.045, 0.035), Color(0.36, 0.32, 0.22), 1, 6))
+	search_edit.add_theme_stylebox_override("focus", _box(Color(0.05, 0.045, 0.035), C_GOLD, 2, 6))
+	search_edit.add_theme_color_override("font_color", C_TEXT)
+	search_edit.add_theme_color_override("font_placeholder_color", C_FAINT)
+	search_edit.add_theme_font_size_override("font_size", 14)
+	search_edit.text_changed.connect(_apply_search)
+	search_edit.text_submitted.connect(_search_pick)
+	search_edit.gui_input.connect(_search_input)
+	head.add_child(search_edit)
+	var strip := HBoxContainer.new()
+	strip.add_theme_constant_override("separation", 4)
+	tcol.add_child(strip)
+	arrow_l = _arrow("◀", -1)
+	strip.add_child(arrow_l)
+	strip_scroll = ScrollContainer.new()
+	strip_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	strip_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	strip_scroll.custom_minimum_size = Vector2(400, 134)
+	strip_scroll.gui_input.connect(_strip_input)
+	strip_scroll.get_h_scroll_bar().value_changed.connect(func(_v: float) -> void: _update_chips())
+	strip.add_child(strip_scroll)
+	strip_row = HBoxContainer.new()
+	strip_row.add_theme_constant_override("separation", 26)
+	strip_scroll.add_child(strip_row)
+	arrow_r = _arrow("▶", 1)
+	strip.add_child(arrow_r)
+	build_pages = tray
 	for cat: Array in Catalog.CATEGORIES:
 		var key: String = cat[0]
 		var page := HBoxContainer.new()
-		page.add_theme_constant_override("separation", 6)
+		page.add_theme_constant_override("separation", 26)
 		page.visible = false
-		pages.add_child(page)
-		for id: String in cat[2]:
-			page.add_child(_card(id))
-			tool_category[id] = key
-		widest = maxf(widest, float((cat[2] as Array).size()) * 114.0)
+		strip_row.add_child(page)
 		tab_pages[key] = page
-		var t := _button(String(cat[1]), true)
-		t.custom_minimum_size = Vector2(112, 36)
+		var groups: Array = Catalog.GROUPS.get(key, [[String(cat[1]), cat[2]]])
+		var placed := {}
+		for g: Array in groups:
+			for id: String in g[1]:
+				placed[id] = true
+		var rest := []
+		for id: String in cat[2]:
+			if not placed.has(id):
+				rest.append(id)
+		for gi in range(groups.size()):
+			var ids: Array = (groups[gi][1] as Array).filter(func(x: String) -> bool: return x in cat[2])
+			if gi == groups.size() - 1:
+				ids.append_array(rest)
+			if ids.is_empty():
+				continue
+			var sec := VBoxContainer.new()
+			sec.add_theme_constant_override("separation", 3)
+			page.add_child(sec)
+			var gl := _label(String(groups[gi][0]).to_upper(), 11, C_FAINT)
+			sec.add_child(gl)
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 5)
+			sec.add_child(row)
+			for id: String in ids:
+				row.add_child(_card(id))
+				tool_category[id] = key
+				var short := String(Catalog.ITEMS[id].get("short", "")) if Catalog.ITEMS.has(id) else ""
+				card_meta[id] = (Catalog.label(id) + " " + short + " " + id + " " + String(groups[gi][0])).to_lower()
+				card_desc[id] = (String(cat[1]) + " " + _tooltip(id)).to_lower()
+			sections.append({"cat": key, "name": String(groups[gi][0]), "box": sec, "ids": ids})
+	# Dock
+	dock = PanelContainer.new()
+	var dsb := _box(Color(0.06, 0.055, 0.04, 0.95), C_GOLD, 2, 6)
+	dsb.set_corner_radius_all(14)
+	dsb.shadow_color = Color(0, 0, 0, 0.45)
+	dsb.shadow_size = 5
+	dock.add_theme_stylebox_override("panel", dsb)
+	root.add_child(dock)
+	var drow := HBoxContainer.new()
+	drow.add_theme_constant_override("separation", 4)
+	dock.add_child(drow)
+	var n := 0
+	for cat: Array in Catalog.CATEGORIES:
+		n += 1
+		var key: String = cat[0]
+		var t := _dock_button(String(cat[1]), true)
 		t.button_group = tab_group
+		t.tooltip_text = "%s (Alt+%d) · %d Bauteile" % [String(cat[1]), n, (cat[2] as Array).size()]
 		t.pressed.connect(_show_tab.bind(key))
-		tabs.add_child(t)
+		drow.add_child(t)
 		tab_buttons[key] = t
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sp.custom_minimum_size = Vector2(24, 0)
-	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tabs.add_child(sp)
-	var fold := _button("Baumenü", true)
-	fold.custom_minimum_size = Vector2(96, 36)
-	fold.tooltip_text = "Bauteile ein- und ausblenden (B). Ein Klick auf den offenen Reiter klappt auch zu."
-	fold.button_pressed = true
-	fold.toggled.connect(func(on: bool) -> void: set_build_open(on))
-	tabs.add_child(fold)
-	tab_buttons["_fold"] = fold
-	var undo := _button("Rückgängig", false)
-	undo.custom_minimum_size = Vector2(104, 36)
+		cat_icons[key] = t.get_meta("icon")
+	drow.add_child(_dock_sep())
+	recent_box = HBoxContainer.new()
+	recent_box.add_theme_constant_override("separation", 3)
+	recent_box.tooltip_text = "Zuletzt benutzt"
+	drow.add_child(recent_box)
+	recent_sep = _dock_sep()
+	drow.add_child(recent_sep)
+	var copy := _dock_button("Blaupause", true)
+	copy.button_group = tool_group
+	copy.tooltip_text = _tooltip("kopieren")
+	copy.toggled.connect(_on_tool_toggled.bind("kopieren"))
+	drow.add_child(copy)
+	tool_buttons["kopieren"] = copy
+	cat_icons["_kopieren"] = copy.get_meta("icon")
+	var undo := _dock_button("Zurück", false, "↶", C_TEXT)
 	undo.tooltip_text = "Letzten Bau zurücknehmen, volle Erstattung (Strg+Z)"
 	undo.pressed.connect(func() -> void: undo_requested.emit())
-	tabs.add_child(undo)
-	var demolish := _button("Abriss", true)
-	demolish.custom_minimum_size = Vector2(110, 36)
+	drow.add_child(undo)
+	var demolish := _dock_button("Abriss", true, "✕", C_BAD)
 	demolish.button_group = tool_group
 	demolish.tooltip_text = _tooltip("abriss")
-	demolish.add_theme_color_override("font_color", C_BAD)
-	demolish.add_theme_stylebox_override("pressed", _box(Color(0.3, 0.1, 0.08), C_BAD, 3, 6))
-	demolish.add_theme_stylebox_override("hover_pressed", _box(Color(0.34, 0.12, 0.09), C_BAD, 3, 6))
+	demolish.add_theme_stylebox_override("pressed", _box(Color(0.3, 0.1, 0.08), C_BAD, 2, 4))
+	demolish.add_theme_stylebox_override("hover_pressed", _box(Color(0.34, 0.12, 0.09), C_BAD, 2, 4))
 	demolish.toggled.connect(_on_tool_toggled.bind("abriss"))
-	tabs.add_child(demolish)
+	drow.add_child(demolish)
 	tool_buttons["abriss"] = demolish
-	pages.custom_minimum_size.x = widest
+	var fold := _button("▾", true)
+	fold.custom_minimum_size = Vector2(26, 58)
+	fold.add_theme_stylebox_override("pressed", fold.get_theme_stylebox("normal"))
+	fold.add_theme_stylebox_override("hover_pressed", fold.get_theme_stylebox("hover"))
+	fold.tooltip_text = "Ablage ein- und ausklappen (B). Ein Klick auf die offene Kategorie klappt auch zu."
+	fold.button_pressed = true
+	fold.toggled.connect(func(on: bool) -> void: set_build_open(on))
+	drow.add_child(fold)
+	tab_buttons["_fold"] = fold
+	_build_line_bar()
+	get_viewport().size_changed.connect(_queue_layout)
 	var first: String = Catalog.CATEGORIES[0][0]
 	(tab_buttons[first] as Button).set_pressed_no_signal(true)
 	_show_tab(first, false)
 
 
+## Knopf im Dock: Bild oben, Name darunter.
+func _dock_button(text: String, toggle: bool, glyph: String = "", gcol: Color = C_TEXT) -> Button:
+	var b := _button("", toggle)
+	b.custom_minimum_size = Vector2(70, 58)
+	b.add_theme_stylebox_override("normal", _box(Color(0.1, 0.09, 0.065, 0.0), Color(0, 0, 0, 0), 0, 4))
+	b.add_theme_stylebox_override("hover", _box(Color(0.2, 0.18, 0.12), Color(0.5, 0.45, 0.3), 1, 4))
+	var pb := _box(Color(0.27, 0.23, 0.11), Color(0.94, 0.76, 0.31), 0, 4)
+	pb.border_width_bottom = 3
+	pb.set_corner_radius_all(8)
+	b.add_theme_stylebox_override("pressed", pb)
+	b.add_theme_stylebox_override("hover_pressed", pb)
+	var col := VBoxContainer.new()
+	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	col.offset_top = 3
+	col.offset_bottom = -3
+	col.add_theme_constant_override("separation", 0)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(col)
+	if glyph != "":
+		var g := _label(glyph, 24, gcol)
+		g.custom_minimum_size = Vector2(36, 36)
+		g.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		g.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		col.add_child(g)
+	else:
+		var pic := TextureRect.new()
+		pic.custom_minimum_size = Vector2(36, 36)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(pic)
+		b.set_meta("icon", pic)
+	var l := _label(text, 11, C_DIM)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(l)
+	return b
+
+
+func _dock_sep() -> Control:
+	var c := ColorRect.new()
+	c.color = Color(0.45, 0.4, 0.27, 0.6)
+	c.custom_minimum_size = Vector2(1, 44)
+	c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return c
+
+
+func _arrow(text: String, dir: int) -> Button:
+	var b := _button(text, false)
+	b.custom_minimum_size = Vector2(28, 134)
+	b.add_theme_stylebox_override("normal", _box(Color(0.1, 0.09, 0.065), Color(0.3, 0.27, 0.19), 1, 2))
+	b.pressed.connect(func() -> void: _scroll_by(float(dir) * strip_scroll.size.x * 0.8))
+	return b
+
+
+func _scroll_by(dx: float) -> void:
+	var bar := strip_scroll.get_h_scroll_bar()
+	var goal := clampf(float(strip_scroll.scroll_horizontal) + dx, 0.0, maxf(0.0, bar.max_value - bar.page))
+	_scroll_to(goal)
+
+
+func _scroll_to(x: float) -> void:
+	if scroll_tween != null:
+		scroll_tween.kill()
+	scroll_tween = create_tween()
+	scroll_tween.tween_property(strip_scroll, "scroll_horizontal", int(x), 0.18).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+
+## Mausrad über dem Streifen blättert waagrecht.
+func _strip_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton and (e as InputEventMouseButton).pressed:
+		var mb := e as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_LEFT:
+			_scroll_by(-CARD_W * 2.0)
+			strip_scroll.accept_event()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN or mb.button_index == MOUSE_BUTTON_WHEEL_RIGHT:
+			_scroll_by(CARD_W * 2.0)
+			strip_scroll.accept_event()
+
+
+## Sprungmarken der gezeigten Kategorie neu anlegen.
+func _rebuild_chips() -> void:
+	for c in chip_box.get_children():
+		c.queue_free()
+	chip_buttons.clear()
+	if search_text != "":
+		return
+	var mine := sections.filter(func(s: Dictionary) -> bool: return s["cat"] == current_tab)
+	if mine.size() < 2:
+		return
+	for s: Dictionary in mine:
+		var c := _button("%s  %d" % [String(s["name"]), (s["ids"] as Array).size()], true)
+		c.custom_minimum_size = Vector2(0, 28)
+		c.add_theme_font_size_override("font_size", 13)
+		var cn := _box(Color(0.12, 0.11, 0.08), Color(0.3, 0.27, 0.19), 1, 5)
+		cn.set_corner_radius_all(13)
+		cn.content_margin_left = 12
+		cn.content_margin_right = 12
+		c.add_theme_stylebox_override("normal", cn)
+		var cp := _box(Color(0.3, 0.26, 0.12), C_GOLD, 1, 5)
+		cp.set_corner_radius_all(13)
+		cp.content_margin_left = 12
+		cp.content_margin_right = 12
+		c.add_theme_stylebox_override("pressed", cp)
+		c.add_theme_stylebox_override("hover_pressed", cp)
+		var box: Control = s["box"]
+		c.pressed.connect(func() -> void: _scroll_to(_section_x(box)))
+		chip_box.add_child(c)
+		chip_buttons.append([c, box])
+	_update_chips()
+
+
+func _section_x(box: Control) -> float:
+	var bar := strip_scroll.get_h_scroll_bar()
+	var x := box.global_position.x - strip_row.global_position.x
+	return clampf(x, 0.0, maxf(0.0, bar.max_value - bar.page))
+
+
+## Die Sprungmarke des Abschnitts links im Streifen leuchtet.
+func _update_chips() -> void:
+	if chip_buttons.is_empty():
+		return
+	var at := float(strip_scroll.scroll_horizontal) + 30.0
+	var bar := strip_scroll.get_h_scroll_bar()
+	var active := 0
+	var max_scroll := bar.max_value - bar.page
+	for i in range(chip_buttons.size()):
+		if _section_x(chip_buttons[i][1]) <= at:
+			active = i
+	if max_scroll < 4.0:
+		active = -1   # alles sichtbar: keine Marke hervorheben
+	elif float(strip_scroll.scroll_horizontal) >= max_scroll - 2.0:
+		active = chip_buttons.size() - 1
+	for i in range(chip_buttons.size()):
+		(chip_buttons[i][0] as Button).set_pressed_no_signal(i == active)
+	arrow_l.disabled = strip_scroll.scroll_horizontal <= 0
+	arrow_r.disabled = float(strip_scroll.scroll_horizontal) >= bar.max_value - bar.page - 1.0
+
+
 func _show_tab(key: String, toggle: bool = true) -> void:
-	# erneuter Klick auf den offenen Reiter klappt das Baumenü zu
-	if toggle and key == current_tab and build_open:
+	# erneuter Klick auf die offene Kategorie klappt die Ablage zu
+	if toggle and key == current_tab and build_open and search_text == "":
 		set_build_open(false)
 		return
+	if search_text != "":
+		search_edit.text = ""
+		search_text = ""
+		_reset_search()
+	if key != current_tab:
+		strip_scroll.scroll_horizontal = 0
 	current_tab = key
 	for k: String in tab_pages:
 		(tab_pages[k] as Control).visible = k == key
 		(tab_buttons[k] as Button).set_pressed_no_signal(k == key)
+	for cat: Array in Catalog.CATEGORIES:
+		if cat[0] == key:
+			tray_title.text = String(cat[1])
+	_rebuild_chips()
 	set_build_open(true)
 
 
-## Karten des Baumenüs zeigen oder verbergen; die Reiterzeile bleibt immer sichtbar.
+## Suche über alle Kategorien: passende Bauteile bleiben im Streifen, der Rest verschwindet.
+func _apply_search(t: String) -> void:
+	search_text = t.strip_edges().to_lower()
+	if search_text == "":
+		_reset_search()
+		_show_tab(current_tab, false)
+		return
+	var hits := 0
+	var page_hits := {}
+	var by_name := false
+	for id: String in card_meta:
+		by_name = by_name or (card_meta[id] as String).contains(search_text)
+	var pool: Dictionary = card_meta if by_name else card_desc
+	for s: Dictionary in sections:
+		var any := false
+		for id: String in s["ids"]:
+			var m := (pool[id] as String).contains(search_text)
+			(tool_buttons[id] as Control).visible = m
+			if m:
+				any = true
+				hits += 1
+		(s["box"] as Control).visible = any
+		if any:
+			page_hits[s["cat"]] = true
+	for k: String in tab_pages:
+		(tab_pages[k] as Control).visible = page_hits.has(k)
+		(tab_buttons[k] as Button).set_pressed_no_signal(false)
+	tray_title.text = "Suche · %d Treffer" % hits if hits > 0 else "Suche · nichts gefunden"
+	strip_scroll.scroll_horizontal = 0
+	_rebuild_chips()
+	set_build_open(true)
+
+
+func _reset_search() -> void:
+	for s: Dictionary in sections:
+		(s["box"] as Control).visible = true
+		for id: String in s["ids"]:
+			(tool_buttons[id] as Control).visible = true
+
+
+## Enter in der Suche wählt den ersten Treffer.
+func _search_pick(_t: String) -> void:
+	for s: Dictionary in sections:
+		if not (s["box"] as Control).visible or not (tab_pages[s["cat"]] as Control).visible:
+			continue
+		for id: String in s["ids"]:
+			if (tool_buttons[id] as Control).visible:
+				search_edit.release_focus()
+				(tool_buttons[id] as Button).button_pressed = true
+				return
+
+
+func _search_input(e: InputEvent) -> void:
+	if e is InputEventKey and (e as InputEventKey).pressed and (e as InputEventKey).keycode == KEY_ESCAPE:
+		search_edit.text = ""
+		_apply_search("")
+		search_edit.release_focus()
+		search_edit.accept_event()
+
+
+## Strg+F: in die Suche springen.
+func focus_search() -> void:
+	set_build_open(true)
+	search_edit.grab_focus()
+	search_edit.select_all()
+
+
+func release_search() -> void:
+	if search_edit != null and search_edit.has_focus():
+		search_edit.release_focus()
+
+
+## Alt+Ziffer: Kategorie öffnen.
+func open_category(index: int) -> void:
+	if index >= 0 and index < Catalog.CATEGORIES.size():
+		_show_tab(String(Catalog.CATEGORIES[index][0]))
+
+
+## Ablage zeigen oder verbergen; das Dock bleibt immer sichtbar.
 func set_build_open(on: bool) -> void:
 	build_open = on
-	if build_pages != null:
-		build_pages.visible = on
+	if tray != null:
+		tray.visible = on
 	if tab_buttons.has("_fold"):
 		(tab_buttons["_fold"] as Button).set_pressed_no_signal(on)
+		(tab_buttons["_fold"] as Button).text = "▾" if on else "▴"
+	_queue_layout()
 
 
 func toggle_build() -> void:
@@ -686,8 +1033,212 @@ func show_map(on: bool) -> void:
 
 func set_thumbs(textures: Dictionary) -> void:
 	for id: String in textures:
+		thumb_tex[id] = textures[id]
 		if thumb_rects.has(id):
 			(thumb_rects[id] as TextureRect).texture = textures[id]
+	for key: String in Catalog.CATEGORY_ICON:
+		var icon_id: String = Catalog.CATEGORY_ICON[key]
+		if textures.has(icon_id) and cat_icons.has(key):
+			(cat_icons[key] as TextureRect).texture = textures[icon_id]
+	if textures.has("kopieren") and cat_icons.has("_kopieren"):
+		(cat_icons["_kopieren"] as TextureRect).texture = textures["kopieren"]
+	_refresh_recent()
+
+
+## Zuletzt benutzte Bauteile als kleine Bildknöpfe im Dock.
+func _note_recent(id: String) -> void:
+	if not tool_category.has(id):
+		return
+	recent.erase(id)
+	recent.push_front(id)
+	if recent.size() > RECENT_MAX:
+		recent.resize(RECENT_MAX)
+	_refresh_recent()
+
+
+func _refresh_recent() -> void:
+	if recent_box == null:
+		return
+	for c in recent_box.get_children():
+		c.queue_free()
+	for id: String in recent:
+		var b := _button("", false)
+		b.custom_minimum_size = Vector2(44, 58)
+		b.tooltip_text = "Zuletzt: " + _tooltip(id)
+		b.add_theme_stylebox_override("normal", _box(Color(0.1, 0.09, 0.065, 0.0), Color(0, 0, 0, 0), 0, 2))
+		var pic := TextureRect.new()
+		pic.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		pic.offset_left = 3
+		pic.offset_right = -3
+		pic.offset_top = 9
+		pic.offset_bottom = -9
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pic.texture = thumb_tex.get(id)
+		b.add_child(pic)
+		b.pressed.connect(_pick_recent.bind(id))
+		recent_box.add_child(b)
+	recent_sep.visible = not recent.is_empty()
+	_queue_layout()
+
+
+func _pick_recent(id: String) -> void:
+	(tool_buttons[id] as Button).button_pressed = true
+
+
+# ---------------------------------------------------------------- Wegebau-Leiste
+
+func _build_line_bar() -> void:
+	line_bar = PanelContainer.new()
+	var sb := _box(Color(0.06, 0.055, 0.04, 0.94), Color(0.38, 0.8, 0.92, 0.9), 2, 6)
+	sb.set_corner_radius_all(10)
+	line_bar.add_theme_stylebox_override("panel", sb)
+	line_bar.visible = false
+	root.add_child(line_bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	line_bar.add_child(row)
+	line_title = _label("", 15, C_TEXT)
+	line_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line_title.custom_minimum_size = Vector2(0, 34)
+	row.add_child(line_title)
+	mode_box = HBoxContainer.new()
+	mode_box.add_theme_constant_override("separation", 3)
+	row.add_child(mode_box)
+	mode_box.add_child(_dock_sep())
+	var mg := ButtonGroup.new()
+	for m: Array in [["gerade", "━  Gerade", "Gerade Stücke, baut weiter am Ende"],
+			["kurve", "◠  Kurve", "Bögen; am Wegende geht es tangential weiter"],
+			["frei", "∿  Freihand", "Beliebig viele Punkte, Ecken werden gerundet"],
+			["ersetzen", "⇄  Ersetzen", "Bestehenden Weg anklicken und in diesen Typ umbauen (Straße ↔ 4-spurig ↔ Einbahn, Rollweg ↔ breit)"]]:
+		var b := _button(String(m[1]), true)
+		b.button_group = mg
+		b.custom_minimum_size = Vector2(0, 34)
+		b.tooltip_text = String(m[2]) + " (Tab wechselt)"
+		var key: String = m[0]
+		b.pressed.connect(func() -> void: draw_mode_selected.emit(key))
+		mode_box.add_child(b)
+		mode_buttons[key] = b
+	mode_box.add_child(_dock_sep())
+	snap_button = _button("⊹  Einrasten", true)
+	snap_button.custom_minimum_size = Vector2(0, 34)
+	snap_button.button_pressed = true
+	snap_button.tooltip_text = "Winkel in 15°-Stufen und Längen auf halbe Meter einrasten (G). Shift hält es kurz frei."
+	snap_button.toggled.connect(func(on: bool) -> void: snap_toggled.emit(on))
+	mode_box.add_child(snap_button)
+	mode_box.add_child(_dock_sep())
+	step_label = _label("", 14, Color(0.62, 0.9, 1.0))
+	step_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(step_label)
+
+
+func show_draw_modes(mode: String, shown: bool, upgrade: bool = false) -> void:
+	modes_shown = shown
+	mode_box.visible = shown
+	(mode_buttons["ersetzen"] as Control).visible = upgrade
+	for key: String in mode_buttons:
+		(mode_buttons[key] as Button).set_pressed_no_signal(key == mode)
+	_update_line_bar()
+
+
+func show_snapping(on: bool) -> void:
+	snap_button.set_pressed_no_signal(on)
+
+
+## Nächster Schritt beim Wegebau ("" = keine Wegebau-Leiste).
+func set_steps(text: String) -> void:
+	step_text = text
+	step_label.text = text
+	_update_line_bar()
+
+
+func _update_line_bar() -> void:
+	var on := step_text != "" and Catalog.LINES.has(current_tool)
+	line_bar.visible = on
+	if on:
+		line_title.text = Catalog.label(current_tool) + "  ·  " + _price(current_tool)
+	_queue_layout()
+
+
+func _queue_layout() -> void:
+	if not layout_queued:
+		layout_queued = true
+		_layout_build.call_deferred()
+
+
+## Kopfzeile bei schmalen Fenstern verdichten: erst kürzere Knopftexte, dann ohne Titel.
+func _fit_top(w: float) -> void:
+	if top_row == null:
+		return
+	title_box.visible = true
+	(title_box.get_meta("sep") as Control).visible = true
+	day_label.visible = true
+	top_row.add_theme_constant_override("separation", 14)
+	for vb: Array in view_buttons:
+		(vb[0] as Button).text = String(vb[1])
+	if top_row.get_combined_minimum_size().x + 24.0 <= w:
+		return
+	for vb: Array in view_buttons:
+		(vb[0] as Button).text = String(vb[2])
+	top_row.add_theme_constant_override("separation", 8)
+	if top_row.get_combined_minimum_size().x + 24.0 <= w:
+		return
+	title_box.visible = false
+	(title_box.get_meta("sep") as Control).visible = false
+	if top_row.get_combined_minimum_size().x + 24.0 <= w:
+		return
+	day_label.visible = false
+
+
+## Dock, Ablage und Wegebau-Leiste mittig unten anordnen, nie breiter als der Bildschirm.
+func _layout_build(test_size: Vector2 = Vector2.ZERO) -> void:
+	layout_queued = false
+	if dock == null:
+		return
+	var vs := root.get_viewport_rect().size if test_size == Vector2.ZERO else test_size
+	_fit_top(vs.x)
+	var room := vs.x - 24.0
+	# Dock: zuletzt benutzte ausblenden, wenn es zu eng wird
+	recent_box.visible = true
+	dock.reset_size()
+	if dock.get_combined_minimum_size().x > room:
+		recent_box.visible = false
+		recent_sep.visible = false
+	elif not recent.is_empty():
+		recent_sep.visible = true
+	dock.reset_size()
+	dock.size = dock.get_combined_minimum_size()
+	dock.position = Vector2(roundf((vs.x - dock.size.x) * 0.5), vs.y - dock.size.y - 10.0)
+	var top := dock.position.y
+	if tray.visible:
+		var content := strip_row.get_combined_minimum_size().x
+		var max_strip := maxf(200.0, room - 2.0 * 32.0 - 28.0)
+		var w := minf(content, max_strip)
+		var scrolls := content > max_strip + 0.5
+		arrow_l.visible = scrolls
+		arrow_r.visible = scrolls
+		strip_scroll.custom_minimum_size = Vector2(maxf(w, minf(520.0, max_strip)), 134)
+		tray.reset_size()
+		tray.size = tray.get_combined_minimum_size()
+		if tray.size.x > room:
+			strip_scroll.custom_minimum_size.x -= tray.size.x - room
+			tray.reset_size()
+			tray.size = tray.get_combined_minimum_size()
+		tray.position = Vector2(roundf((vs.x - tray.size.x) * 0.5), top - tray.size.y - 6.0)
+		top = tray.position.y
+		_update_chips.call_deferred()
+	if line_bar.visible:
+		line_bar.reset_size()
+		line_bar.size = line_bar.get_combined_minimum_size()
+		if line_bar.size.x > room:
+			step_label.visible = false
+			line_bar.reset_size()
+			line_bar.size = line_bar.get_combined_minimum_size()
+		else:
+			step_label.visible = true
+		line_bar.position = Vector2(roundf((vs.x - line_bar.size.x) * 0.5), top - line_bar.size.y - 6.0)
 
 
 # ---------------------------------------------------------------- Meldungen
@@ -714,10 +1265,15 @@ func _on_tool_toggled(on: bool, id: String) -> void:
 
 ## Werkzeug von außen gesetzt (z. B. Esc): Knöpfe anpassen, ohne Signale auszulösen.
 func show_tool(id: String) -> void:
+	current_tool = id
 	for key: String in tool_buttons:
 		(tool_buttons[key] as Button).set_pressed_no_signal(key == id)
-	if tool_category.has(id):
+	if tool_category.has(id) and search_text == "":
 		_show_tab(String(tool_category[id]), false)
+		if build_open:
+			strip_scroll.ensure_control_visible.call_deferred(tool_buttons[id])
+	_note_recent(id)
+	_update_line_bar()
 
 
 func show_speed(i: int) -> void:
@@ -731,16 +1287,12 @@ func show_utility(on: bool) -> void:
 
 func show_interior(on: bool) -> void:
 	interior_button.set_pressed_no_signal(on)
+	floor_box.visible = on   # Ebenenwahl nur in der Innenansicht
+	_queue_layout()
 
 
 func show_floor(f: int) -> void:
 	floor_label.text = "UG" if f < 0 else ("EG" if f == 0 else "%d.OG" % f)
-
-
-func show_draw_modes(mode: String, shown: bool) -> void:
-	mode_box.visible = shown
-	for key: String in mode_buttons:
-		(mode_buttons[key] as Button).set_pressed_no_signal(key == mode)
 
 
 ## Bauformen des gewählten Gebäudes als Zeilen "Name  ◀ Wert ▶".

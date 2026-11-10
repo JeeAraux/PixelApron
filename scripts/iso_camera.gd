@@ -76,11 +76,12 @@ func _fwd() -> Vector3:
 
 func _process(delta: float) -> void:
 	var pan := Vector2.ZERO
-	if not enabled:
+	var typing := get_tree().root.gui_get_focus_owner() is LineEdit   # Suche im Baumenü
+	if not enabled or typing:
 		pass
 	elif Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
 		pan.y += 1.0
-	if enabled:
+	if enabled and not typing:
 		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
 			pan.y -= 1.0
 		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):

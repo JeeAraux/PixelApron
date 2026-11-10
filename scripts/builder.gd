@@ -5,7 +5,8 @@ extends Node
 signal info(title: String, body: String, state: int)  # state: 0 neutral, 1 gut, 2 Problem
 signal tool_changed(id: String)
 signal inspect_requested(p: Vector3)
-signal mode_changed(mode: String, shown: bool)
+signal mode_changed(mode: String, shown: bool, upgrade: bool)
+signal steps(text: String)   # kurzer Arbeitsschritt für die Wegebau-Leiste ("1 Startpunkt klicken")
 signal hint(text: String)   # kurzer Text am Mauszeiger (Länge, Winkel, Radius)
 
 const Catalog = preload("res://scripts/catalog.gd")
@@ -22,8 +23,8 @@ const SNAP_GROUPS := {"strasse": ["strasse", "strasse4", "einbahn"], "strasse4":
 	"rolllinie": ["rolllinie", "rollweg", "rollweg_breit"]}
 const ANGLE_STEP := 15.0
 ## Zeichenarten für Straßen, Rollwege und Vorfeld (wie in Städtebauspielen)
-const MODES := ["gerade", "kurve", "frei"]
-const MODE_NAMES := {"gerade": "Gerade", "kurve": "Kurve", "frei": "Freihand"}
+const MODES := ["gerade", "kurve", "frei", "ersetzen"]
+const MODE_NAMES := {"gerade": "Gerade", "kurve": "Kurve", "frei": "Freihand", "ersetzen": "Ersetzen"}
 const MAGNET := 4.0   # Grad: so nah rastet ein Winkel auf die nächste 15-Grad-Stufe ein
 
 var game: GameState
@@ -53,6 +54,8 @@ var ref_dir := Vector3.ZERO   # Richtung der Straße unter dem Startpunkt (für 
 var mat_tint_ok: StandardMaterial3D
 var mat_tint_bad: StandardMaterial3D
 var mat_guide: StandardMaterial3D
+var mat_upgrade: StandardMaterial3D
+var snapping := true          # Winkel und Länge einrasten (Shift kehrt es um)
 
 
 func setup(g: GameState, r: Node3D) -> void:
@@ -66,6 +69,7 @@ func setup(g: GameState, r: Node3D) -> void:
 	mat_tint_ok = _tmat(Color(0.45, 0.9, 1.0, 0.22))
 	mat_tint_bad = _tmat(Color(1.0, 0.3, 0.22, 0.5))
 	mat_guide = _tmat(Color(1.0, 1.0, 1.0, 0.55))
+	mat_upgrade = _tmat(Color(0.35, 0.85, 1.0, 0.5))
 	preview = MeshInstance3D.new()
 	preview.name = "Vorschau"
 	preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -106,19 +110,49 @@ func uses_modes() -> bool:
 	return not bool(def["straight"]) and Catalog.utility_of(tool) == "" and not Catalog.is_wall(tool)
 
 
+## Lässt sich der gewählte Weg auf bestehende Wege derselben Familie umbauen (Ersetzen)?
+func can_replace() -> bool:
+	return GameState.UPGRADE_FAMILY.has(tool)
+
+
+func replacing() -> bool:
+	return draw_mode == "ersetzen" and uses_modes() and can_replace()
+
+
 func set_mode(m: String) -> void:
-	if not (m in MODES):
+	if not (m in MODES) or (m == "ersetzen" and not can_replace()):
 		return
 	draw_mode = m
-	if points.size() > 1:
+	if m == "ersetzen":
+		points.clear()
+		start_tan = Vector3.ZERO
+		ref_dir = Vector3.ZERO
+	elif points.size() > 1:
 		points = [points[0]]
-	mode_changed.emit(draw_mode, uses_modes())
+	_clear_highlight()
+	_emit_mode()
 	_refresh()
 
 
+func _emit_mode() -> void:
+	mode_changed.emit(draw_mode, uses_modes(), can_replace())
+
+
 func cycle_mode() -> void:
-	if uses_modes():
-		set_mode(MODES[(MODES.find(draw_mode) + 1) % MODES.size()])
+	if not uses_modes():
+		return
+	var avail := MODES.duplicate()
+	if not can_replace():
+		avail.erase("ersetzen")
+	set_mode(avail[(maxi(avail.find(draw_mode), 0) + 1) % avail.size()])
+
+
+## Winkel- und Längenraster ein- oder ausschalten.
+func set_snapping(on: bool) -> void:
+	snapping = on
+	if has_hover:
+		hover = _snap(raw_hover)
+	_refresh()
 
 
 func is_drawing() -> bool:
@@ -137,7 +171,9 @@ func set_tool(id: String) -> void:
 	tool = id
 	start_tan = Vector3.ZERO
 	ref_dir = Vector3.ZERO
-	mode_changed.emit(draw_mode, uses_modes())
+	if draw_mode == "ersetzen" and not can_replace():
+		draw_mode = "gerade"
+	_emit_mode()
 	hint.emit("")
 	if Catalog.utility_of(id) != "" and not game.utility_view:
 		game.set_utility_view(true)
@@ -169,6 +205,8 @@ func on_move(p: Variant) -> void:
 	var s := _snap(raw_hover)
 	if tool == "kopieren":
 		s = raw_hover.snapped(Vector3(2, 0, 2))
+	if replacing():
+		s = raw_hover
 	if has_hover and s.is_equal_approx(hover) and not (tool in ["abriss", "spuren", "kreuzung"]):
 		return
 	hover = s
@@ -208,6 +246,9 @@ func on_click(p: Vector3) -> void:
 		else:
 			game.toast.emit(why)
 		_refresh()
+	elif replacing():
+		hover = p
+		_click_replace()
 	elif is_line_tool():
 		if not points.is_empty():
 			var last: Vector3 = points[points.size() - 1]
@@ -559,7 +600,7 @@ func _snap_line(p: Vector3) -> Vector3:
 				snap_tan = t.normalized() if t.length() > 0.01 else Vector3.ZERO
 	if snap_kind != "":
 		return Vector3(q.x, 0.0, q.z)
-	if not points.is_empty() and not Input.is_key_pressed(KEY_SHIFT):
+	if not points.is_empty() and snapping != Input.is_key_pressed(KEY_SHIFT):
 		var last: Vector3 = points[points.size() - 1]
 		if uses_modes():
 			if draw_mode == "kurve" and points.size() == 1 and start_tan != Vector3.ZERO:
@@ -579,6 +620,8 @@ func _snap_line(p: Vector3) -> Vector3:
 				ref = Vector3(last.x - pr.x, 0.0, last.z - pr.z).normalized()
 			return _snap_dir(last, ref, p)
 		return _snap_dir(last, Vector3.RIGHT, p)
+	if snapping == Input.is_key_pressed(KEY_SHIFT):
+		return Vector3(p.x, 0.0, p.z)
 	return Vector3(snappedf(p.x, 0.5), 0.0, snappedf(p.z, 0.5))
 
 
@@ -672,10 +715,14 @@ func _refresh() -> void:
 		c.queue_free()
 	if ghost != null:
 		ghost.visible = false
+	if not is_line_tool():
+		steps.emit("")
 	if tool == "":
 		info.emit("Ansehen", "Klicke auf ein Gebäude, einen Weg oder ein Flugzeug für Details. Unten wählst du ein Bauwerkzeug.", 0)
 	elif is_rect_tool():
 		_refresh_rect()
+	elif replacing():
+		_refresh_replace()
 	elif is_line_tool():
 		_refresh_line()
 	elif is_item_tool():
@@ -714,6 +761,7 @@ func _refresh_line() -> void:
 	var pts: Array = []
 	if not points.is_empty() and has_hover and points[points.size() - 1].distance_to(hover) > 0.5:
 		pts = curve_points(hover)
+	steps.emit(_step_text(def, not pts.is_empty()))
 	if points.size() == 1 and start_tan != Vector3.ZERO:
 		_guide(points[0], points[0] + start_tan * 40.0)
 	if modes and draw_mode == "kurve" and points.size() >= 2:
@@ -798,6 +846,31 @@ func _refresh_line() -> void:
 		body += "\nRechtsklick oder Enter: fertig · Shift: freier Winkel"
 	info.emit(title, body, 1 if ok else 2)
 	hint.emit(tip)
+
+
+## Nächster Arbeitsschritt beim Wegebau, kurz für die Wegebau-Leiste.
+func _step_text(def: Dictionary, previewing: bool) -> String:
+	var attach := "  · schließt an" if snap_kind != "" and previewing else ""
+	if Catalog.is_wall(tool):
+		return "1 Anfang klicken" if points.is_empty() else "2 Ende klicken"
+	if not uses_modes():
+		if points.is_empty():
+			return "1 Startpunkt klicken"
+		return ("2 Endpunkt klicken" if bool(def["straight"]) else "Weitere Punkte · Rechtsklick oder Enter: fertig") + attach
+	match draw_mode:
+		"gerade":
+			if points.is_empty():
+				return "1 Startpunkt klicken (rastet an Wegen ein)"
+			return "2 Endpunkt klicken · baut und zieht weiter · Rechtsklick: Kette beenden" + attach
+		"kurve":
+			if points.is_empty():
+				return "1 Startpunkt klicken"
+			if points.size() == 1 and start_tan == Vector3.ZERO:
+				return "2 Richtung klicken"
+			return ("3" if start_tan == Vector3.ZERO else "2") + " Endpunkt klicken · Rechtsklick: Kette beenden" + attach
+	if points.is_empty():
+		return "1 Startpunkt klicken"
+	return "Weitere Punkte klicken · Rechtsklick oder Enter: fertig" + attach
 
 
 ## Gestrichelte Hilfslinie (Richtung des angeschlossenen Weges, Kontrollpunkte).
@@ -914,6 +987,59 @@ func _refresh_demolish() -> void:
 	info.emit("Abriss", "%s abreißen\nErstattung %s" % [game.describe(target), GameState.fmt_money(cost / 2)], 2)
 
 
+## Ersetzen: Weg unter dem Zeiger, der sich in den gewählten Typ umbauen lässt (oder leer).
+func _replace_target() -> Dictionary:
+	if not has_hover:
+		return {}
+	var rec := game.pick(hover)
+	if rec.get("type", "") != "line" or not GameState.UPGRADE_FAMILY.has(String(rec["kind"])):
+		return {}
+	return rec
+
+
+func _replace_flip(rec: Dictionary) -> bool:
+	return tool == "einbahn" and String(rec["kind"]) == "einbahn" and not bool(rec.get("flip", false))
+
+
+func _refresh_replace() -> void:
+	_clear_highlight()
+	var title := "Ersetzen: " + Catalog.label(tool)
+	var rec := _replace_target()
+	if rec.is_empty():
+		info.emit(title, "Fahre über einen bestehenden Weg und klicke: Er wird an Ort und Stelle zu %s umgebaut. Kreuzungen und Anschlüsse bleiben.\nEine Einbahnstraße mit dem Einbahn-Werkzeug dreht die Richtung um." % Catalog.label(tool), 0)
+		steps.emit("Auf einen Weg klicken, um ihn umzubauen")
+		hint.emit("")
+		return
+	var flip := _replace_flip(rec)
+	var why := game.can_upgrade(rec, tool, flip)
+	target = rec
+	_highlight(rec, mat_upgrade if why == "" else mat_overlay)
+	var cost := game.upgrade_cost(rec, tool)
+	var what := "%s → %s" % [_road_name(rec), Catalog.label(tool) + (" (umgedreht)" if flip else "")]
+	var price := ("Kosten " + GameState.fmt_money(cost)) if cost > 0 else ("Erstattung " + GameState.fmt_money(-cost) if cost < 0 else "kostenlos")
+	if why == "":
+		info.emit(title, what + "\n" + price + "\nKlick: umbauen", 1)
+		hint.emit(what + " · " + price)
+		steps.emit("Klick baut um · Rechtsklick: anderes Werkzeug")
+	else:
+		info.emit(title, what + "\n" + why, 2)
+		hint.emit(why)
+		steps.emit(why)
+
+
+func _click_replace() -> void:
+	var rec := _replace_target()
+	if rec.is_empty():
+		game.toast.emit("Klicke auf eine Straße oder einen Rollweg")
+		return
+	_clear_highlight()
+	var flip := _replace_flip(rec)
+	var before := _road_name(rec)
+	var why := game.upgrade_line(rec, tool, flip)
+	game.toast.emit(why if why != "" else "%s → %s" % [before, _road_name(rec)])
+	_refresh()
+
+
 func _road_name(rec: Dictionary) -> String:
 	var kind: String = rec["kind"]
 	var name := Catalog.label(kind)
@@ -996,10 +1122,10 @@ func _overlay(n: Node, m: Material) -> void:
 		_overlay(c, m)
 
 
-func _highlight(rec: Dictionary) -> void:
+func _highlight(rec: Dictionary, mat: Material = null) -> void:
 	var node: Variant = rec["node"]
 	if is_instance_valid(node):
-		_overlay(node as Node, mat_overlay)
+		_overlay(node as Node, mat if mat != null else mat_overlay)
 
 
 func _clear_highlight() -> void:

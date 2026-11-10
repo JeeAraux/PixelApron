@@ -560,6 +560,57 @@ func run(main: Node) -> void:
 	var road_mid: Vector3 = road_s[road_s.size() / 2]
 	check(game.money < money0, "Baukosten abgezogen (%d €)" % (money0 - game.money))
 
+	# 0.14: Ersetzen wie in Städtebauspielen, Einrasten, neue Bauleiste
+	var road_rec: Dictionary = game.lines[game.lines.size() - 1]
+	b.set_tool("strasse4")
+	b.set_mode("ersetzen")
+	check(b.replacing(), "Ersetzen-Modus für die 4-spurige Straße")
+	var m_up: int = game.money
+	b.on_move(road_mid)
+	b.on_click(road_mid)
+	check(road_rec["kind"] == "strasse4" and game.money < m_up, "Ersetzen: Straße zu 4-spurig umgebaut")
+	b.set_tool("einbahn")
+	check(b.replacing(), "Ersetzen bleibt beim Einbahn-Werkzeug")
+	b.on_click(road_mid)
+	check(road_rec["kind"] == "einbahn" and not bool(road_rec.get("flip", false)), "Ersetzen: 4-spurig zu Einbahn")
+	b.on_click(road_mid)
+	check(road_rec["kind"] == "einbahn" and bool(road_rec.get("flip", false)), "Ersetzen: Einbahn umgedreht")
+	var m_down: int = game.money
+	b.set_tool("strasse")
+	b.on_click(road_mid)
+	check(road_rec["kind"] == "strasse" and game.money >= m_down, "Ersetzen: zurück auf 2-spurig, nichts bezahlt")
+	check(game.can_upgrade(road_rec, "rollweg") != "", "Straße lässt sich nicht in einen Rollweg umbauen")
+	b.set_tool("gehweg")
+	check(b.draw_mode == "gerade", "Gehweg kennt kein Ersetzen, zurück auf Gerade")
+	b.set_snapping(false)
+	b.set_tool("strasse")
+	b.on_click(Vector3(500, 0, 520))
+	b.on_move(Vector3(537.3, 0, 541.1))
+	check(absf(b.hover.x - 537.3) < 0.01, "Ohne Einrasten folgt der Punkt frei der Maus")
+	b.set_snapping(true)
+	b.on_move(Vector3(537.3, 0, 541.1))
+	check(absf(b.hover.x - 537.3) > 0.01, "Mit Einrasten springt der Punkt auf Winkel und Länge")
+	b.cancel()
+	b.set_tool("")
+	b.set_mode("frei")
+	var hud = main.hud
+	var cats: Array = load("res://scripts/catalog.gd").CATEGORIES
+	var vw := 1152.0
+	var fits := true
+	for cat: Array in cats:
+		hud._show_tab(String(cat[0]), false)
+		hud._layout_build(Vector2(vw, 648))
+		fits = fits and hud.tray.size.x <= vw + 0.5 and hud.dock.size.x <= vw + 0.5 and hud.tray.position.x >= -0.5
+	check(fits, "Bauleiste passt in jeder Kategorie auf den Bildschirm (%d px)" % int(vw))
+	hud._apply_search("gepäck")
+	var found := 0
+	for id: String in hud.card_meta:
+		if (hud.tool_buttons[id] as Control).visible:
+			found += 1
+	check(found >= 4 and found < 15, "Suche findet Gepäck-Bauteile (%d)" % found)
+	hud._apply_search("")
+	check(hud.chip_buttons.size() >= 2, "Sprungmarken der Abschnitte")
+
 	# Rollführungslinie: nur auf Belag
 	var nl0: int = game.lines.size()
 	var grass_why := String(game.check_line("rolllinie", PackedVector3Array([Vector3(300, 0, 500), Vector3(320, 0, 500), Vector3(340, 0, 500)]))["why"])
