@@ -36,7 +36,12 @@ var socks: Array = []               # Windsäcke
 var t := 0.0
 var _pave: Dictionary = {}          # Raster für "liegt auf einem anderen Belag?"
 
-static var _lamp_mat: StandardMaterial3D
+static var _lamp_mat: ShaderMaterial
+static var _halo_mat: ShaderMaterial
+var halos: Array = []               # [Position, Farbe, Größe] für die Lichthöfe
+var night_lights: Array = []        # echte Lichtquellen (Laternen, Flutlicht), nachts an
+const LAMP_SHADER = preload("res://shaders/lamp.gdshader")
+const HALO_SHADER = preload("res://shaders/halo.gdshader")
 
 
 func setup(g: GameState) -> void:
@@ -49,20 +54,29 @@ func _mark() -> void:
 	dirty = true
 
 
-static func lamp_material() -> StandardMaterial3D:
+static func lamp_material() -> ShaderMaterial:
 	if _lamp_mat == null:
-		_lamp_mat = StandardMaterial3D.new()
-		_lamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_lamp_mat.vertex_color_use_as_albedo = true
-		_lamp_mat.vertex_color_is_srgb = true
-		_lamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_lamp_mat = ShaderMaterial.new()
+		_lamp_mat.shader = LAMP_SHADER
 	return _lamp_mat
+
+
+static func halo_material() -> ShaderMaterial:
+	if _halo_mat == null:
+		_halo_mat = ShaderMaterial.new()
+		_halo_mat.shader = HALO_SHADER
+	return _halo_mat
 
 
 func _process(delta: float) -> void:
 	if dirty:
 		rebuild()
 	t += delta
+	var night: float = game.night
+	for l: Light3D in night_lights:
+		if is_instance_valid(l):
+			l.visible = night > 0.05
+			l.light_energy = float(l.get_meta("energy", 1.0)) * night
 	if wigwag.size() == 2:
 		var on := fmod(t, 1.0) < 0.5
 		(wigwag[0] as Node3D).visible = on
@@ -75,7 +89,9 @@ func _process(delta: float) -> void:
 			(flashers[i] as Node3D).visible = i == lit
 	for s: Node3D in socks:
 		if is_instance_valid(s):
-			s.rotation.y = float(s.get_meta("base", 0.0)) + sin(t * 0.37 + float(s.get_meta("seed", 0.0))) * 0.35
+			# zeigt mit dem Wind (vom Wind weg), pendelt leicht; bei wenig Wind hängt er schlaffer
+			s.rotation.y = -deg_to_rad(game.wind_dir) + sin(t * 0.37 + float(s.get_meta("seed", 0.0))) * 0.12
+			s.rotation.x = -lerpf(0.5, 0.0, clampf(game.wind_kt / 15.0, 0.0, 1.0))
 			s.rotation.z = sin(t * 2.3) * 0.04
 
 
@@ -84,7 +100,7 @@ static func taxi_names(lines: Array) -> Dictionary:
 	var out := {}
 	var n := 0
 	for i in range(lines.size()):
-		if lines[i]["kind"] == "rollweg":
+		if lines[i]["kind"] == "rollweg" or lines[i]["kind"] == "rollweg_breit":
 			var letter: String = TAXI_LETTERS[n % TAXI_LETTERS.size()]
 			out[i] = letter if n < TAXI_LETTERS.size() else letter + str(n / TAXI_LETTERS.size())
 			n += 1
@@ -98,6 +114,8 @@ func rebuild() -> void:
 	wigwag = []
 	flashers = []
 	socks = []
+	halos = []
+	night_lights = []
 	graph.build(game.lines, game.stands())
 	names = taxi_names(game.lines)
 	_index_pavement()
@@ -110,7 +128,7 @@ func rebuild() -> void:
 		var l: Dictionary = game.lines[li]
 		if l["kind"] == "piste":
 			_runway(l, k, lamps)
-		elif l["kind"] == "rollweg":
+		elif l["kind"] == "rollweg" or l["kind"] == "rollweg_breit":
 			_taxi_lights(li, l, k, lamps)
 	_holds(k, km, lamps, wa, wb)
 	_junction_signs(k)
@@ -121,6 +139,66 @@ func rebuild() -> void:
 		_add(lamps[key], "Licht", true)
 	if wa.count > 0:
 		wigwag = [_add(wa, "WarnA", true), _add(wb, "WarnB", true)]
+	_street_lights()
+	_build_halos()
+
+
+## Laternen und Flutlichtmasten: nachts echte Lichtkegel und Lichthöfe.
+func _street_lights() -> void:
+	for it: Dictionary in game.items:
+		var id: String = it["id"]
+		if id != "laterne" and id != "flutlicht":
+			continue
+		var node: Node3D = it["node"]
+		var b := node.global_transform.basis
+		var heads := [[Vector3(0, 6.7, 1.2), 15.0, 1.1, Color(1.0, 0.85, 0.6)]]
+		if id == "flutlicht":
+			heads = []
+			for sx: float in [-1.6, -0.55, 0.55, 1.6]:
+				heads.append([Vector3(sx, 24.6, 0.6), 120.0, 16.0, Color(1.0, 0.96, 0.88)])
+		for h: Array in heads:
+			var p: Vector3 = (it["pos"] as Vector3) + b * (h[0] as Vector3)
+			var sl := SpotLight3D.new()
+			sl.position = p
+			sl.basis = Basis.looking_at(Vector3(0, -1, 0.001) if id == "laterne" else (b * Vector3(0, -0.8, 0.6)).normalized(), Vector3.UP)
+			sl.spot_range = float(h[1])
+			sl.spot_angle = 62.0 if id == "laterne" else 48.0
+			sl.light_color = h[3]
+			sl.shadow_enabled = false
+			sl.visible = false
+			sl.set_meta("energy", float(h[2]))
+			add_child(sl)
+			night_lights.append(sl)
+			halos.append([p, h[3], 5.0 if id == "laterne" else 9.0])
+
+
+## Lichthöfe aller Lampen in einem Mesh: vier Ecken je Lampe am selben Punkt, der Shader spannt sie auf.
+func _build_halos() -> void:
+	var groups := {}
+	for h: Array in halos:
+		var key := snappedf(float(h[2]), 0.5)
+		if not groups.has(key):
+			groups[key] = []
+		(groups[key] as Array).append(h)
+	for key: float in groups:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for h: Array in groups[key]:
+			var p: Vector3 = h[0]
+			var c: Color = h[1]
+			for uv: Vector2 in [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 0), Vector2(1, 1), Vector2(0, 1)]:
+				st.set_color(c)
+				st.set_uv(uv)
+				st.add_vertex(p)
+		var mi := MeshInstance3D.new()
+		mi.name = "Lichthof"
+		mi.mesh = st.commit()
+		var m := halo_material().duplicate() as ShaderMaterial
+		m.set_shader_parameter("size", key)
+		mi.material_override = m
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.extra_cull_margin = 16.0
+		add_child(mi)
 
 
 func _add(k: Kit, nm: String, lit: bool) -> MeshInstance3D:
@@ -144,9 +222,11 @@ func _lamp(k: Kit, lamps: Dictionary, p: Vector3, col: Color, elevated: bool, to
 	var kl := _lk(lamps, col)
 	if elevated:
 		k.box(p + Vector3(-0.06, 0.0, -0.06), p + Vector3(0.06, 0.42, 0.06), POST)
-		kl.box(p + Vector3(-0.2, 0.42, -0.2), p + Vector3(0.2, 0.78, 0.2), col)
+		kl.cyl(p + Vector3(0, 0.42, 0), p + Vector3(0, 0.74, 0), 0.17, 0.12, col, 8)
+		halos.append([p + Vector3(0, 0.6, 0), col, 3.0])
 	else:
-		kl.box(p + Vector3(-0.28, 0.0, -0.28), p + Vector3(0.28, top + 0.05, 0.28), col)
+		kl.cyl(p, p + Vector3(0, top + 0.05, 0), 0.24, 0.24, col, 8)
+		halos.append([p + Vector3(0, top + 0.1, 0), col, 2.5])
 
 
 # ---------------------------------------------------------------- Beläge
@@ -156,7 +236,7 @@ func _index_pavement() -> void:
 	for li in range(game.lines.size()):
 		var l: Dictionary = game.lines[li]
 		var kind: String = l["kind"]
-		if not (kind in ["piste", "rollweg", "vorfeld"]):
+		if not (kind in ["piste", "rollweg", "rollweg_breit", "vorfeld"]):
 			continue
 		var hw := float(Catalog.LINES[kind]["width"]) * 0.5
 		var s: PackedVector3Array = l["samples"]
@@ -301,7 +381,7 @@ func _taxi_lights(li: int, l: Dictionary, k: Kit, lamps: Dictionary) -> void:
 	var s: PackedVector3Array = l["samples"]
 	if s.size() < 3:
 		return
-	var hw := float(Catalog.LINES["rollweg"]["width"]) * 0.5
+	var hw := float(Catalog.LINES[String(l["kind"])]["width"]) * 0.5
 	var acc_edge := 0.0
 	var acc_c := 0.0
 	var alt := 0
@@ -339,8 +419,9 @@ func _taxi_lights(li: int, l: Dictionary, k: Kit, lamps: Dictionary) -> void:
 ## Rollhalteorte: Markierung Muster A (zwei durchgezogene, zwei unterbrochene Linien), Haltebalken (rot),
 ## Pistenwarnlichter (gelb, abwechselnd), Gebotsschild (rot, Pistenbezeichnung) mit Ortsschild (Rollwegname).
 func _holds(k: Kit, km: Kit, lamps: Dictionary, wa: Kit, wb: Kit) -> void:
-	var hw := float(Catalog.LINES["rollweg"]["width"]) * 0.5
+	var hw := 9.0
 	for h: Dictionary in graph.holds:
+		hw = float(Catalog.LINES[String(game.lines[int(h["line"])]["kind"])]["width"]) * 0.5
 		var c: Vector3 = h["pos"]
 		var dir: Vector3 = h["dir"]
 		var right := dir.cross(Vector3.UP).normalized()
@@ -455,11 +536,11 @@ func _junction_signs(k: Kit) -> void:
 	var hw := float(Catalog.LINES["rollweg"]["width"]) * 0.5
 	var found := {}   # "X|Y" -> Array [Knoten X, Knoten Y]
 	for i in range(graph.pos.size()):
-		if graph.kind[i] != "rollweg":
+		if not (graph.kind[i] in ["rollweg", "rollweg_breit"]):
 			continue
 		var lx := graph.line_idx[i]
 		for nb: int in graph.adj[i]:
-			if graph.kind[nb] != "rollweg" or graph.line_idx[nb] == lx:
+			if not (graph.kind[nb] in ["rollweg", "rollweg_breit"]) or graph.line_idx[nb] == lx:
 				continue
 			var key := "%d|%d" % [lx, graph.line_idx[nb]]
 			var list: Array = found.get(key, [])
@@ -474,6 +555,7 @@ func _junction_signs(k: Kit) -> void:
 		var parts := key.split("|")
 		var lx := int(parts[0])
 		var ly := int(parts[1])
+		hw = float(Catalog.LINES[String(game.lines[lx]["kind"])]["width"]) * 0.5
 		if not names.has(lx) or not names.has(ly):
 			continue
 		var nodes_x: Array = graph.line_nodes.get(lx, [])
@@ -531,16 +613,17 @@ func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
 		var bas := node.global_transform.basis.orthonormalized()
 		var fwd := bas.z
 		var sp: Vector3 = st["pos"]
+		var hd: float = (Catalog.ITEMS[st["id"]]["size"] as Vector2).y * 0.5
 		var label := str(num)
 		stand_numbers[node.get_instance_id()] = label
 		st["number"] = label
 		# Nummer am Boden auf schwarzem Grund, lesbar beim Einrollen
-		var c := sp + bas * Vector3(-5.5, 0, -17.5)
+		var c := sp + bas * Vector3(-5.5, 0, -hd + 5.5)
 		var tw := float(PixelFont.width(label)) * 0.55 + 1.2
 		km.box(Vector3(-tw * 0.5, 0, -2.6), Vector3(tw * 0.5, 0.06, 2.6), SIGN_BLACK, Transform3D(Basis.looking_at(fwd, Vector3.UP), c))
 		PixelFont.draw_ground(km, label, c + Vector3(0, 0.07, 0), fwd, 0.55, MARK_YELLOW)
 		# Nummer auf der Andockanzeige (leuchtend)
-		var disp := sp + bas * Vector3(0, 5.55, 21.93)
+		var disp := sp + bas * Vector3(0, 5.55, hd - 1.07)
 		PixelFont.draw(_lk(lamps, AMBER), label, disp, bas * Vector3(1, 0, 0), Vector3.UP, -fwd, 0.13, AMBER)
 		# Einrolllinien
 		var sid: int = graph.stand_node.get(node.get_instance_id(), -1)
@@ -566,7 +649,7 @@ func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
 		var p1 := graph.pos[nodes[mini(bi + 1, nodes.size() - 1)]]
 		var tng := Vector3(p1.x - p0.x, 0, p1.z - p0.z).normalized()
 		var bp := graph.pos[bnode]
-		var end := sp + fwd * 12.1
+		var end := sp + fwd * (hd - 11.0)
 		var dout := (end - bp).normalized()
 		var span := bp.distance_to(end)
 		for sgn: float in [-1.0, 1.0]:

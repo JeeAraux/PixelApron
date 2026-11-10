@@ -88,8 +88,26 @@ func earn(amount: int, why: String) -> void:
 
 
 ## Spielzeit weiterlaufen lassen; um Mitternacht werden die laufenden Kosten abgebucht.
+var night := 0.0       # 0 Tag, 1 Nacht (main.gd setzt es nach der Spieluhr)
+var wind_dir := 250.0   # Wind kommt aus dieser Richtung (Grad, 0 = Norden = -z)
+var wind_kt := 9.0
+var _wind_goal := 250.0
+
+
+## Einheitsvektor in die Richtung, aus der der Wind weht.
+func wind_from() -> Vector3:
+	var a := deg_to_rad(wind_dir)
+	return Vector3(sin(a), 0.0, -cos(a))
+
+
 func advance(game_minutes: float) -> void:
 	minutes += game_minutes
+	# Wind dreht langsam; ab und zu ein neues Wetter
+	if randf() < game_minutes / 240.0:
+		_wind_goal = fposmod(_wind_goal + randf_range(-140.0, 140.0), 360.0)
+	var diff := fposmod(_wind_goal - wind_dir + 180.0, 360.0) - 180.0
+	wind_dir = fposmod(wind_dir + clampf(diff, -game_minutes * 0.8, game_minutes * 0.8), 360.0)
+	wind_kt = clampf(wind_kt + randf_range(-0.3, 0.3) * game_minutes, 3.0, 22.0)
 	var day := int(minutes / 1440.0)
 	if day != last_day:
 		var day_name: String = DAYS[last_day % 7]
@@ -260,9 +278,10 @@ const CROSS_OK := {
 	"strasse4": ["strasse", "strasse4", "einbahn", "gehweg"],
 	"einbahn": ["strasse", "strasse4", "einbahn", "gehweg"],
 	"gehweg": ["strasse", "strasse4", "einbahn", "gehweg"],
-	"rollweg": ["rollweg", "vorfeld", "piste"],
-	"vorfeld": ["rollweg", "vorfeld", "piste"],
-	"piste": ["rollweg", "vorfeld", "piste"],
+	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
+	"rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
+	"vorfeld": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
+	"piste": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
 }
 ## Kleine Deko, die ein neuer Weg einfach wegräumt
 const DECOR := ["baum", "kuebel", "laterne", "bank"]
@@ -565,8 +584,52 @@ static func touches_wall(r: Rect2, hall_r: Rect2) -> bool:
 		or r.position.y - hall_r.position.y < 0.6 or hall_r.end.y - r.end.y < 0.6
 
 
+## Nächste Außenwand einer Halle von außen gesehen: [Halle, Außennormale, Wandpunkt, Abstand] oder leer.
+func hall_side(p: Vector3) -> Array:
+	var best: Array = []
+	var bd := 8.0
+	for h: Dictionary in items:
+		if h["id"] != "halle":
+			continue
+		var r: Rect2 = h["rect"]
+		var q := Vector2(p.x, p.z)
+		if r.has_point(q):
+			continue
+		var c := Vector2(clampf(q.x, r.position.x, r.end.x), clampf(q.y, r.position.y, r.end.y))
+		var d := q.distance_to(c)
+		if d < bd:
+			bd = d
+			var n := Vector3.ZERO
+			if is_equal_approx(c.y, r.position.y) and q.y < r.position.y:
+				n = Vector3(0, 0, -1)
+			elif is_equal_approx(c.y, r.end.y) and q.y > r.end.y:
+				n = Vector3(0, 0, 1)
+			elif q.x < r.position.x:
+				n = Vector3(-1, 0, 0)
+			else:
+				n = Vector3(1, 0, 0)
+			best = [h, n, Vector3(c.x, 0, c.y), d]
+	return best
+
+
+## Drehung (0–3), bei der die lokale +Z-Achse in Richtung n zeigt.
+static func rot_for_normal(n: Vector3) -> int:
+	if n.x > 0.5:
+		return 1
+	if n.z < -0.5:
+		return 2
+	if n.x < -0.5:
+		return 3
+	return 0
+
+
 ## Leerer Text = darf gebaut werden, sonst der Grund.
 func can_place(id: String, pos: Vector3, rot: int) -> String:
+	if bool(Catalog.ITEMS[id].get("bridge", false)):
+		var hs := hall_side(pos)
+		if hs.is_empty() or float(hs[3]) > 4.5:
+			return "Direkt vor die Außenwand einer Terminalhalle setzen"
+		rot = rot_for_normal(hs[1])
 	var def: Dictionary = Catalog.ITEMS[id]
 	var on: String = def.get("on", "")
 	var r := footprint(id, pos, rot)
@@ -678,6 +741,10 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false) -> Dicti
 	if cost > money:
 		toast.emit("Nicht genug Geld")
 		return {}
+	if bool(Catalog.ITEMS[id].get("bridge", false)):
+		var hs := hall_side(pos)
+		if not hs.is_empty():
+			rot = rot_for_normal(hs[1])
 	var node := Factory.make_item(id)
 	node.position = Vector3(pos.x, 0.0, pos.z)
 	node.rotation.y = float(rot) * PI * 0.5
@@ -697,7 +764,7 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false) -> Dicti
 func stands() -> Array:
 	var out := []
 	for it: Dictionary in items:
-		if it["id"] == "stand" or it["id"] == "stand_aussen":
+		if it["id"] == "stand" or it["id"] == "stand_aussen" or it["id"] == "stand_gross":
 			out.append(it)
 	return out
 
@@ -1021,7 +1088,8 @@ func clear_all() -> void:
 # ---------------------------------------------------------------- Speichern und Laden
 
 func save_game(quiet: bool = false) -> void:
-	var data := {"version": 5, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": []}
+	var data := {"version": 6, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
+		"wind": [wind_dir, wind_kt]}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
 		var pts := []
@@ -1094,6 +1162,10 @@ func load_game() -> bool:
 	network_changed.emit()
 	money = int(data.get("money", START_MONEY))
 	minutes = float(data.get("minutes", 360.0))
+	var wnd: Array = data.get("wind", [250.0, 9.0])
+	wind_dir = float(wnd[0])
+	_wind_goal = wind_dir
+	wind_kt = float(wnd[1])
 	last_day = int(minutes / 1440.0)
 	satisfaction = float(data.get("satisfaction", 75.0))
 	money_changed.emit(money)
@@ -1107,15 +1179,20 @@ func load_starter() -> void:
 	var V := func(x: float, z: float) -> Vector3: return Vector3(x, 0.0, z)
 	# Vorfeld bis zum Terminal, dahinter der Parallelrollweg A (Abstand Pistenmitte 168 m nach ICAO,
 	# Rollhalteorte 90 m vor der Pistenmitte), an den Enden Zurollwege, dazwischen zwei Schnellabrollwege.
-	build_line("vorfeld", [V.call(-155, -56), V.call(155, -56)], true)
-	build_line("vorfeld", [V.call(-155, -92), V.call(155, -92)], true)
-	build_line("rollweg", [V.call(-880, -272), V.call(-878, -200), V.call(-866, -140), V.call(-830, -110),
-		V.call(-780, -104), V.call(780, -104), V.call(830, -110), V.call(866, -140), V.call(878, -200),
-		V.call(880, -272)], true)
-	build_line("piste", [V.call(-900, -272), V.call(900, -272)], true)
+	build_line("vorfeld", [V.call(-155, -56), V.call(215, -56)], true)
+	build_line("vorfeld", [V.call(-155, -92), V.call(215, -92)], true)
+	build_line("vorfeld", [V.call(118, -24), V.call(215, -24)], true)
+	build_line("rollweg_breit", [V.call(-1280, -272), V.call(-1278, -200), V.call(-1266, -140), V.call(-1230, -110),
+		V.call(-1180, -104), V.call(1180, -104), V.call(1230, -110), V.call(1266, -140), V.call(1278, -200),
+		V.call(1280, -272)], true)
+	build_line("piste", [V.call(-1300, -272), V.call(1300, -272)], true)
+	# Schnellabrollwege für beide Landerichtungen
 	for x: float in [140.0, 470.0]:
 		build_line("rollweg", [V.call(x, -272), V.call(x + 70, -260), V.call(x + 125, -238), V.call(x + 160, -205),
 			V.call(x + 178, -165), V.call(x + 184, -130), V.call(x + 185, -104)], true)
+	for x: float in [-160.0, -520.0]:
+		build_line("rollweg", [V.call(x, -272), V.call(x - 70, -260), V.call(x - 125, -238), V.call(x - 160, -205),
+			V.call(x - 178, -165), V.call(x - 184, -130), V.call(x - 185, -104)], true)
 	build_line("strasse", [V.call(430, 60), V.call(260, 60), V.call(170, 40), V.call(60, 30),
 		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true)
 	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true)
@@ -1127,7 +1204,12 @@ func load_starter() -> void:
 	for x: float in [-130.0, -85.0, 50.0, 95.0]:
 		build_item("stand_aussen", V.call(x, -55), 0, true)
 	build_item("bushalt", V.call(-5, -27.5), 0, true)
-	build_item("tower", V.call(190, -40), 0, true)
+	for x: float in [-22.0, 11.0]:
+		build_item("fluggastbruecke", V.call(x, -26.5), 0, true)
+	build_item("stand_gross", V.call(165, -50), 0, true)
+	for x: float in [-107.5, -62.5, 27.5, 72.5, 128.0]:
+		build_item("flutlicht", V.call(x, -29.5), 0, true)
+	build_item("tower", V.call(262, 22), 0, true)
 	build_item("hangar", V.call(-200, -48), 0, true)
 	build_item("parkhaus", V.call(-40, 62), 0, true)
 	build_item("trafo", V.call(60, 50), 0, true)
@@ -1135,7 +1217,7 @@ func load_starter() -> void:
 	build_item("heizzentrale", V.call(92, 60), 0, true)
 	build_item("feuerwache", V.call(330, -60), 0, true)
 	build_line("stromkabel", [V.call(57, 46), V.call(22, 2)], true)
-	build_line("stromkabel", [V.call(64, 46), V.call(120, 0), V.call(186, -36)], true)
+	build_line("stromkabel", [V.call(64, 46), V.call(160, 44), V.call(257, 22)], true)
 	build_line("stromkabel", [V.call(65, 52), V.call(81, 56)], true)
 	build_line("stromkabel", [V.call(55, 51), V.call(-23, 52)], true)
 	build_line("wasserrohr", [V.call(40, 16), V.call(20, 4)], true)

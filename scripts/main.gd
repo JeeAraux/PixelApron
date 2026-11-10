@@ -38,11 +38,14 @@ var hud: Hud
 var settings: Settings
 var updater: Updater
 var ui_timer := 0.0
+var day_night := true
 var speed_before_menu := 1
 
 
 func _ready() -> void:
 	randomize()
+	# globale Shader-Werte: night = 0 am Tag, 1 in der Nacht (Lampen, Fenster, Lichthöfe)
+	RenderingServer.global_shader_parameter_add(&"night", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
 	_make_view()
 	_make_world()
 	game = GameState.new()
@@ -133,7 +136,8 @@ func _make_view() -> void:
 	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(container)
 	viewport = SubViewport.new()
-	viewport.msaa_3d = Viewport.MSAA_DISABLED
+	viewport.msaa_3d = Viewport.MSAA_4X
+	viewport.use_debanding = true
 	viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 	viewport.handle_input_locally = false
 	container.add_child(viewport)
@@ -145,11 +149,27 @@ func _make_view() -> void:
 func _make_world() -> void:
 	env = Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.14, 0.16, 0.12)
+	env.background_color = Color(0.36, 0.42, 0.3)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.62, 0.66, 0.74)
-	env.ambient_light_energy = 0.55
-	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.ambient_light_color = Color(0.66, 0.70, 0.78)
+	env.ambient_light_energy = 0.62
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = 1.08
+	env.tonemap_white = 6.0
+	env.glow_enabled = true
+	env.glow_intensity = 0.7
+	env.glow_strength = 1.0
+	env.glow_bloom = 0.0
+	env.glow_hdr_threshold = 1.15
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
+	env.ssao_enabled = true
+	env.ssao_radius = 1.6
+	env.ssao_intensity = 1.4
+	env.ssao_power = 1.4
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 1.08
+	env.adjustment_contrast = 1.03
+	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	world.add_child(we)
@@ -158,6 +178,8 @@ func _make_world() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+	sun.shadow_blur = 1.2
+	sun.shadow_normal_bias = 1.2
 	sun.basis = Basis.looking_at(Vector3(0.55, -0.75, -0.35).normalized(), Vector3.UP)
 	world.add_child(sun)
 	var ground := MeshInstance3D.new()
@@ -281,7 +303,13 @@ func _apply_setting(key: String, v: Variant) -> void:
 		"schatten":
 			var q := int(v)
 			sun.shadow_enabled = q > 0
-			RenderingServer.directional_shadow_atlas_set_size(4096 if q >= 2 else 2048, true)
+			RenderingServer.directional_shadow_atlas_set_size([2048, 2048, 4096, 8192][clampi(q, 0, 3)], true)
+		"kantenglaettung":
+			viewport.msaa_3d = [Viewport.MSAA_DISABLED, Viewport.MSAA_2X, Viewport.MSAA_4X, Viewport.MSAA_8X][clampi(int(v), 0, 3)]
+		"tag_nacht":
+			day_night = bool(v)
+		"umgebungslicht":
+			env.ssao_enabled = bool(v)
 		"kamera_tempo":
 			cam_rig.pan_speed = float(v)
 		"zoom_umkehren":
@@ -305,15 +333,44 @@ func _on_tool_changed(id: String) -> void:
 	_update_grid()
 
 
+## Sonnenstand, Licht- und Himmelsfarbe nach der Spieluhr. Nachts Mondlicht, Lampen und Fenster leuchten.
+func _daylight() -> void:
+	if game.utility_view:
+		return
+	var h := fmod(game.minutes, 1440.0) / 60.0
+	if not day_night:
+		h = 13.0
+	var a := PI * (h - 5.5) / 15.0       # 5:30 Aufgang, 20:30 Untergang
+	var elev := sin(a)
+	var night := 1.0 - smoothstep(-0.14, 0.1, elev)
+	RenderingServer.global_shader_parameter_set(&"night", night)
+	game.night = night
+	var dusk := 1.0 - smoothstep(0.0, 0.45, elev)
+	if elev > -0.04:
+		var sp := Vector3(cos(a) * 0.9, maxf(elev, 0.05) * 1.3, 0.45).normalized()
+		sun.basis = Basis.looking_at(-sp, Vector3.UP)
+		sun.light_energy = 1.25 * smoothstep(-0.04, 0.2, elev)
+		sun.light_color = Color(1.0, 0.97, 0.9).lerp(Color(1.0, 0.62, 0.38), dusk * 0.85)
+	else:
+		sun.basis = Basis.looking_at(Vector3(-0.4, -0.8, -0.45).normalized(), Vector3.UP)
+		sun.light_energy = 0.22 * smoothstep(-0.04, -0.3, elev)
+		sun.light_color = Color(0.6, 0.7, 1.0)
+	env.ambient_light_color = Color(0.66, 0.70, 0.78).lerp(Color(0.34, 0.40, 0.62), night).lerp(Color(0.85, 0.68, 0.6), dusk * (1.0 - night) * 0.35)
+	env.ambient_light_energy = lerpf(0.62, 0.52, night)
+	env.background_color = Color(0.36, 0.42, 0.3).lerp(Color(0.07, 0.09, 0.14), night)
+
+
 ## Leitungsansicht: Welt abdunkeln, Leitungen leuchten (unbeleuchtetes Material).
 func _on_view_changed(on: bool) -> void:
 	hud.show_utility(on)
 	sun.light_energy = 0.35 if on else 1.15
 	env.ambient_light_energy = 0.22 if on else 0.55
+	RenderingServer.global_shader_parameter_set(&"night", 0.0)
 
 
 func _process(delta: float) -> void:
 	sun.directional_shadow_max_distance = cam_rig.shadow_range()
+	_daylight()
 	if not hud.is_menu_open():
 		builder.on_move(ground_at(get_viewport().get_mouse_position()))
 	hud.set_clock(game.clock_text())
@@ -323,7 +380,7 @@ func _process(delta: float) -> void:
 		var status := flights.check_operation()
 		if status == "" and flights.reason != "":
 			status = flights.reason
-		hud.set_flights(flights.rows(), status, flights.done, flights.hint)
+		hud.set_flights(flights.rows(), status, flights.done, flights.hint, flights.wind_text())
 		hud.set_economy(game.satisfaction, game.satisfaction_factors, game.day_income, game.upkeep_per_day())
 
 
@@ -453,6 +510,8 @@ func _demo(args: PackedStringArray) -> void:
 			shot = a.substr(7)
 		if a.begins_with("--mode="):
 			mode = a.substr(7)
+		if a.begins_with("--zeit="):
+			game.minutes = float(a.substr(7)) * 60.0
 	for i in range(2400):
 		flights.step(0.05)
 	set_process(false)
@@ -508,8 +567,8 @@ func _demo(args: PackedStringArray) -> void:
 		world.add_child(showcase)
 		var i := 0
 		for kind: String in Catalog.PLANES:
-			var pl: Node3D = Factory.make_plane(kind, Catalog.AIRLINES[i][1])
-			pl.position = base + Vector3(-22 + 44 * i, 0, 0)
+			var pl: Node3D = Factory.make_plane(kind, Catalog.AIRLINES[i % Catalog.AIRLINES.size()][1])
+			pl.position = base + Vector3(-110 + 50 * i + (12 if kind == "a330" else 0), 0, 0)
 			pl.rotation.y = deg_to_rad(-90)
 			showcase.add_child(pl)
 			i += 1
@@ -602,13 +661,14 @@ func _demo(args: PackedStringArray) -> void:
 		else:
 			_inspect(Vector3(20, 0, 5))
 			hud._show_tab("terminal")
-	elif mode == "abfertigung":
+	elif mode == "abfertigung" or mode == "bruecke":
 		var parked: Dictionary = {}
 		for i in range(4000):
 			flights.step(0.05)
 			for p: Dictionary in flights.planes:
 				if p["state"] == "abfertigung" and float(p["timer"]) < float(p["turn"]) * 0.6:
-					parked = p
+					if mode != "bruecke" or not bool(p.get("bus", true)):
+						parked = p
 			if not parked.is_empty():
 				break
 		var at: Vector3 = parked.get("pos", Vector3(-60, 0, -55))
@@ -620,6 +680,7 @@ func _demo(args: PackedStringArray) -> void:
 	hud.set_clock(game.clock_text())
 	hud.set_flights(flights.rows(), flights.check_operation(), flights.done, flights.hint)
 	hud.set_economy(game.satisfaction, game.satisfaction_factors, game.day_income, game.upkeep_per_day())
+	_daylight()
 	for i in range(120):
 		await get_tree().process_frame
 	if shot != "":

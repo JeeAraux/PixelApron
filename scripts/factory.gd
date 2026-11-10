@@ -10,7 +10,7 @@ const Kit = preload("res://scripts/mesh_kit.gd")
 const PixelFont = preload("res://scripts/pixel_font.gd")
 
 const WALL := Color(0.78, 0.75, 0.67)
-const GLASS := Color(0.17, 0.24, 0.29)
+const GLASS := Color(0.2, 0.3, 0.36, 0.6)      # Alpha 0.6: nachts erleuchtet
 const ROOF := Color(0.32, 0.32, 0.30)
 const STEEL := Color(0.36, 0.41, 0.44)
 const CONCRETE := Color(0.58, 0.57, 0.53)
@@ -133,11 +133,11 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 		sm.set_shader_parameter("num_b", nums[1])
 	mi.material_override = sm
 	# Schultern neben Rollweg und Piste (liegen unter allen anderen Belägen)
-	if kind == "rollweg" or kind == "piste":
-		var sh := 3.5 if kind == "rollweg" else 7.5
+	if kind == "rollweg" or kind == "rollweg_breit" or kind == "piste":
+		var sh := 3.5 if kind == "rollweg" else (5.0 if kind == "rollweg_breit" else 7.5)
 		var smi := MeshInstance3D.new()
 		smi.name = "Schulter"
-		smi.mesh = Spline.ribbon(samples, w + sh * 2.0, 0.018 if kind == "rollweg" else 0.016)
+		smi.mesh = Spline.ribbon(samples, w + sh * 2.0, 0.016 if kind == "piste" else 0.018)
 		smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var shm := ShaderMaterial.new()
 		shm.shader = LINE_SHADER
@@ -374,11 +374,17 @@ static func _make_item_raw(id: String) -> Node3D:
 		"baum":
 			_baum(n)
 		"stand":
-			_stand(n, false)
+			_stand(n, false, "stand")
 		"stand_aussen":
-			_stand(n, true)
+			_stand(n, true, "stand_aussen")
+		"stand_gross":
+			_stand(n, false, "stand_gross")
 		"bushalt":
 			_bus_stop(n)
+		"flutlicht":
+			_floodlight(n)
+		"fluggastbruecke":
+			_bridge_base(n)
 		"vorfelddepot":
 			_depot(n)
 		"wasseranschluss":
@@ -391,7 +397,7 @@ static func _make_item_raw(id: String) -> Node3D:
 		"laterne":
 			blk(n, Vector3(-0.1, 0, -0.1), Vector3(0.1, 7.0, 0.1), STEEL)
 			blk(n, Vector3(-0.1, 6.8, -0.1), Vector3(0.1, 7.0, 1.3), STEEL)
-			blk(n, Vector3(-0.25, 6.6, 0.9), Vector3(0.25, 6.85, 1.5), Color(0.9, 0.86, 0.66))
+			blk(n, Vector3(-0.25, 6.6, 0.9), Vector3(0.25, 6.85, 1.5), Color(0.98, 0.9, 0.66, 0.3))
 		"bank":
 			blk(n, Vector3(-1.1, 0.4, -0.3), Vector3(1.1, 0.5, 0.3), WOOD)
 			blk(n, Vector3(-1.1, 0.5, 0.2), Vector3(1.1, 0.95, 0.3), WOOD)
@@ -645,7 +651,12 @@ static func _baum(n: Node3D) -> void:
 ## Beschriftung, rote Sicherheitslinien (Flügelspitzen und Geräte-Sperrfläche), weiße Geräteabstellflächen,
 ## Unterflur-Betankung und Bodenstrom, Andockanzeige vorn. Außenposition: Busparkfläche und Fußwege.
 ## Einrolllinien und Standnummer zeichnet airfield.gd, weil sie vom Rollweg dahinter abhängen.
-static func _stand(n: Node3D, remote: bool) -> void:
+static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
+	var size: Vector2 = Catalog.ITEMS[id]["size"]
+	var code := String(Catalog.ITEMS[id].get("code", "C"))
+	var hw := size.x * 0.5
+	var hd := size.y * 0.5
+	var stop := hd - 6.0            # hier steht die Nase
 	var k := Kit.new()
 	var yellow := Color(0.88, 0.70, 0.18)
 	var red := Color(0.72, 0.18, 0.13)
@@ -653,43 +664,66 @@ static func _stand(n: Node3D, remote: bool) -> void:
 	var y := 0.05
 	var flat := func(a: Vector2, b: Vector2, c: Color) -> void:
 		k.box(Vector3(minf(a.x, b.x), 0.0, minf(a.y, b.y)), Vector3(maxf(a.x, b.x), y, maxf(a.y, b.y)), c)
-	# Mittellinie bis hinter die Haltebalken
-	flat.call(Vector2(-0.18, -23.0), Vector2(0.18, 13.9), yellow)
-	# Haltebalken: A320 (Bugrad 12,1 m), B737-800 (12,85 m), beschriftet links vom Piloten aus gesehen
-	for e: Array in [[12.1, "A320"], [12.85, "B738"]]:
-		var z: float = e[0]
+	# Haltebalken je Flugzeugmuster am Bugrad, beschriftet (abwechselnd links und rechts der Linie)
+	var max_bar := -INF
+	var side_i := 0
+	var bars := []
+	for kind: String in Catalog.PLANES:
+		var pl: Dictionary = Catalog.PLANES[kind]
+		if code == "C" and String(pl["code"]) != "C":
+			continue
+		var sp: Dictionary = Models.SPECS.get(kind, Models.SPECS["a320"])
+		var z: float = stop - float(pl["nose"]) - float(sp["nose_gear_z"])
+		var label: String = {"atr72": "AT72", "e190": "E190", "a320": "A320", "b737": "B738", "a321": "A321", "a330": "A333"}.get(kind, kind.to_upper())
+		var merged := false
+		for b: Array in bars:
+			if absf(float(b[0]) - z) < 0.35:
+				b[1] = String(b[1]) + "/" + label
+				merged = true
+		if not merged:
+			bars.append([z, label])
+	for b: Array in bars:
+		var z: float = b[0]
+		max_bar = maxf(max_bar, z)
 		flat.call(Vector2(-1.6, z - 0.15), Vector2(1.6, z + 0.15), yellow)
-		PixelFont.draw_ground(k, String(e[1]), Vector3(4.6, y + 0.01, z), Vector3(0, 0, 1), 0.16, yellow)
+		var sx := 1.0 if side_i % 2 == 0 else -1.0
+		var txt := String(b[1])
+		PixelFont.draw_ground(k, txt, Vector3(sx * (2.4 + float(PixelFont.width(txt)) * 0.08), y + 0.01, z), Vector3(0, 0, 1), 0.16, yellow)
+		side_i += 1
+	# Mittellinie bis hinter die Haltebalken
+	flat.call(Vector2(-0.18, -hd), Vector2(0.18, max_bar + 0.6), yellow)
 	# Sicherheitslinien: Standgrenzen (rot), Kopf des Stands
 	for side: float in [-1.0, 1.0]:
-		flat.call(Vector2(side * 20.0 - 0.15, -23.0), Vector2(side * 20.0 + 0.15, 23.0), red)
-	flat.call(Vector2(-20.0, 22.7), Vector2(20.0, 23.0), red)
+		flat.call(Vector2(side * hw - 0.15, -hd), Vector2(side * hw + 0.15, hd), red)
+	flat.call(Vector2(-hw, hd - 0.3), Vector2(hw, hd), red)
 	# Geräte-Sperrfläche um die Nase: rote Umrandung mit Schraffur
 	for x0: float in [-3.5, 3.0]:
-		flat.call(Vector2(x0, 13.6), Vector2(x0 + 0.5, 20.0), red)
-	flat.call(Vector2(-3.5, 19.6), Vector2(3.5, 20.0), red)
+		flat.call(Vector2(x0, stop - 3.4), Vector2(x0 + 0.5, stop + 3.0), red)
+	flat.call(Vector2(-3.5, stop + 2.6), Vector2(3.5, stop + 3.0), red)
 	for i in range(5):
-		var z := 15.3 + float(i) * 1.0
-		k.box(Vector3(-3.0, 0.0, -0.1), Vector3(3.0, y, 0.1), red, Transform3D(Basis(Vector3.UP, 0.45), Vector3(0, 0, z)))
+		var zz := stop - 1.7 + float(i) * 1.0
+		k.box(Vector3(-3.0, 0.0, -0.1), Vector3(3.0, y, 0.1), red, Transform3D(Basis(Vector3.UP, 0.45), Vector3(0, 0, zz)))
 	# Geräteabstellflächen (weiß) an den vorderen Ecken, mit "GSE" beschriftet
 	for side: float in [-1.0, 1.0]:
-		var x0 := side * 13.0
-		var x1 := side * 19.2
-		for zz: Array in [[16.0, 22.2]]:
-			flat.call(Vector2(x0, zz[0]), Vector2(x1, float(zz[0]) + 0.2), white)
-			flat.call(Vector2(x0, float(zz[1]) - 0.2), Vector2(x1, zz[1]), white)
-			flat.call(Vector2(x0, zz[0]), Vector2(x0 + side * 0.2, zz[1]), white)
-			flat.call(Vector2(x1 - side * 0.2, zz[0]), Vector2(x1, zz[1]), white)
-		PixelFont.draw_ground(k, "GSE", Vector3((x0 + x1) * 0.5, y + 0.01, 19.1), Vector3(0, 0, -1), 0.3, white)
+		var x0 := side * (hw - 7.0)
+		var x1 := side * (hw - 0.8)
+		var z0 := hd - 7.0
+		var z1 := hd - 0.8
+		flat.call(Vector2(x0, z0), Vector2(x1, z0 + 0.2), white)
+		flat.call(Vector2(x0, z1 - 0.2), Vector2(x1, z1), white)
+		flat.call(Vector2(x0, z0), Vector2(x0 + side * 0.2, z1), white)
+		flat.call(Vector2(x1 - side * 0.2, z0), Vector2(x1, z1), white)
+		PixelFont.draw_ground(k, "GSE", Vector3((x0 + x1) * 0.5, y + 0.01, (z0 + z1) * 0.5), Vector3(0, 0, -1), 0.3, white)
 	# Unterflur-Betankung an beiden Flügeln, Bodenstrom an der Nase
+	var fuel_x := 7.5 if code == "C" else 12.5
 	for side: float in [-1.0, 1.0]:
-		k.cyl(Vector3(side * 7.5, 0.0, -2.5), Vector3(side * 7.5, y + 0.02, -2.5), 0.55, 0.55, yellow, 12)
-		k.cyl(Vector3(side * 7.5, 0.0, -2.5), Vector3(side * 7.5, y + 0.04, -2.5), 0.35, 0.35, Color(0.2, 0.2, 0.21), 12)
-	k.box(Vector3(1.6, 0.0, 9.0), Vector3(2.4, y + 0.03, 9.8), Color(0.25, 0.26, 0.28))
+		k.cyl(Vector3(side * fuel_x, 0.0, -2.5), Vector3(side * fuel_x, y + 0.02, -2.5), 0.55, 0.55, yellow, 12)
+		k.cyl(Vector3(side * fuel_x, 0.0, -2.5), Vector3(side * fuel_x, y + 0.04, -2.5), 0.35, 0.35, Color(0.2, 0.2, 0.21), 12)
+	k.box(Vector3(1.6, 0.0, stop - 8.0), Vector3(2.4, y + 0.03, stop - 7.2), Color(0.25, 0.26, 0.28))
 	# Andockanzeige (VDGS) auf einem Mast am Kopf des Stands
-	k.box(Vector3(-0.15, 0.0, 22.3), Vector3(0.15, 4.6, 22.6), Color(0.36, 0.41, 0.44))
-	k.box(Vector3(-0.9, 4.6, 22.0), Vector3(0.9, 6.4, 22.7), Color(0.12, 0.12, 0.13))
-	k.box(Vector3(-0.7, 4.8, 21.95), Vector3(0.7, 6.2, 22.0), Color(0.05, 0.05, 0.06))
+	k.box(Vector3(-0.15, 0.0, hd - 0.7), Vector3(0.15, 4.6, hd - 0.4), Color(0.36, 0.41, 0.44))
+	k.box(Vector3(-0.9, 4.6, hd - 1.0), Vector3(0.9, 6.4, hd - 0.3), Color(0.12, 0.12, 0.13))
+	k.box(Vector3(-0.7, 4.8, hd - 1.05), Vector3(0.7, 6.2, hd - 1.0), Color(0.05, 0.05, 0.06))
 	if remote:
 		# Busparkfläche links vom Flugzeug (Seite der Türen L1/L2) vor dem Flügel, Fußweg zur hinteren Treppe
 		var bx0 := 8.7
@@ -711,6 +745,54 @@ static func _stand(n: Node3D, remote: bool) -> void:
 			flat.call(Vector2(2.4, dz - 1.0), Vector2(2.6, dz + 1.0), yellow)
 			flat.call(Vector2(2.4, dz - 1.0), Vector2(3.4, dz - 0.8), yellow)
 	n.add_child(k.instance("Markierung"))
+
+
+## Fluggastbrücke, fester Teil (lokal +Z zeigt vom Terminal weg): Brückenkopf an der Fassade,
+## verglaster Verbindungsgang und Rotunde auf einer Säule. Tunnel, Kabine und Fahrwerk bewegt terminal.gd.
+static func _bridge_base(n: Node3D) -> void:
+	var k := Kit.new()
+	var grey := Color(0.74, 0.75, 0.76)
+	var dark := Color(0.26, 0.27, 0.29)
+	var glass := Color(0.22, 0.32, 0.38, 0.6)
+	# Säule und Rotunde
+	k.cyl(Vector3(0, 0, 0), Vector3(0, 0.4, 0), 1.2, 1.1, CONCRETE, 16)
+	k.cyl(Vector3(0, 0.4, 0), Vector3(0, 3.0, 0), 0.75, 0.7, dark, 16)
+	k.cyl(Vector3(0, 3.0, 0), Vector3(0, 6.1, 0), 2.1, 2.1, grey, 24)
+	k.cyl(Vector3(0, 6.1, 0), Vector3(0, 6.35, 0), 2.2, 2.0, dark, 24)
+	k.cyl(Vector3(0, 4.0, 0), Vector3(0, 5.1, 0), 2.12, 2.12, glass, 24, false)
+	# Verbindungsgang zur Fassade mit Fensterband, Brückenkopf (Türrahmen) an der Wand
+	k.box(Vector3(-1.45, 3.1, -4.7), Vector3(1.45, 6.0, -1.6), grey)
+	k.box(Vector3(-1.47, 4.0, -4.6), Vector3(1.47, 5.1, -1.7), glass)
+	k.box(Vector3(-1.55, 5.95, -4.75), Vector3(1.55, 6.15, -1.55), dark)
+	k.box(Vector3(-1.9, 2.9, -4.8), Vector3(1.9, 6.4, -4.5), dark)
+	k.box(Vector3(-1.2, 3.15, -4.52), Vector3(1.2, 5.6, -4.48), Color(0.55, 0.62, 0.66, 0.6))
+	# Treppe vom Gang hinunter aufs Vorfeld (Personal), Geländer
+	for i in range(8):
+		var yy := 3.0 - float(i) * 0.375
+		k.box(Vector3(1.5, yy - 0.06, -4.0 + float(i) * 0.33), Vector3(2.4, yy, -3.67 + float(i) * 0.33), dark)
+	k.box(Vector3(2.38, 0.0, -4.0), Vector3(2.44, 3.9, -1.3), Color(0.85, 0.7, 0.15))
+	n.add_child(k.instance("Brueckenkopf"))
+
+
+## Flutlichtmast: Betonsockel, Gittermast, Plattform mit vier Scheinwerfern (leuchten nachts).
+static func _floodlight(n: Node3D) -> void:
+	var k := Kit.new()
+	var steel := Color(0.6, 0.62, 0.64)
+	k.cyl(Vector3(0, 0, 0), Vector3(0, 0.6, 0), 1.0, 0.9, CONCRETE, 12)
+	for c: Vector2 in [Vector2(-0.4, -0.4), Vector2(0.4, -0.4), Vector2(0.4, 0.4), Vector2(-0.4, 0.4)]:
+		k.box(Vector3(c.x - 0.06, 0.6, c.y - 0.06), Vector3(c.x * 0.6 + 0.06, 24.0, c.y * 0.6 + 0.06), steel)
+	var y := 1.5
+	while y < 23.5:
+		k.box(Vector3(-0.42, y, -0.42), Vector3(0.42, y + 0.06, 0.42), steel)
+		y += 2.5
+	k.box(Vector3(-2.2, 24.0, -0.6), Vector3(2.2, 24.15, 0.9), steel)
+	k.box(Vector3(-2.2, 24.15, -0.6), Vector3(2.2, 24.6, -0.55), steel)
+	for sx: float in [-1.6, -0.55, 0.55, 1.6]:
+		k.box(Vector3(sx - 0.45, 24.2, 0.1), Vector3(sx + 0.45, 25.0, 0.8), Color(0.25, 0.26, 0.28))
+		k.box(Vector3(sx - 0.38, 24.28, 0.78), Vector3(sx + 0.38, 24.92, 0.84), Color(1.0, 0.96, 0.85, 0.3))
+	k.cyl(Vector3(0, 25.0, 0), Vector3(0, 25.6, 0), 0.04, 0.04, steel, 6)
+	k.box(Vector3(-0.1, 25.6, -0.1), Vector3(0.1, 25.8, 0.1), Color(1.0, 0.15, 0.1, 0.3))
+	n.add_child(k.instance("Mast"))
 
 
 ## Vorfeld-Haltestelle: Haltebucht mit Bordstein, Wartedach mit Glaswänden, Haltestellenschild.
@@ -841,7 +923,7 @@ static func make_plane(kind: String, livery: Color) -> Node3D:
 		var fan := MeshInstance3D.new()
 		fan.name = side[0]
 		fan.mesh = Models.fan_mesh(kind)
-		fan.position = Vector3(float(side[1]) * float(s["eng_x"]), float(s["eng_y"]), float(s["eng_z"]) + 0.42)
+		fan.position = Vector3(float(side[1]) * float(s["eng_x"]), float(s["eng_y"]), float(s["eng_z"]) + (-0.15 if bool(s.get("props", false)) else 0.42))
 		n.add_child(fan)
 	var cy: float = s["cy"]
 	var r: float = s["r"]

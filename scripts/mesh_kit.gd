@@ -1,9 +1,12 @@
 extends RefCounted
-## Baukasten für detaillierte Low-Poly-Modelle: sammelt Quader, Zylinder, Drehkörper und Prismen
-## mit Farben pro Fläche in einem einzigen Mesh. Flache Normalen ergeben den kantigen Pixel-Look,
-## und ein Modell mit hunderten Teilen kostet trotzdem nur einen Draw-Call.
+## Baukasten für detaillierte Modelle: sammelt Quader, Zylinder, Drehkörper und Prismen
+## mit Farben pro Fläche in einem einzigen Mesh. Kanten bleiben scharf (flache Normalen),
+## Rundungen (Rumpf, Triebwerke, Räder, Tanks) bekommen weiche Normalen.
+## Alpha der Farbe markiert Leuchtflächen (siehe shaders/kit.gdshader): 0.6 Fenster, 0.3 Lampe.
 
-static var _material: StandardMaterial3D
+const KIT_SHADER = preload("res://shaders/kit.gdshader")
+
+static var _material: ShaderMaterial
 
 var st := SurfaceTool.new()
 var count := 0
@@ -13,14 +16,10 @@ func _init() -> void:
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
 
-static func material() -> StandardMaterial3D:
+static func material() -> ShaderMaterial:
 	if _material == null:
-		_material = StandardMaterial3D.new()
-		_material.vertex_color_use_as_albedo = true
-		_material.vertex_color_is_srgb = true
-		_material.roughness = 0.9
-		_material.metallic_specular = 0.25
-		_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_material = ShaderMaterial.new()
+		_material.shader = KIT_SHADER
 	return _material
 
 
@@ -51,6 +50,31 @@ func tri(a: Vector3, b: Vector3, c: Vector3, col: Color, center: Vector3) -> voi
 	count += 1
 
 
+## Dreieck mit eigenen Normalen je Ecke (weiche Rundung); Ausrichtung nach außen wie tri().
+func tri_n(a: Vector3, b: Vector3, c: Vector3, na: Vector3, nb: Vector3, nc: Vector3, col: Color, center: Vector3) -> void:
+	var n := (b - a).cross(c - a)
+	if n.length_squared() < 1e-12:
+		return
+	if n.dot((a + b + c) / 3.0 - center) < 0.0:
+		var t := b
+		b = c
+		c = t
+		var tn := nb
+		nb = nc
+		nc = tn
+	var t2 := b
+	b = c
+	c = t2
+	var tn2 := nb
+	nb = nc
+	nc = tn2
+	for e: Array in [[a, na], [b, nb], [c, nc]]:
+		st.set_color(col)
+		st.set_normal(e[1])
+		st.add_vertex(e[0])
+	count += 1
+
+
 ## Dreieck unverändert übernehmen (Reihenfolge und Normale wie gegeben), z. B. beim Backen.
 func tri_raw(a: Vector3, b: Vector3, c: Vector3, n: Vector3, col: Color) -> void:
 	for v: Vector3 in [a, b, c]:
@@ -63,6 +87,11 @@ func tri_raw(a: Vector3, b: Vector3, c: Vector3, n: Vector3, col: Color) -> void
 func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color, center: Vector3) -> void:
 	tri(a, b, c, col, center)
 	tri(a, c, d, col, center)
+
+
+func quad_n(a: Vector3, b: Vector3, c: Vector3, d: Vector3, na: Vector3, nb: Vector3, nc: Vector3, nd: Vector3, col: Color, center: Vector3) -> void:
+	tri_n(a, b, c, na, nb, nc, col, center)
+	tri_n(a, c, d, na, nc, nd, col, center)
 
 
 ## Achsenparalleler Quader von a nach b, optional gedreht/verschoben über xf.
@@ -81,8 +110,33 @@ func box(a: Vector3, b: Vector3, col: Color, xf: Transform3D = Transform3D.IDENT
 	quad(p[1], p[3], p[7], p[5], col, c)  # +x
 
 
-## Zylinder oder Kegelstumpf von a nach b.
-func cyl(a: Vector3, b: Vector3, r1: float, r2: float, col: Color, seg: int = 10, caps: bool = true, cap_col: Variant = null) -> void:
+## Quader mit abgerundeten senkrechten Kanten (Radius r, steps Segmente je Ecke).
+func rounded_box(a: Vector3, b: Vector3, r: float, col: Color, steps: int = 3, top_col: Variant = null) -> void:
+	var lo := Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
+	var hi := Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+	r = minf(r, minf(hi.x - lo.x, hi.z - lo.z) * 0.5)
+	var ring := []
+	var corners := [[hi.x - r, hi.z - r, 0.0], [lo.x + r, hi.z - r, PI * 0.5], [lo.x + r, lo.z + r, PI], [hi.x - r, lo.z + r, PI * 1.5]]
+	for c: Array in corners:
+		for i in range(steps + 1):
+			var ang := float(c[2]) + PI * 0.5 * float(i) / float(steps)
+			ring.append(Vector2(float(c[0]) + cos(ang) * r, float(c[1]) + sin(ang) * r))
+	var center := (lo + hi) * 0.5
+	var n := ring.size()
+	var tc: Color = top_col if top_col != null else col
+	for i in range(n):
+		var p0: Vector2 = ring[i]
+		var p1: Vector2 = ring[(i + 1) % n]
+		var n0 := Vector3(p0.x - center.x, 0, p0.y - center.z).normalized()
+		var n1 := Vector3(p1.x - center.x, 0, p1.y - center.z).normalized()
+		quad_n(Vector3(p0.x, lo.y, p0.y), Vector3(p1.x, lo.y, p1.y), Vector3(p1.x, hi.y, p1.y), Vector3(p0.x, hi.y, p0.y),
+			n0, n1, n1, n0, col, Vector3(center.x, (lo.y + hi.y) * 0.5, center.z))
+		tri(Vector3(center.x, hi.y, center.z), Vector3(p0.x, hi.y, p0.y), Vector3(p1.x, hi.y, p1.y), tc, Vector3(center.x, lo.y, center.z))
+		tri(Vector3(center.x, lo.y, center.z), Vector3(p0.x, lo.y, p0.y), Vector3(p1.x, lo.y, p1.y), col, Vector3(center.x, hi.y, center.z))
+
+
+## Zylinder oder Kegelstumpf von a nach b, Mantel weich schattiert.
+func cyl(a: Vector3, b: Vector3, r1: float, r2: float, col: Color, seg: int = 14, caps: bool = true, cap_col: Variant = null) -> void:
 	var axis := b - a
 	if axis.length() < 1e-5:
 		return
@@ -92,14 +146,17 @@ func cyl(a: Vector3, b: Vector3, r1: float, r2: float, col: Color, seg: int = 10
 	var center := (a + b) * 0.5
 	var ra := []
 	var rb := []
+	var nr := []
+	var slope := (r1 - r2) / axis.length()
 	for k in range(seg):
 		var ang := TAU * float(k) / float(seg)
 		var d := u * cos(ang) + v * sin(ang)
 		ra.append(a + d * r1)
 		rb.append(b + d * r2)
+		nr.append((d + w * slope).normalized())
 	for k in range(seg):
 		var k2 := (k + 1) % seg
-		quad(ra[k], ra[k2], rb[k2], rb[k], col, center)
+		quad_n(ra[k], ra[k2], rb[k2], rb[k], nr[k], nr[k2], nr[k2], nr[k], col, center)
 	if caps:
 		var cc: Color = cap_col if cap_col != null else col
 		for k in range(seg):
@@ -110,8 +167,30 @@ func cyl(a: Vector3, b: Vector3, r1: float, r2: float, col: Color, seg: int = 10
 				tri(b, rb[k], rb[k2], cc, center)
 
 
+## Kugel (oder Ellipsoid über scale), weich schattiert.
+func sphere(c: Vector3, r: float, col: Color, seg: int = 12, rings: int = 7, scale: Vector3 = Vector3.ONE) -> void:
+	var pts := []
+	for i in range(rings + 1):
+		var phi := PI * float(i) / float(rings)
+		var row := []
+		for k in range(seg):
+			var th := TAU * float(k) / float(seg)
+			row.append(Vector3(sin(phi) * cos(th), cos(phi), sin(phi) * sin(th)))
+		pts.append(row)
+	for i in range(rings):
+		for k in range(seg):
+			var k2 := (k + 1) % seg
+			var d0: Vector3 = pts[i][k]
+			var d1: Vector3 = pts[i][k2]
+			var d2: Vector3 = pts[i + 1][k2]
+			var d3: Vector3 = pts[i + 1][k]
+			quad_n(c + d0 * r * scale, c + d1 * r * scale, c + d2 * r * scale, c + d3 * r * scale,
+				(d0 / scale).normalized(), (d1 / scale).normalized(), (d2 / scale).normalized(), (d3 / scale).normalized(), col, c)
+
+
 ## Drehkörper entlang z. rings: Array aus [z, mitte_y, radius_x, radius_y] (optional mitte_x).
 ## col_fn(z, x, dy, ry) liefert die Farbe einer Fläche, dy = Höhe über der Mittellinie.
+## Die Haut wird weich schattiert (Normalen über die Nachbarflächen gemittelt).
 func lathe(rings: Array, seg: int, col_fn: Callable, cap_front: bool = true, cap_back: bool = true, ox: float = 0.0) -> void:
 	var pts := []
 	for r: Array in rings:
@@ -120,6 +199,29 @@ func lathe(rings: Array, seg: int, col_fn: Callable, cap_front: bool = true, cap
 			var ang := TAU * float(k) / float(seg)
 			row.append(Vector3(ox + float(r[2]) * sin(ang), float(r[1]) + float(r[3]) * cos(ang), float(r[0])))
 		pts.append(row)
+	var nrm := []
+	for i in range(rings.size()):
+		var row := []
+		for k in range(seg):
+			row.append(Vector3.ZERO)
+		nrm.append(row)
+	for i in range(rings.size() - 1):
+		var r0: Array = rings[i]
+		var r1: Array = rings[i + 1]
+		var c := Vector3(ox, (float(r0[1]) + float(r1[1])) * 0.5, (float(r0[0]) + float(r1[0])) * 0.5)
+		for k in range(seg):
+			var k2 := (k + 1) % seg
+			var a: Vector3 = pts[i][k]
+			var b: Vector3 = pts[i][k2]
+			var d: Vector3 = pts[i + 1][k]
+			var fn := (b - a).cross(d - a)
+			if fn.length_squared() < 1e-12:
+				fn = (a + b) * 0.5 - c
+			if fn.dot((a + b + d) / 3.0 - c) < 0.0:
+				fn = -fn
+			fn = fn.normalized()
+			for e: Array in [[i, k], [i, k2], [i + 1, k], [i + 1, k2]]:
+				nrm[e[0]][e[1]] += fn
 	for i in range(rings.size() - 1):
 		var r0: Array = rings[i]
 		var r1: Array = rings[i + 1]
@@ -132,7 +234,8 @@ func lathe(rings: Array, seg: int, col_fn: Callable, cap_front: bool = true, cap
 			var d: Vector3 = pts[i + 1][k]
 			var m := (a + b + cc + d) * 0.25
 			var col: Color = col_fn.call(m.z, m.x - ox, m.y - c.y, (float(r0[3]) + float(r1[3])) * 0.5)
-			quad(a, b, cc, d, col, c)
+			quad_n(a, b, cc, d, (nrm[i][k] as Vector3).normalized(), (nrm[i][k2] as Vector3).normalized(),
+				(nrm[i + 1][k2] as Vector3).normalized(), (nrm[i + 1][k] as Vector3).normalized(), col, c)
 	for e: Array in [[0, cap_front], [rings.size() - 1, cap_back]]:
 		if not bool(e[1]):
 			continue

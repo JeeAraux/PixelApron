@@ -1,9 +1,9 @@
 // Wiese mit Pixel-Struktur und gemähten Streifen; zeigt beim Bauen ein Raster.
 shader_type spatial;
 
-uniform vec3 c_dark : source_color = vec3(0.20, 0.22, 0.12);
-uniform vec3 c_mid : source_color = vec3(0.25, 0.27, 0.14);
-uniform vec3 c_light : source_color = vec3(0.30, 0.32, 0.17);
+uniform vec3 c_dark : source_color = vec3(0.29, 0.39, 0.20);
+uniform vec3 c_mid : source_color = vec3(0.36, 0.47, 0.23);
+uniform vec3 c_light : source_color = vec3(0.44, 0.55, 0.27);
 uniform float grid = 0.0;
 uniform float bound = 3000.0;   // halbe Kantenlänge des Spielfelds
 
@@ -40,6 +40,17 @@ void fragment() {
 	} else if (h < 0.05) {
 		col *= 0.9;
 	}
+	// feine Halme und vereinzelt Blüten (weiß, gelb, violett) in Wiesenflecken
+	float fine = hash(floor(wpos.xz * 3.0));
+	col *= 0.94 + 0.1 * fine;
+	float meadow = vnoise(wpos.xz / 40.0 + 13.0);
+	if (meadow > 0.62 && fine > 0.985) {
+		float kind = hash(floor(wpos.xz * 3.0) + 7.0);
+		col = kind < 0.4 ? vec3(0.95, 0.94, 0.86) : (kind < 0.75 ? vec3(0.95, 0.82, 0.25) : vec3(0.66, 0.5, 0.85));
+	}
+	// Wolkenschatten ziehen langsam über die Wiese
+	float cloud = vnoise(wpos.xz / 260.0 + vec2(TIME * 0.012, TIME * 0.006)) * 0.65 + vnoise(wpos.xz / 90.0 + vec2(TIME * 0.02, 0.0)) * 0.35;
+	col *= 1.0 - smoothstep(0.58, 0.75, cloud) * 0.16;
 	if (grid > 0.5) {
 		vec2 fw = fwidth(wpos.xz);
 		float cell_px = 8.0 / max(max(fw.x, fw.y), 0.0001);

@@ -17,9 +17,12 @@ const LINES := {
 	"gehweg": {"name": "Gehweg", "width": 3.0, "cost_m": 90, "min_r": 2.0, "min_len": 2.0,
 		"color": Color(0.55, 0.53, 0.48), "mark": 4, "y": 0.07, "straight": false, "utility": "",
 		"desc": "Gepflasterter Fußweg."},
-	"rollweg": {"name": "Rollweg", "width": 18.0, "cost_m": 1100, "min_r": 30.0, "min_len": 10.0,
+	"rollweg": {"name": "Rollweg", "width": 18.0, "cost_m": 1100, "min_r": 30.0, "min_len": 10.0, "code": "C",
 		"color": Color(0.2, 0.2, 0.19), "mark": 2, "y": 0.04, "straight": false, "utility": "",
-		"desc": "Verbindet Piste und Vorfeld. Mindestradius 30 m."},
+		"desc": "Verbindet Piste und Vorfeld. ICAO Code C: 18 m breit, für Flugzeuge bis 36 m Spannweite (ATR, Embraer, A320, 737). Mindestradius 30 m."},
+	"rollweg_breit": {"name": "Rollweg breit", "width": 25.0, "cost_m": 1600, "min_r": 45.0, "min_len": 10.0, "code": "E",
+		"color": Color(0.2, 0.2, 0.19), "mark": 2, "y": 0.041, "straight": false, "utility": "",
+		"desc": "ICAO Code E: 25 m breit, auch für Großraumflugzeuge (A330). Mindestradius 45 m."},
 	"vorfeld": {"name": "Vorfeld", "width": 60.0, "cost_m": 2600, "min_r": 25.0, "min_len": 10.0,
 		"color": Color(0.47, 0.46, 0.42), "mark": 5, "y": 0.03, "straight": false, "utility": "",
 		"desc": "Betonfläche für Stände und Abfertigung, 60 m breit."},
@@ -53,8 +56,15 @@ const ITEMS := {
 		"desc": "Hülle des Terminals: zwei Ecken klicken. Innen baust du Eingang, Check-in, Kontrolle, Gates und mehr. Braucht Strom, für Heizkörper Wärme, für WCs Wasser."},
 	"stand": {"name": "Stand mit Brücke", "short": "Kontaktstand", "size": Vector2(40, 46), "h": 0.2, "cost": 60000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Abstellposition am Terminal: Die Fluggastbrücke des nächsten Gates dockt an (Reichweite 36 m). Nase zeigt zum Terminal. Muss auf dem Vorfeld liegen."},
+	"stand_gross": {"name": "Großraum-Stand", "size": Vector2(66, 74), "h": 0.2, "cost": 95000, "grid": 1.0, "on": "vorfeld", "code": "E",
+		"desc": "Position für Großraumflugzeuge (A330, Code E), passt auch für alle kleineren. Mit Brücke, wenn eine in Reichweite ist, sonst Bus und Treppe. Braucht breite Rollwege."},
 	"stand_aussen": {"name": "Außenposition", "size": Vector2(40, 46), "h": 0.2, "cost": 45000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Abstellposition ohne Brücke: Treppenwagen docken an, Vorfeldbusse bringen die Passagiere vom Bus-Gate. Braucht ein Bus-Gate und am besten eine Vorfeld-Haltestelle."},
+	"fluggastbruecke": {"name": "Fluggastbrücke", "short": "Brücke", "size": Vector2(4, 4), "h": 6.5, "cost": 260000, "grid": 1.0,
+		"bridge": true,
+		"desc": "Direkt vor die Außenwand eines Terminals setzen, gegenüber einem Gate. Der Teleskoptunnel fährt bis 38 m weit an Tür L1 des Flugzeugs."},
+	"flutlicht": {"name": "Flutlichtmast", "size": Vector2(2, 2), "h": 25.0, "cost": 30000, "grid": 1.0,
+		"desc": "25 m hoher Mast mit vier Scheinwerfern. Leuchtet nachts das Vorfeld aus."},
 	"bushalt": {"name": "Vorfeld-Haltestelle", "short": "Bushaltestelle", "size": Vector2(28, 7), "h": 3.4, "cost": 35000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Haltebucht mit Dach für die Vorfeldbusse, nah am Bus-Gate. Hier steigen die Passagiere der Außenpositionen ein und aus."},
 	"vorfelddepot": {"name": "Vorfelddepot", "size": Vector2(26, 16), "h": 7.0, "cost": 380000, "grid": 2.0,
@@ -130,8 +140,8 @@ const ITEMS := {
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["strasse", "strasse4", "einbahn", "spuren", "kreuzung", "gehweg", "rollweg", "vorfeld", "piste"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "bushalt", "tower", "vorfelddepot", "hangar", "feuerwache"]],
+	["wege", "Wege", ["strasse", "strasse4", "einbahn", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "piste"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "tower", "vorfelddepot", "hangar", "feuerwache"]],
 	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "gate", "busgate", "gepaeckband"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst"]],
 	["versorgung", "Versorgung", ["stromkabel", "wasserrohr", "heizrohr", "trafo", "wasseranschluss", "heizzentrale"]],
@@ -144,14 +154,31 @@ const UTILITIES := {"strom": ["Strom", "kW"], "wasser": ["Wasser", "m³/h"], "wa
 const HALL_POWER_M2 := 0.03
 
 ## Flugzeugtypen: Pistenlänge, Sitzplätze, Abfertigungszeit in Spielminuten, Landeentgelt.
+## code: ICAO-Code nach Spannweite (C bis 36 m, E bis 65 m) – bestimmt Stand und Rollweg.
+## range: Kurz-, Mittel- oder Langstrecke (für die Ziele).
 const PLANES := {
-	"a320": {"name": "Airbus A320", "min_rwy": 1700.0, "pax": 180, "turn": 40.0, "fee": 2400, "vapp": 70.0, "vr": 72.0, "nose": 18.8},
-	"b737": {"name": "Boeing 737-800", "min_rwy": 1700.0, "pax": 189, "turn": 42.0, "fee": 2500, "vapp": 72.0, "vr": 74.0, "nose": 19.75},
+	"atr72": {"name": "ATR 72-600", "min_rwy": 1200.0, "pax": 70, "turn": 25.0, "fee": 900, "vapp": 57.0, "vr": 55.0, "nose": 13.6,
+		"code": "C", "span": 27.0, "range": "kurz"},
+	"e190": {"name": "Embraer 190", "min_rwy": 1500.0, "pax": 100, "turn": 30.0, "fee": 1500, "vapp": 64.0, "vr": 66.0, "nose": 18.1,
+		"code": "C", "span": 28.7, "range": "kurz"},
+	"a320": {"name": "Airbus A320", "min_rwy": 1700.0, "pax": 180, "turn": 40.0, "fee": 2400, "vapp": 70.0, "vr": 72.0, "nose": 18.8,
+		"code": "C", "span": 35.8, "range": "mittel"},
+	"b737": {"name": "Boeing 737-800", "min_rwy": 1700.0, "pax": 189, "turn": 42.0, "fee": 2500, "vapp": 72.0, "vr": 74.0, "nose": 19.75,
+		"code": "C", "span": 35.8, "range": "mittel"},
+	"a321": {"name": "Airbus A321neo", "min_rwy": 2000.0, "pax": 220, "turn": 45.0, "fee": 2900, "vapp": 72.0, "vr": 75.0, "nose": 22.25,
+		"code": "C", "span": 35.8, "range": "mittel"},
+	"a330": {"name": "Airbus A330-300", "min_rwy": 2500.0, "pax": 290, "turn": 60.0, "fee": 5200, "vapp": 72.0, "vr": 78.0, "nose": 31.85,
+		"code": "E", "span": 60.3, "range": "lang"},
 }
 ## Ausgedachte Airlines mit Hausfarbe
 const AIRLINES := [["IF", Color(0.62, 0.22, 0.18)], ["DJ", Color(0.18, 0.30, 0.52)], ["BW", Color(0.16, 0.42, 0.40)],
 	["WZ", Color(0.85, 0.55, 0.12)], ["NX", Color(0.35, 0.22, 0.48)]]
-const DESTINATIONS := ["Hamburg", "Berlin", "Palma", "Wien", "Zürich", "London", "Antalya", "Rom", "Paris", "Amsterdam"]
+## Ziele: [Name, Schengen?, Reichweite]
+const DESTINATIONS := [["Hamburg", true, "kurz"], ["Berlin", true, "kurz"], ["Sylt", true, "kurz"], ["Kopenhagen", true, "kurz"],
+	["Palma", true, "mittel"], ["Wien", true, "mittel"], ["Zürich", true, "mittel"], ["Rom", true, "mittel"], ["Paris", true, "mittel"],
+	["Amsterdam", true, "mittel"], ["Lissabon", true, "mittel"], ["London", false, "mittel"], ["Antalya", false, "mittel"],
+	["Istanbul", false, "mittel"], ["Dublin", false, "mittel"], ["New York", false, "lang"], ["Dubai", false, "lang"],
+	["Toronto", false, "lang"], ["Singapur", false, "lang"]]
 const TICKET_FEE := 14
 ## Laufende Kosten pro Spieltag als Anteil der Baukosten.
 const UPKEEP_ITEMS := 0.002

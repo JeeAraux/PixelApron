@@ -307,8 +307,10 @@ func _build_flights() -> void:
 	board.add_child(flight_rows)
 
 
-func set_flights(rows: Array, status: String, done: int, hint: String = "") -> void:
+func set_flights(rows: Array, status: String, done: int, hint: String = "", wind: String = "") -> void:
 	flight_done.text = "Abgefertigt: %d" % done
+	if wind != "":
+		hint = wind + ("\n" + hint if hint != "" else "")
 	if status == "":
 		flight_status.text = "Flugbetrieb läuft" + ("\n" + hint if hint != "" else "")
 		flight_status.add_theme_color_override("font_color", C_OK if hint == "" else Color(0.94, 0.76, 0.31))

@@ -24,6 +24,7 @@ var stand_node: Dictionary = {}      # Instanz-ID des Stand-Knotens -> Graphknot
 var lead_of: Dictionary = {}         # Standknoten -> Zufahrtsknoten
 var stand_of_lead: Dictionary = {}   # Zufahrtsknoten -> Standknoten
 var stand_fwd: Dictionary = {}       # Standknoten -> Blickrichtung des geparkten Flugzeugs
+var stand_code: Dictionary = {}      # Standknoten -> "C" oder "E" (größtes Flugzeug)
 var near: Array = []                 # je Knoten: Knoten im Umkreis von NEAR m (für Reservierungen)
 var zone := PackedByteArray()        # 1 = im Pistenschutzbereich
 var in_stand := PackedByteArray()    # 1 = liegt auf einer Standfläche
@@ -42,6 +43,7 @@ func build(lines: Array, stands: Array) -> void:
 	lead_of = {}
 	stand_of_lead = {}
 	stand_fwd = {}
+	stand_code = {}
 	runways = []
 	holds = []
 	for l: Dictionary in lines:
@@ -51,7 +53,7 @@ func build(lines: Array, stands: Array) -> void:
 	for li in range(lines.size()):
 		var l: Dictionary = lines[li]
 		var k: String = l["kind"]
-		if not (k in ["piste", "rollweg", "vorfeld"]):
+		if not (k in ["piste", "rollweg", "rollweg_breit", "vorfeld"]):
 			continue
 		var s: PackedVector3Array = l["samples"]
 		var ids := []
@@ -65,7 +67,7 @@ func build(lines: Array, stands: Array) -> void:
 				break
 			i = mini(i + STEP, s.size() - 1)
 		line_nodes[li] = ids
-		if k == "rollweg":
+		if k == "rollweg" or k == "rollweg_breit":
 			_find_holds(s, li)
 	_cross_links()
 	# Standflächen sperren
@@ -88,8 +90,10 @@ func build(lines: Array, stands: Array) -> void:
 		fwd.y = 0.0
 		fwd = fwd.normalized()
 		var p: Vector3 = st["pos"]
+		var depth: float = (Catalog.ITEMS[st["id"]]["size"] as Vector2).y
 		var sid := _add(p, "stand", -1)
-		var lid := _add(p - fwd * LEAD_BACK, "zufahrt", -1)
+		var lid := _add(p - fwd * (depth * 0.5 + 1.0), "zufahrt", -1)
+		stand_code[sid] = String(Catalog.ITEMS[st["id"]].get("code", "C"))
 		in_stand.append(0)
 		in_stand.append(0)
 		_link(sid, lid)
@@ -110,12 +114,12 @@ func _lead_targets(lp: Vector3, fwd: Vector3) -> Array:
 	var roll := []
 	var apron := []
 	for i in range(pos.size()):
-		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "vorfeld"]):
+		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld"]):
 			continue
 		var d := pos[i].distance_to(lp)
 		if d > 42.0 or (pos[i] - lp).dot(fwd) > 4.0:
 			continue
-		if kind[i] == "rollweg":
+		if kind[i] == "rollweg" or kind[i] == "rollweg_breit":
 			roll.append([d, i])
 		else:
 			apron.append([d, i])
@@ -254,7 +258,7 @@ func nearest_taxi(p: Vector3, max_d: float) -> int:
 	var best := -1
 	var bd := max_d
 	for i in range(pos.size()):
-		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "vorfeld"]):
+		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld"]):
 			continue
 		var d := pos[i].distance_to(p)
 		if d < bd:
@@ -266,14 +270,15 @@ func nearest_taxi(p: Vector3, max_d: float) -> int:
 ## Kürzester Weg von a nach b als Knotenliste (leer, wenn es keinen gibt).
 ## blocked: gemiedene Knoten (z. B. von anderen reserviert). Stände, Zufahrten und Standflächen
 ## nur als Start oder Ziel. heading: Fahrtrichtung am Start (kein Wenden).
-func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.ZERO) -> Array:
-	var out := _search(a, b, blocked, heading, true)
+## wide = Großraumflugzeug (Code E): schmale Rollwege (Code C) sind gesperrt.
+func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.ZERO, wide: bool = false) -> Array:
+	var out := _search(a, b, blocked, heading, true, wide)
 	if out.is_empty():
-		out = _search(a, b, blocked, heading, false)
+		out = _search(a, b, blocked, heading, false, wide)
 	return out
 
 
-func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bool) -> Array:
+func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bool, wide: bool) -> Array:
 	if a < 0 or b < 0:
 		return []
 	var allow := {a: true, b: true}
@@ -313,6 +318,8 @@ func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, no_uturn: bo
 			if not allow.has(nb):
 				if kind[nb] == "stand" or kind[nb] == "zufahrt" or in_stand[nb] == 1 or blocked.has(nb):
 					continue
+			if wide and kind[nb] == "rollweg":
+				continue
 			var step := pos[nb] - pos[cur]
 			if no_uturn and din != Vector3.ZERO and step.length() > 0.01 and din.dot(step.normalized()) < MAX_TURN_DOT:
 				continue

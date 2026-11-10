@@ -1,0 +1,42 @@
+// Detailmodelle aus dem Baukasten: Vertexfarben (sRGB), weiche oder flache Normalen.
+// Alpha der Vertexfarbe markiert Leuchtflächen: 0.6 = Fenster (nachts warm erleuchtet),
+// 0.3 = Lampe (nachts hell), 1.0 = normale Oberfläche.
+shader_type spatial;
+render_mode cull_disabled;
+
+global uniform float night;
+
+varying vec3 wpos;
+
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+vec3 to_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+
+void fragment() {
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+	vec3 base = COLOR.rgb;   // Kompatibilitäts-Renderer rechnet im sRGB-Raum
+#else
+	vec3 base = to_linear(COLOR.rgb);
+#endif
+	ALBEDO = base;
+	ROUGHNESS = 0.82;
+	SPECULAR = 0.3;
+	if (COLOR.a < 0.45) {
+		// Lampe: nachts hell leuchtend
+		EMISSION = base * night * 6.0 + base * 0.15;
+	} else if (COLOR.a < 0.95) {
+		// Fenster: nachts zu gut zwei Dritteln warm erleuchtet, tagsüber leicht spiegelnd
+		float on = step(0.3, hash(floor(wpos.xz * 0.6) + floor(wpos.y * 0.4)));
+		EMISSION = vec3(1.0, 0.78, 0.5) * night * on * 1.4;
+		ROUGHNESS = 0.25;
+		SPECULAR = 0.6;
+	}
+}

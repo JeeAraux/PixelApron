@@ -6,7 +6,10 @@ const PATH := "user://einstellungen.cfg"
 ## Schlüssel, Standardwert, Anzeigename, Art (bool, choice, slider), Optionen
 const DEFS := [
 	["vollbild", false, "Vollbild", "bool", []],
-	["schatten", 2, "Schatten", "choice", ["Aus", "Normal", "Hoch"]],
+	["schatten", 3, "Schatten", "choice", ["Aus", "Normal", "Hoch", "Sehr hoch"]],
+	["kantenglaettung", 2, "Kantenglättung", "choice", ["Aus", "2×", "4×", "8×"]],
+	["tag_nacht", true, "Tag und Nacht", "bool", []],
+	["umgebungslicht", true, "Umgebungsverdeckung (weiche Schatten in Ecken)", "bool", []],
 	["kamera_tempo", 1.0, "Kamera-Tempo", "slider", [0.4, 2.5]],
 	["zoom_umkehren", false, "Mausrad-Zoom umkehren", "bool", []],
 	["kantenscrollen", false, "Am Bildrand scrollen", "bool", []],

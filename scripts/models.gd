@@ -9,8 +9,9 @@ const WHITE := Color(0.93, 0.93, 0.91)
 const BELLY := Color(0.79, 0.80, 0.81)
 const WING := Color(0.74, 0.75, 0.76)
 const WING_DARK := Color(0.58, 0.59, 0.61)
-const GLASS := Color(0.09, 0.12, 0.16)
-const WIN := Color(0.15, 0.18, 0.23)
+const GLASS := Color(0.09, 0.12, 0.16, 0.6)
+const WIN := Color(0.15, 0.18, 0.23, 0.6)
+const LAMP := Color(0.98, 0.95, 0.8, 0.3)
 const TYRE := Color(0.07, 0.07, 0.08)
 const METAL := Color(0.62, 0.63, 0.65)
 const DARK_METAL := Color(0.30, 0.31, 0.33)
@@ -24,7 +25,7 @@ static var _cache: Dictionary = {}
 ## Bauweise der Flugzeuge. z vorne negativ. Werte nach A320ceo und 737-800.
 const SPECS := {
 	"a320": {
-		"len": 37.6, "r": 1.98, "cy": 3.35, "nose_len": 5.2, "nose_drop": 0.32, "nose_pow": 2.2,
+		"len": 37.6, "r": 1.98, "cy": 3.35, "nose_len": 5.6, "nose_tip": 0.26,
 		"tail_start": 6.4, "tail_r": 0.40, "tail_drop": 0.35,
 		"wing_z": -4.6, "wing_c": 6.4, "kink_c": 3.9, "tip_x": 16.9, "tip_c": 1.6, "sweep": 27.0, "dihedral": 5.0, "wing_y": 2.05,
 		"winglet": [2.3, 0.25, 1.2, 0.55],
@@ -34,8 +35,19 @@ const SPECS := {
 		"nose_gear_z": -13.9, "main_gear_z": 1.3, "main_gear_x": 3.8, "main_wheel_r": 0.58, "nose_wheel_r": 0.36,
 		"doors": [-15.2, 12.7], "exits": [-1.5, -0.6], "win_from": -13.6, "win_to": 11.3, "win_dy": 0.52,
 	},
+	"a321": {
+		"len": 44.5, "r": 1.98, "cy": 3.35, "nose_len": 5.6, "nose_tip": 0.26,
+		"tail_start": 9.85, "tail_r": 0.40, "tail_drop": 0.35,
+		"wing_z": -5.25, "wing_c": 6.6, "kink_c": 4.0, "tip_x": 17.0, "tip_c": 1.6, "sweep": 27.0, "dihedral": 5.0, "wing_y": 2.05,
+		"winglet": [2.4, 0.25, 1.2, 0.55],
+		"eng_x": 5.75, "eng_y": 1.62, "eng_r": 1.1, "eng_flat": 1.0, "eng_z": -8.1, "eng_len": 4.4,
+		"stab_z": 17.85, "stab_c": 3.6, "stab_span": 6.3, "stab_y": 4.5, "stab_sweep": 32.0,
+		"fin_z": 14.45, "fin_c": 6.4, "fin_h": 6.4, "fin_sweep": 35.0, "fin_tip_c": 2.3, "dorsal": false,
+		"nose_gear_z": -17.3, "main_gear_z": 0.7, "main_gear_x": 3.8, "main_wheel_r": 0.6, "nose_wheel_r": 0.36,
+		"doors": [-18.6, 16.1], "exits": [-7.0, -0.6, 8.6], "win_from": -17.0, "win_to": 14.8, "win_dy": 0.52,
+	},
 	"b737": {
-		"len": 39.5, "r": 1.88, "cy": 3.0, "nose_len": 6.4, "nose_drop": 0.58, "nose_pow": 3.0,
+		"len": 39.5, "r": 1.88, "cy": 3.0, "nose_len": 6.6, "nose_tip": 0.36,
 		"tail_start": 8.4, "tail_r": 0.20, "tail_drop": 0.55,
 		"wing_z": -4.3, "wing_c": 7.2, "kink_c": 4.2, "tip_x": 17.0, "tip_c": 1.5, "sweep": 25.0, "dihedral": 6.0, "wing_y": 1.75,
 		"winglet": [2.5, 0.6, 1.5, 0.45],
@@ -44,6 +56,41 @@ const SPECS := {
 		"fin_z": 12.2, "fin_c": 6.6, "fin_h": 7.4, "fin_sweep": 35.0, "fin_tip_c": 2.0, "dorsal": true,
 		"nose_gear_z": -15.6, "main_gear_z": 1.8, "main_gear_x": 2.86, "main_wheel_r": 0.56, "nose_wheel_r": 0.34,
 		"doors": [-16.2, 14.6], "exits": [-0.3, 0.6], "win_from": -14.6, "win_to": 13.2, "win_dy": 0.48,
+	},
+	"e190": {
+		"len": 36.2, "r": 1.5, "cy": 2.75, "nose_len": 4.8, "nose_tip": 0.3,
+		"tail_start": 7.0, "tail_r": 0.30, "tail_drop": 0.3,
+		"wing_z": -3.6, "wing_c": 5.4, "kink_c": 3.2, "tip_x": 14.3, "tip_c": 1.2, "sweep": 25.0, "dihedral": 5.0, "wing_y": 1.5,
+		"winglet": [1.6, 0.2, 0.9, 0.45],
+		"eng_x": 4.9, "eng_y": 1.12, "eng_r": 0.84, "eng_flat": 1.0, "eng_z": -6.3, "eng_len": 3.6,
+		"stab_z": 14.3, "stab_c": 2.8, "stab_span": 5.0, "stab_y": 3.6, "stab_sweep": 30.0,
+		"fin_z": 10.6, "fin_c": 5.4, "fin_h": 5.8, "fin_sweep": 38.0, "fin_tip_c": 2.0, "dorsal": true,
+		"nose_gear_z": -13.6, "main_gear_z": 1.2, "main_gear_x": 2.9, "main_wheel_r": 0.5, "nose_wheel_r": 0.3,
+		"doors": [-14.9, 13.2], "exits": [-1.0], "win_from": -13.3, "win_to": 11.8, "win_dy": 0.38,
+	},
+	"atr72": {
+		"len": 27.2, "r": 1.4, "cy": 2.35, "nose_len": 3.9, "nose_tip": 0.32,
+		"tail_start": 4.8, "tail_r": 0.26, "tail_drop": 0.55,
+		"high": true, "root_f": 0.22,
+		"wing_z": -1.9, "wing_c": 2.6, "kink_c": 2.35, "tip_x": 13.5, "tip_c": 1.3, "sweep": 2.0, "dihedral": -1.0, "wing_y": 3.68,
+		"winglet": [0.0, 0.0, 0.0, 0.0],
+		"props": true, "prop_r": 1.95,
+		"eng_x": 4.1, "eng_y": 3.05, "eng_r": 0.62, "eng_flat": 1.35, "eng_z": -4.4, "eng_len": 6.2,
+		"stab_z": 11.4, "stab_c": 2.0, "stab_span": 3.9, "stab_y": 8.3, "stab_sweep": 8.0,
+		"fin_z": 8.4, "fin_c": 4.4, "fin_h": 5.2, "fin_sweep": 30.0, "fin_tip_c": 2.0, "dorsal": true,
+		"nose_gear_z": -10.6, "main_gear_z": 0.6, "main_gear_x": 2.05, "main_wheel_r": 0.45, "nose_wheel_r": 0.3,
+		"doors": [-10.4, 10.0], "exits": [], "win_from": -9.0, "win_to": 8.6, "win_dy": 0.3,
+	},
+	"a330": {
+		"len": 63.7, "r": 2.82, "cy": 4.5, "nose_len": 7.4, "nose_tip": 0.28,
+		"tail_start": 15.0, "tail_r": 0.5, "tail_drop": 0.6,
+		"wing_z": -6.0, "wing_c": 10.5, "kink_c": 6.4, "tip_x": 30.0, "tip_c": 2.1, "sweep": 30.0, "dihedral": 5.5, "wing_y": 2.75,
+		"winglet": [3.0, 0.3, 1.6, 0.8],
+		"eng_x": 9.6, "eng_y": 2.35, "eng_r": 1.55, "eng_flat": 1.0, "eng_z": -11.5, "eng_len": 6.0,
+		"stab_z": 25.5, "stab_c": 5.5, "stab_span": 9.8, "stab_y": 6.3, "stab_sweep": 32.0,
+		"fin_z": 20.0, "fin_c": 9.0, "fin_h": 9.2, "fin_sweep": 42.0, "fin_tip_c": 3.0, "dorsal": false,
+		"nose_gear_z": -25.0, "main_gear_z": 1.5, "main_gear_x": 5.3, "bogie": 2, "main_wheel_r": 0.66, "nose_wheel_r": 0.5,
+		"doors": [-27.0, 22.0], "exits": [-12.0, 2.0], "win_from": -26.0, "win_to": 21.0, "win_dy": 0.75,
 	},
 }
 
@@ -89,6 +136,21 @@ static func fan_mesh(kind: String) -> ArrayMesh:
 	var r: float = float(s["eng_r"]) * 0.84
 	var flat: float = s["eng_flat"]
 	var k := Kit.new()
+	if bool(s.get("props", false)):
+		# Sechsblatt-Propeller mit Spinner (dreht um z)
+		var pr: float = s["prop_r"]
+		k.cyl(Vector3(0, 0, -0.9), Vector3(0, 0, 0.1), 0.02, 0.42, WHITE, 16)
+		for i in range(6):
+			var a := TAU * float(i) / 6.0
+			var dir := Vector3(cos(a), sin(a), 0)
+			var tng := Vector3(-sin(a), cos(a), 0)
+			k.quad(dir * 0.35 - tng * 0.13, dir * pr - tng * 0.09 + Vector3(0, 0, 0.04), dir * pr + tng * 0.09 - Vector3(0, 0, 0.04), dir * 0.35 + tng * 0.13,
+				Color(0.16, 0.17, 0.19), Vector3(0, 0, 1))
+			k.quad(dir * (pr - 0.25) - tng * 0.09, dir * pr - tng * 0.09, dir * pr + tng * 0.09, dir * (pr - 0.25) + tng * 0.09,
+				Color(0.9, 0.75, 0.15), Vector3(0, 0, 1))
+		var pm := k.commit()
+		_cache[key] = pm
+		return pm
 	k.cyl(Vector3(0, 0, 0.0), Vector3(0, 0, 0.06), r, r, Color(0.12, 0.13, 0.15), 20)
 	for i in range(18):
 		var a := TAU * float(i) / 18.0
@@ -128,10 +190,13 @@ static func _profile(s: Dictionary, z: float) -> Array:
 	var nose_len: float = s["nose_len"]
 	var ts: float = s["tail_start"]
 	if z < z0 + nose_len:
+		# Nase: Unterseite fast gerade, Oberseite fällt zur Frontscheibe ab, stumpfes Radom
 		var t := clampf((z - z0) / nose_len, 0.0, 1.0)
-		var rr := r * pow(1.0 - pow(1.0 - t, float(s["nose_pow"])), 0.55)
-		var drop := float(s["nose_drop"]) * pow(1.0 - t, 2.0)
-		return [cy - drop, maxf(rr, 0.04), maxf(rr * (1.0 - 0.06 * (1.0 - t)), 0.04)]
+		var tip_y := cy - r * float(s.get("nose_tip", 0.28))
+		var top := tip_y + (cy + r - tip_y) * pow(1.0 - pow(1.0 - t, 2.0), 0.62)
+		var bot := tip_y - (tip_y - (cy - r)) * pow(1.0 - pow(1.0 - t, 2.7), 0.5)
+		var rx := r * pow(1.0 - pow(1.0 - t, 2.3), 0.5)
+		return [(top + bot) * 0.5, maxf(rx, 0.03), maxf((top - bot) * 0.5, 0.03)]
 	if z > ts:
 		var t := clampf((z - ts) / (z1 - ts), 0.0, 1.0)
 		var rr := lerpf(r, float(s["tail_r"]), pow(t, 1.15))
@@ -147,36 +212,47 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color) -> void:
 	var nose_len: float = s["nose_len"]
 	var ts: float = s["tail_start"]
 	var zs := []
-	for i in range(16):
-		zs.append(z0 + nose_len * pow(float(i) / 15.0, 1.6))
+	for i in range(26):
+		zs.append(z0 + nose_len * pow(float(i) / 25.0, 1.8))
 	var z := z0 + nose_len + 0.8
 	while z < ts:
 		zs.append(z)
 		z += 0.8
-	for i in range(15):
-		zs.append(lerpf(ts, z1, float(i) / 14.0))
+	for i in range(20):
+		zs.append(lerpf(ts, z1, float(i) / 19.0))
 	var rings := []
 	for zz: float in zs:
 		var p := _profile(s, zz)
 		rings.append([zz, p[0], p[1], p[2]])
-	var cock_a := z0 + nose_len * 0.55
-	var cock_b := z0 + nose_len * 0.80
+	var cock_a := z0 + nose_len * 0.5
+	var cock_b := z0 + nose_len * 0.88
 	var col_fn := func(fz: float, fx: float, dy: float, ry: float) -> Color:
-		if fz < z0 + 0.45:
-			return Color(0.80, 0.80, 0.79)
 		if fz > z1 - 0.35:
 			return DARK_METAL
-		if fz > cock_a and fz < cock_b and dy > ry * 0.2 and dy < ry * (0.6 - 0.25 * (fz - cock_a) / (cock_b - cock_a)):
+		var tt := (fz - cock_a) / (cock_b - cock_a)
+		if tt > 0.0 and tt < 1.0 and dy > ry * (0.12 + 0.12 * tt) and dy < ry * (0.5 + 0.12 * tt):
+			# Frontscheibe zwei Scheiben, dahinter je zwei Seitenfenster; schwarze Rahmen
 			var ax := absf(fx) / maxf(ry, 0.01)
-			if absf(fx) < 0.05 or (ax > 0.36 and ax < 0.43) or (ax > 0.72 and ax < 0.79) or ax > 0.95:
-				return Color(0.25, 0.26, 0.28)
+			if ax < 0.05 or (ax > 0.4 and ax < 0.46) or (ax > 0.7 and ax < 0.74) or ax > 0.93:
+				return Color(0.18, 0.19, 0.21)
+			if tt < 0.06 or tt > 0.94:
+				return Color(0.18, 0.19, 0.21)
 			return GLASS
+		var nt := (fz - z0) / nose_len
+		if nt > 0.3 and nt < 0.33:
+			return Color(0.84, 0.84, 0.83)   # Radom-Fuge
 		if dy < -ry * 0.48:
 			return BELLY
 		if dy > -ry * 0.34 and dy < -ry * 0.14 and fz > z0 + nose_len * 0.9 and fz < ts + 4.0:
 			return livery
 		return WHITE
-	k.lathe(rings, 24, col_fn, true, true)
+	k.lathe(rings, 40, col_fn, true, true)
+	# Staurohre und Anstellwinkelsensoren seitlich an der Nase
+	for side: float in [-1.0, 1.0]:
+		var pz := z0 + nose_len * 0.75
+		var pp := _profile(s, pz)
+		var px: float = side * (float(pp[1]) + 0.02)
+		k.box(Vector3(px - 0.03, float(pp[0]) - 0.12, pz - 0.12), Vector3(px + side * 0.12, float(pp[0]) - 0.08, pz + 0.02), METAL)
 	# Fenster, Türen und Notausstiege auf beiden Seiten
 	var wdy: float = s["win_dy"]
 	var doors: Array = s["doors"]
@@ -244,7 +320,7 @@ static func _surface(k: Kit, a: Vector3, ca: float, b: Vector3, cb: float, dir: 
 
 
 static func _wing_at(s: Dictionary, ax: float) -> Array:
-	var root_x: float = float(s["r"]) * 0.82
+	var root_x: float = float(s["r"]) * float(s.get("root_f", 0.82))
 	var d := ax - root_x
 	var le := float(s["wing_z"]) + d * tan(deg_to_rad(float(s["sweep"])))
 	var y := float(s["wing_y"]) + d * tan(deg_to_rad(float(s["dihedral"])))
@@ -258,7 +334,7 @@ static func _wing_at(s: Dictionary, ax: float) -> Array:
 
 
 static func _wings(k: Kit, s: Dictionary, livery: Color) -> void:
-	var root_x: float = float(s["r"]) * 0.82
+	var root_x: float = float(s["r"]) * float(s.get("root_f", 0.82))
 	var kink_x := float(s["eng_x"]) + 1.4
 	var tip_x: float = s["tip_x"]
 	var stations := [root_x, kink_x, tip_x]
@@ -315,6 +391,8 @@ static func _wings(k: Kit, s: Dictionary, livery: Color) -> void:
 				Vector3(side * fx + 0.08, wy - 0.25, te + 0.9), Vector3(side * fx - 0.08, wy - 0.25, te + 0.9)], WING_DARK)
 		# Winglet
 		var wl: Array = s["winglet"]
+		if float(wl[0]) <= 0.0:
+			continue
 		var tip := _wing_at(s, tip_x)
 		var base := Vector3(side * tip_x, float(tip[1]), float(tip[0]))
 		var top := base + Vector3(side * float(wl[1]), float(wl[0]), float(wl[2]))
@@ -378,10 +456,19 @@ static func _engine(k: Kit, s: Dictionary, livery: Color, side: float) -> void:
 		if fz > z0 + ln * 0.55 and fz < z0 + ln * 0.6:
 			return livery.darkened(0.3)
 		return livery
-	k.lathe(rings, 18, col_fn, false, false, ex)
+	if bool(s.get("props", false)):
+		# Turboprop-Gondel: schlank, vorn Lufteinlass unter dem Spinner
+		var prings := [[z0, ey, r * 0.5, r * 0.5], [z0 + 0.6, ey, r * 0.92, r * 0.92 * flat], [z0 + ln * 0.45, ey, r, r * flat],
+			[z0 + ln * 0.85, ey + 0.1, r * 0.7, r * 0.8 * flat], [z0 + ln, ey + 0.25, r * 0.25, r * 0.3]]
+		k.lathe(prings, 24, func(_fz: float, _fx: float, _dy: float, _ry: float) -> Color: return WHITE.darkened(0.04), false, true, ex)
+		k.box(Vector3(ex - 0.25, ey - r * flat - 0.05, z0 + 0.5), Vector3(ex + 0.25, ey - r * flat + 0.25, z0 + 1.1), DARK_METAL)
+		var w2 := _wing_at(s, absf(ex))
+		k.box(Vector3(ex - r * 0.7, ey, float(w2[0]) - 0.2), Vector3(ex + r * 0.7, float(w2[1]), float(w2[0]) + float(w2[2]) * 0.8), WHITE.darkened(0.04))
+		return
+	k.lathe(rings, 28, col_fn, false, false, ex)
 	# Fan, Spinner, Schubdüse
-	k.cyl(Vector3(ex, ey, z0 + 0.5), Vector3(ex, ey, z0 + 0.56), r * 0.86, r * 0.86 * flat, Color(0.1, 0.1, 0.12), 18)
-	k.cyl(Vector3(ex, ey, z0 + ln - 0.05), Vector3(ex, ey, z0 + ln + 0.9), r * 0.55, 0.12, DARK_METAL, 12)
+	k.cyl(Vector3(ex, ey, z0 + 0.5), Vector3(ex, ey, z0 + 0.56), r * 0.86, r * 0.86 * flat, Color(0.1, 0.1, 0.12), 24)
+	k.cyl(Vector3(ex, ey, z0 + ln - 0.05), Vector3(ex, ey, z0 + ln + 0.9), r * 0.55, 0.12, DARK_METAL, 16)
 	# Pylon zum Flügel
 	var w := _wing_at(s, absf(ex))
 	var top_y := ey + r * flat * 0.85
@@ -403,14 +490,23 @@ static func _gear(k: Kit, s: Dictionary) -> void:
 	var mz: float = s["main_gear_z"]
 	var mx: float = s["main_gear_x"]
 	var mr: float = s["main_wheel_r"]
+	var high := bool(s.get("high", false))
+	var rows: Array = [0.0] if int(s.get("bogie", 1)) < 2 else [-0.78, 0.78]
 	for side: float in [-1.0, 1.0]:
 		var w := _wing_at(s, mx)
 		var x := side * mx
-		k.cyl(Vector3(x, float(w[1]) - 0.1, mz - 0.2), Vector3(x, mr, mz), 0.14, 0.12, METAL, 8)
-		k.box(Vector3(x - 0.5, mr - 0.06, mz - 0.06), Vector3(x + 0.5, mr + 0.06, mz + 0.06), METAL)
-		for off: float in [-0.48, 0.48]:
-			k.cyl(Vector3(x + off - 0.19, mr, mz), Vector3(x + off + 0.19, mr, mz), mr, mr, TYRE, 14, true, DARK_METAL)
-		k.box(Vector3(x + side * 0.25, mr + 0.5, mz - 0.7), Vector3(x + side * 0.3, float(w[1]) - 0.2, mz + 0.6), WHITE)
+		var strut_top: float = (bot + 0.5) if high else float(w[1]) - 0.1
+		k.cyl(Vector3(x, strut_top, mz - 0.2), Vector3(x, mr, mz), 0.14, 0.12, METAL, 10)
+		k.box(Vector3(x - 0.5, mr - 0.06, mz + float(rows[0]) - 0.06), Vector3(x + 0.5, mr + 0.06, mz + float(rows[rows.size() - 1]) + 0.06), METAL)
+		for wz: float in rows:
+			for off: float in [-0.48, 0.48]:
+				k.cyl(Vector3(x + off - 0.19, mr, mz + wz), Vector3(x + off + 0.19, mr, mz + wz), mr, mr, TYRE, 18, true, DARK_METAL)
+				k.cyl(Vector3(x + off - 0.2, mr, mz + wz), Vector3(x + off + 0.2, mr, mz + wz), mr * 0.45, mr * 0.45, METAL, 12)
+		if high:
+			# Fahrwerksverkleidung seitlich am Rumpf
+			k.box(Vector3(x - 0.55, bot + 0.1, mz - 1.6), Vector3(x + 0.55, bot + 1.0, mz + 1.6), WHITE.darkened(0.03))
+		else:
+			k.box(Vector3(x + side * 0.25, mr + 0.5, mz - 0.7), Vector3(x + side * 0.3, float(w[1]) - 0.2, mz + 0.6), WHITE)
 	# Fahrwerksschacht dunkel unter dem Rumpf
 	k.box(Vector3(-mx + 0.6, bot - 0.16, mz - 1.0), Vector3(mx - 0.6, bot - 0.12, mz + 1.0), Color(0.35, 0.36, 0.38))
 
@@ -596,7 +692,7 @@ static func car_mesh(kind: String, color: Color) -> ArrayMesh:
 	k.box(Vector3(-hw + 0.05, 0.4, -hl - 0.02), Vector3(hw - 0.05, 0.55, hl + 0.02), Color(0.16, 0.16, 0.17))
 	# Lichter
 	for sx: float in [-1.0, 1.0]:
-		k.box(Vector3(sx * (hw - 0.42), belt - 0.22, -hl - 0.03), Vector3(sx * (hw - 0.1), belt - 0.08, -hl + 0.02), Color(0.98, 0.95, 0.8))
+		k.box(Vector3(sx * (hw - 0.42), belt - 0.22, -hl - 0.03), Vector3(sx * (hw - 0.1), belt - 0.08, -hl + 0.02), LAMP)
 		k.box(Vector3(sx * (hw - 0.4), belt - 0.24, hl - 0.02), Vector3(sx * (hw - 0.08), belt - 0.08, hl + 0.03), Color(0.75, 0.08, 0.06))
 		k.box(Vector3(sx * (hw + 0.0), belt + 0.05, -hl + hood + 0.05), Vector3(sx * (hw + 0.12), belt + 0.14, -hl + hood + 0.22), body.darkened(0.2))
 	# Kabine mit schrägen Scheiben
@@ -690,7 +786,7 @@ static func _truck_cab(k: Kit, col: Color, z0: float, h: float) -> void:
 	k.box(Vector3(-1.1, h - 0.6, z0 - 0.02), Vector3(1.1, h + 0.25, z0 + 0.1), GLASS)
 	for sx: float in [-1.0, 1.0]:
 		k.box(Vector3(sx * 1.16 - 0.01, h - 0.55, z0 + 0.2), Vector3(sx * 1.16 + 0.01, h + 0.2, z0 + 1.2), GLASS)
-		k.box(Vector3(sx * 0.8 - 0.15, 0.8, z0 - 0.03), Vector3(sx * 0.8 + 0.15, 0.95, z0), Color(0.98, 0.95, 0.8))
+		k.box(Vector3(sx * 0.8 - 0.15, 0.8, z0 - 0.03), Vector3(sx * 0.8 + 0.15, 0.95, z0), LAMP)
 	k.box(Vector3(-0.3, h + 0.4, z0 + 0.8), Vector3(0.3, h + 0.55, z0 + 1.1), Color(0.95, 0.55, 0.1))
 
 
@@ -732,7 +828,7 @@ static func _tug(k: Kit) -> void:
 		k.box(Vector3(-1.5, 1.6, 1.5 + float(i) * 0.45), Vector3(0.1, 1.63, 1.7 + float(i) * 0.45), dark)
 	for sx: float in [-1.0, 1.0]:
 		k.box(Vector3(sx * 1.5 - 0.2, 0.9, 3.9), Vector3(sx * 1.5 + 0.2, 1.15, 3.95), Color(0.8, 0.1, 0.08))
-		k.box(Vector3(sx * 1.5 - 0.2, 0.9, -4.25), Vector3(sx * 1.5 + 0.2, 1.1, -4.2), Color(0.98, 0.95, 0.8))
+		k.box(Vector3(sx * 1.5 - 0.2, 0.9, -4.25), Vector3(sx * 1.5 + 0.2, 1.1, -4.2), LAMP)
 	_wheels(k, 1.95, 0.55, [-3.3, 2.8])
 
 
@@ -761,7 +857,7 @@ static func _apron_bus(k: Kit) -> void:
 	k.box(Vector3(-1.2, 2.6, -7.04), Vector3(1.2, 2.85, -6.98), Color(0.05, 0.05, 0.05))
 	k.box(Vector3(-0.9, 2.66, -7.06), Vector3(0.9, 2.79, -7.03), Color(0.98, 0.65, 0.15))
 	for sx: float in [-1.0, 1.0]:
-		k.box(Vector3(sx * 1.15 - 0.2, 0.65, -7.04), Vector3(sx * 1.15 + 0.2, 0.85, -7.0), Color(0.98, 0.95, 0.8))
+		k.box(Vector3(sx * 1.15 - 0.2, 0.65, -7.04), Vector3(sx * 1.15 + 0.2, 0.85, -7.0), LAMP)
 		k.box(Vector3(sx * 1.15 - 0.2, 0.65, 7.0), Vector3(sx * 1.15 + 0.2, 0.85, 7.04), Color(0.75, 0.08, 0.06))
 	k.cyl(Vector3(0, 3.15, -1.0), Vector3(0, 3.35, -1.0), 0.13, 0.11, Color(0.98, 0.55, 0.08), 8)
 	_wheels(k, 1.5, 0.48, [-4.8, 4.8])

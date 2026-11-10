@@ -15,7 +15,8 @@ const SNAP_DIST := 7.0
 ## An welche Wege ein neuer Weg einrastet
 const SNAP_GROUPS := {"strasse": ["strasse", "strasse4", "einbahn"], "strasse4": ["strasse", "strasse4", "einbahn"],
 	"einbahn": ["strasse", "strasse4", "einbahn"], "gehweg": ["gehweg", "strasse", "strasse4", "einbahn"],
-	"rollweg": ["rollweg", "vorfeld", "piste"], "vorfeld": ["vorfeld", "rollweg"], "piste": ["piste"]}
+	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"], "rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
+	"vorfeld": ["vorfeld", "rollweg", "rollweg_breit"], "piste": ["piste"]}
 const ANGLE_STEP := 15.0
 
 var game: GameState
