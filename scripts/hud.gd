@@ -16,6 +16,9 @@ signal setting_changed(key: String, value: Variant)
 signal restart_requested
 signal downloads_requested
 signal map_requested
+signal floor_step(dir: int)
+signal option_changed(key: String, dir: int)
+signal draw_mode_selected(mode: String)
 
 const Catalog = preload("res://scripts/catalog.gd")
 const GameState = preload("res://scripts/game_state.gd")
@@ -72,6 +75,13 @@ var build_pages: Control           # Karten des Baumenüs (einklappbar, Reiter b
 var build_open := true
 var current_tab := ""
 var map_button: Button
+var floor_box: Control
+var floor_label: Label
+var options_box: VBoxContainer
+var mode_box: HBoxContainer
+var mode_buttons: Dictionary = {}
+var hint_panel: PanelContainer
+var hint_label: Label
 
 
 func _ready() -> void:
@@ -87,6 +97,30 @@ func _ready() -> void:
 	_build_menu()
 	_build_toast()
 	_build_game_menu()
+	_build_hint()
+
+
+## Kleines Schild am Mauszeiger mit Länge, Winkel und Radius beim Wegebau.
+func _build_hint() -> void:
+	hint_panel = PanelContainer.new()
+	hint_panel.add_theme_stylebox_override("panel", _box(Color(0.06, 0.055, 0.04, 0.88), Color(0.62, 0.55, 0.36), 1, 5))
+	hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint_label = _label("", 14, C_TEXT)
+	hint_panel.add_child(hint_label)
+	hint_panel.visible = false
+	root.add_child(hint_panel)
+
+
+func set_hint(text: String) -> void:
+	hint_label.text = text
+	hint_panel.visible = text != ""
+	hint_panel.reset_size()
+
+
+func _process(_dt: float) -> void:
+	if hint_panel != null and hint_panel.visible:
+		var mp := get_viewport().get_mouse_position()
+		hint_panel.position = mp + Vector2(22, 18)
 
 
 # ---------------------------------------------------------------- Stil
@@ -212,6 +246,26 @@ func _build_top() -> void:
 	interior_button.tooltip_text = "Dächer ausblenden und ins Terminal schauen (I)"
 	interior_button.toggled.connect(func(on: bool) -> void: interior_toggled.emit(on))
 	row.add_child(interior_button)
+	# Ebenenwahl (nur in der Innenansicht): Keller, Erdgeschoss, Obergeschosse
+	var fb := HBoxContainer.new()
+	fb.add_theme_constant_override("separation", 4)
+	var down := _button("▼", false)
+	down.custom_minimum_size = Vector2(34, 40)
+	down.tooltip_text = "Ebene tiefer (Bild ab)"
+	down.pressed.connect(func() -> void: floor_step.emit(-1))
+	fb.add_child(down)
+	floor_label = _label("EG", 16, C_TEXT)
+	floor_label.custom_minimum_size = Vector2(44, 0)
+	floor_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	floor_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	fb.add_child(floor_label)
+	var up := _button("▲", false)
+	up.custom_minimum_size = Vector2(34, 40)
+	up.tooltip_text = "Ebene höher (Bild auf)"
+	up.pressed.connect(func() -> void: floor_step.emit(1))
+	fb.add_child(up)
+	floor_box = fb
+	row.add_child(fb)
 	var menu_b := _button("Menü", false)
 	menu_b.custom_minimum_size = Vector2(76, 40)
 	menu_b.tooltip_text = "Speichern, Laden, Einstellungen (Esc)"
@@ -237,6 +291,21 @@ func _build_info() -> void:
 	info_toggle = _fold_button()
 	info_toggle.pressed.connect(func() -> void: _fold(info_details, info_toggle, not info_details.visible))
 	head.add_child(info_toggle)
+	# Zeichenarten beim Wegebau (immer sichtbar, auch eingeklappt)
+	mode_box = HBoxContainer.new()
+	mode_box.add_theme_constant_override("separation", 4)
+	var mg := ButtonGroup.new()
+	for m: Array in [["gerade", "Gerade", "Gerade Stücke, setzt am Ende fort"], ["kurve", "Kurve", "Bögen, am Wegende tangential"], ["frei", "Freihand", "Beliebig viele Punkte, Ecken gerundet"]]:
+		var b := _button(String(m[1]), true)
+		b.button_group = mg
+		b.tooltip_text = String(m[2]) + " (Tab wechselt)"
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var key: String = m[0]
+		b.pressed.connect(func() -> void: draw_mode_selected.emit(key))
+		mode_box.add_child(b)
+		mode_buttons[key] = b
+	mode_box.visible = false
+	col.add_child(mode_box)
 	var details := VBoxContainer.new()
 	details.add_theme_constant_override("separation", 6)
 	col.add_child(details)
@@ -246,6 +315,9 @@ func _build_info() -> void:
 	info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info_body.custom_minimum_size = Vector2(336, 0)
 	col.add_child(info_body)
+	options_box = VBoxContainer.new()
+	options_box.add_theme_constant_override("separation", 4)
+	col.add_child(options_box)
 	col.add_child(HSeparator.new())
 	help_label = _label("Linksklick bauen · Rechtsklick fertig oder abwählen · R drehen · Esc Menü\nWASD oder mittlere Maustaste verschieben · Mausrad zoomen · Q/E drehen\nLeertaste Pause · L Leitungen · I Innenansicht · Strg+Z rückgängig", 12, C_FAINT)
 	help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -561,6 +633,41 @@ func show_utility(on: bool) -> void:
 
 func show_interior(on: bool) -> void:
 	interior_button.set_pressed_no_signal(on)
+
+
+func show_floor(f: int) -> void:
+	floor_label.text = "UG" if f < 0 else ("EG" if f == 0 else "%d.OG" % f)
+
+
+func show_draw_modes(mode: String, shown: bool) -> void:
+	mode_box.visible = shown
+	for key: String in mode_buttons:
+		(mode_buttons[key] as Button).set_pressed_no_signal(key == mode)
+
+
+## Bauformen des gewählten Gebäudes als Zeilen "Name  ◀ Wert ▶".
+func set_options(opts: Array) -> void:
+	for c in options_box.get_children():
+		c.queue_free()
+	for o: Array in opts:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var name_l := _label(String(o[1]), 14, C_DIM)
+		name_l.custom_minimum_size = Vector2(110, 0)
+		row.add_child(name_l)
+		var left := _button("◀", false)
+		left.custom_minimum_size = Vector2(30, 28)
+		left.pressed.connect(func() -> void: option_changed.emit(String(o[0]), -1))
+		row.add_child(left)
+		var val := _label(String(o[2]), 14, C_TEXT)
+		val.custom_minimum_size = Vector2(120, 0)
+		val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.add_child(val)
+		var right := _button("▶", false)
+		right.custom_minimum_size = Vector2(30, 28)
+		right.pressed.connect(func() -> void: option_changed.emit(String(o[0]), 1))
+		row.add_child(right)
+		options_box.add_child(row)
 
 
 func set_help_visible(on: bool) -> void:

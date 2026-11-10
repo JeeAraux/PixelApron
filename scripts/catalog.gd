@@ -29,6 +29,15 @@ const LINES := {
 	"piste": {"name": "Piste", "width": 45.0, "cost_m": 3800, "min_r": 0.0, "min_len": 400.0,
 		"color": Color(0.18, 0.18, 0.17), "mark": 3, "y": 0.09, "straight": true, "utility": "",
 		"desc": "Gerade, 45 m breit. ATR 72 ab 1.200 m, Airbus A320 ab 1.800 m Länge."},
+	"tunnel": {"name": "Straßentunnel", "width": 8.5, "cost_m": 2400, "min_r": 25.0, "min_len": 170.0, "lanes": [1, 1],
+		"color": Color(0.24, 0.235, 0.22), "mark": 1, "y": 0.06, "straight": false, "utility": "", "underground": true,
+		"desc": "Straße unter der Erde, eine Spur je Richtung. Rampen von je 70 m an beiden Enden, dazwischen darf darüber gebaut werden: unter Pisten, Rollwegen und Gebäuden hindurch. Die Enden schließen an Straßen an."},
+	"foerderband": {"name": "Gepäckförderband", "width": 2.4, "cost_m": 900, "min_r": 4.0, "min_len": 10.0,
+		"color": Color(0.18, 0.18, 0.19), "mark": 9, "y": 0.06, "straight": false, "utility": "", "underground": true,
+		"desc": "Gepäcktunnel unter dem Vorfeld: verbindet die Gepäcksortierung einer Terminalhalle mit einem Gepäckumschlag. Die Koffer laufen sichtbar in der Ansicht Untergeschoss. Abfertigung 10 % schneller."},
+	"zaun": {"name": "Sicherheitszaun", "width": 0.6, "cost_m": 45, "min_r": 1.0, "min_len": 2.0,
+		"color": Color(0.3, 0.35, 0.32), "mark": 0, "y": 0.05, "straight": false, "utility": "", "fence": true,
+		"desc": "2,5 m hoher Stabgitterzaun mit Stacheldraht. Trennt das Vorfeld von der Landseite."},
 	"stromkabel": {"name": "Stromkabel", "width": 1.4, "cost_m": 60, "min_r": 1.0, "min_len": 2.0,
 		"color": Color(1.0, 0.83, 0.27), "mark": 0, "y": 0.16, "straight": false, "utility": "strom",
 		"desc": "Verbindet Trafostation und Gebäude. Beide Enden müssen ein Gebäude oder ein anderes Kabel berühren."},
@@ -78,6 +87,12 @@ const ITEMS := {
 	"parkhaus": {"name": "Parkhaus", "size": Vector2(32, 44), "h": 14.5, "cost": 1500000, "grid": 2.0,
 		"needs": {"strom": 80}, "access": {"ein": Vector2(-6, -24), "aus": Vector2(6, -24)}, "spaces": 300,
 		"desc": "Vier Ebenen, 300 Plätze. Ein- und Ausfahrt mit Schranke an der Vorderseite (Pfeil beim Setzen): dort muss eine Straße vorbeiführen. Bringt Parkgebühren."},
+	"gepaeckumschlag": {"name": "Gepäckumschlag", "size": Vector2(30, 18), "h": 7.5, "cost": 520000, "grid": 2.0,
+		"needs": {"strom": 35},
+		"desc": "Halle am Vorfeld, in der die Koffer auf Gepäckwagen verladen werden. Mit einem Gepäckförderband zur Terminalhalle verbinden: Dann starten die Gepäckzüge hier und jede Abfertigung geht 10 % schneller."},
+	"haltestelle": {"name": "Bushaltestelle", "size": Vector2(16, 4), "h": 3.2, "cost": 30000, "grid": 1.0,
+		"access": {"halt": Vector2(0, -4.5)},
+		"desc": "Haltestelle für Linienbusse an einer Straße (Pfeil zeigt zur Straße). Busse bringen Fluggäste aus der Stadt und nehmen andere mit. Hebt die Zufriedenheit."},
 	"trafo": {"name": "Trafostation", "size": Vector2(10, 7), "h": 3.7, "cost": 180000, "grid": 1.0,
 		"supply": {"strom": 630}, "desc": "Liefert 630 kW Strom über Kabel."},
 	"wasseranschluss": {"name": "Wasseranschluss", "size": Vector2(4, 4), "h": 1.6, "cost": 25000, "grid": 1.0,
@@ -85,6 +100,16 @@ const ITEMS := {
 	"heizzentrale": {"name": "Heizzentrale", "size": Vector2(22, 15), "h": 23.0, "cost": 450000, "grid": 1.0,
 		"needs": {"strom": 40, "wasser": 4}, "supply": {"waerme": 900},
 		"desc": "Erzeugt 900 kW Wärme. Mit Heizrohren zur Terminalhalle verbinden."},
+	"parkplatz": {"name": "Parkplatz", "size": Vector2(32, 25), "h": 0.5, "cost": 260000, "grid": 2.0,
+		"access": {"ein": Vector2(-6.7, -13), "aus": Vector2(6.7, -13)}, "spaces": 22,
+		"desc": "Ebenerdiger Parkplatz mit 22 Stellplätzen und Schranken. Die Zufahrt (Pfeil) muss an einer Straße liegen. Bringt Parkgebühren."},
+	"busch": {"name": "Busch", "size": Vector2(2, 2), "h": 1.6, "cost": 200, "grid": 0.5, "desc": "Blühender Strauch."},
+	"hecke": {"name": "Hecke", "size": Vector2(6, 1.2), "h": 1.7, "cost": 600, "grid": 0.5, "desc": "Geschnittene Hecke, 6 m."},
+	"blumenbeet": {"name": "Blumenbeet", "size": Vector2(4, 2), "h": 0.7, "cost": 800, "grid": 0.5, "desc": "Bunte Blumen im Steinrand."},
+	"teich": {"name": "Teich", "size": Vector2(13, 9), "h": 1.5, "cost": 9000, "grid": 1.0,
+		"desc": "Teich mit Schilf, Seerosen und zwei Enten, die ihre Runden drehen."},
+	"felsen": {"name": "Felsen", "size": Vector2(3, 3), "h": 1.2, "cost": 900, "grid": 0.5, "desc": "Findlinge mit Gräsern."},
+	"picknick": {"name": "Picknicktisch", "size": Vector2(2.2, 2.2), "h": 0.8, "cost": 500, "grid": 0.5, "desc": "Holztisch mit Bänken für die Pause."},
 	"baum": {"name": "Baum", "size": Vector2(4, 4), "h": 7.0, "cost": 300, "grid": 0.5, "desc": "Laubbaum."},
 	"kuebel": {"name": "Blumenkübel", "size": Vector2(1.4, 1.4), "h": 1.8, "cost": 150, "grid": 0.5, "desc": "Bepflanzter Kübel."},
 	"laterne": {"name": "Laterne", "size": Vector2(0.8, 0.8), "h": 7.0, "cost": 1200, "grid": 0.5, "desc": "Straßenlaterne."},
@@ -110,6 +135,21 @@ const ITEMS := {
 	"busgate": {"name": "Bus-Gate", "size": Vector2(10, 8), "h": 3.2, "cost": 80000, "grid": 1.0, "inside": true,
 		"wall": true, "walk": true, "needs": {"strom": 4},
 		"desc": "Wartebereich mit Tür und Treppe zum Vorfeld. Von hier fahren die Busse zu den Außenpositionen. An die Außenwand zum Vorfeld stellen."},
+	"rolltreppe": {"name": "Rolltreppe", "size": Vector2(2, 10), "h": 5.0, "cost": 120000, "grid": 1.0, "inside": true,
+		"walk": true, "connector": true, "needs": {"strom": 8}, "decor": 1,
+		"desc": "Verbindet diese Ebene mit der Ebene darüber. Passagiere fahren in Pfeilrichtung (+Z) nach oben, auf der zweiten Spur hinunter."},
+	"aufzug": {"name": "Aufzug", "size": Vector2(3, 3), "h": 5.0, "cost": 90000, "grid": 1.0, "inside": true,
+		"walk": true, "connector": true, "needs": {"strom": 6},
+		"desc": "Gläserner Aufzug zur Ebene darüber, für alle mit schwerem Gepäck."},
+	"treppe": {"name": "Treppe", "size": Vector2(3, 9), "h": 5.0, "cost": 30000, "grid": 1.0, "inside": true,
+		"walk": true, "connector": true,
+		"desc": "Feste Treppe zur Ebene darüber."},
+	"passkontrolle": {"name": "Passkontrolle", "short": "Pässe", "size": Vector2(6, 6), "h": 2.6, "cost": 110000, "grid": 1.0,
+		"inside": true, "walk": true, "needs": {"strom": 4}, "cap": 220,
+		"desc": "Grenzkontrolle der Bundespolizei mit drei Kabinen. Trennt den Schengen- vom Non-Schengen-Bereich: Wer dorthin will (oder von dort kommt), muss hindurch."},
+	"zoll": {"name": "Zoll", "size": Vector2(6, 5), "h": 2.6, "cost": 70000, "grid": 1.0, "inside": true, "walk": true,
+		"needs": {"strom": 2},
+		"desc": "Grüner und roter Kanal. Ankommende aus Non-Schengen-Ländern gehen nach dem Gepäckband hindurch."},
 	"sb_ausgang": {"name": "Ausgang Sicherheitsbereich", "short": "SB-Ausgang", "size": Vector2(4, 1), "h": 2.9, "cost": 30000,
 		"grid": 1.0, "inside": true, "walk": true, "oneway": true, "needs": {"strom": 1},
 		"desc": "Einbahn-Tür in einer Lücke der Trennwand: Ankommende verlassen den Sicherheitsbereich, hinein kommt niemand. Vorderseite (Pfeil) zeigt nach draußen."},
@@ -134,19 +174,74 @@ const ITEMS := {
 		"decor": 1, "desc": "Große Topfpflanze."},
 	"anzeige": {"name": "Anzeigetafel", "size": Vector2(3, 1), "h": 3.4, "cost": 18000, "grid": 0.5, "inside": true,
 		"needs": {"strom": 1}, "decor": 2, "desc": "Abflüge und Ankünfte. Passagiere finden sich besser zurecht."},
+	# ---- Möbel und Ausstattung (furniture.gd), viele davon bewegt
+	"uhr": {"name": "Bahnhofsuhr", "size": Vector2(1, 1), "h": 3.7, "cost": 4000, "grid": 0.5, "inside": true, "decor": 1,
+		"desc": "Doppelseitige Uhr an einer Säule. Die Zeiger laufen mit der Spielzeit, der rote Sekundenzeiger tickt."},
+	"snackautomat": {"name": "Snackautomat", "size": Vector2(1.2, 1), "h": 2.0, "cost": 6000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "retail": 1, "decor": 1, "desc": "Beleuchteter Automat mit Snacks. Bringt 1 € je Abflug."},
+	"getraenkeautomat": {"name": "Getränkeautomat", "size": Vector2(1.2, 1), "h": 2.0, "cost": 6000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "retail": 1, "decor": 1, "desc": "Kühle Getränke. Bringt 1 € je Abflug."},
+	"infoschalter": {"name": "Info-Schalter", "size": Vector2(4, 3), "h": 3.6, "cost": 35000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "decor": 3, "desc": "Runder Tresen mit zwei Mitarbeitern. Passagiere fühlen sich gut aufgehoben."},
+	"lounge": {"name": "Lounge-Ecke", "size": Vector2(4, 4), "h": 1.8, "cost": 12000, "grid": 0.5, "inside": true, "decor": 3,
+		"desc": "Zwei Sofas, Couchtisch mit Zeitschriften, Stehlampe und Teppich."},
+	"bistrotisch": {"name": "Bistrotische", "size": Vector2(3, 3), "h": 1.0, "cost": 3500, "grid": 0.5, "inside": true, "decor": 1,
+		"desc": "Zwei kleine Tische mit Holzstühlen, passend zum Café."},
+	"trinkbrunnen": {"name": "Trinkbrunnen", "size": Vector2(1, 1), "h": 1.1, "cost": 3000, "grid": 0.5, "inside": true,
+		"needs": {"wasser": 0.2}, "decor": 1, "desc": "Wasser zum Nachfüllen der Flasche, mit sprudelnder Fontäne."},
+	"rollsteig": {"name": "Rollsteig", "size": Vector2(2, 14), "h": 1.1, "cost": 95000, "grid": 1.0, "inside": true,
+		"walk": true, "needs": {"strom": 6}, "decor": 2, "desc": "Laufband für lange Wege zu den Gates. Die Paletten laufen sichtbar."},
+	"werbebildschirm": {"name": "Werbebildschirm", "size": Vector2(1.5, 0.5), "h": 2.6, "cost": 9000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "retail": 1, "decor": 1, "desc": "Digitale Stele mit wechselnden Motiven. Bringt Werbeeinnahmen."},
+	"spielecke": {"name": "Kinderspielecke", "size": Vector2(5, 5), "h": 1.3, "cost": 18000, "grid": 0.5, "inside": true, "decor": 3,
+		"desc": "Rutsche, Schaukelpferd, Softbausteine und ein Spielteppich mit Straßen."},
+	"ladestation": {"name": "Ladestation", "size": Vector2(1, 1), "h": 1.2, "cost": 4500, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "decor": 2, "desc": "Handys laden: Säule mit sechs Anschlüssen und Ladeanzeigen."},
+	"geldautomat": {"name": "Geldautomat", "size": Vector2(1.2, 1), "h": 2.2, "cost": 15000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "retail": 1, "decor": 1, "desc": "Bargeld für die Reise. Bringt Gebühren."},
+	"kofferwagen": {"name": "Kofferwagen", "size": Vector2(3, 1.2), "h": 1.6, "cost": 2500, "grid": 0.5, "inside": true, "decor": 1,
+		"desc": "Gepäckwagen zum Ausleihen, ineinander geschoben."},
+	"kiosk": {"name": "Zeitungskiosk", "size": Vector2(3, 2.2), "h": 2.9, "cost": 30000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 2}, "retail": 2, "decor": 2, "desc": "Zeitschriften, Bücher und Getränke. Bringt 2 € je Abflug."},
+	"aquarium": {"name": "Aquarium", "size": Vector2(4, 1.2), "h": 2.2, "cost": 40000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 2}, "decor": 4, "desc": "Großes Becken mit Fischschwärmen, Pflanzen und Luftblasen. Beruhigt vor dem Flug."},
+	"palme": {"name": "Zimmerpalme", "size": Vector2(1.5, 1.5), "h": 3.0, "cost": 900, "grid": 0.5, "inside": true, "decor": 1,
+		"desc": "Palme im Topf, die Wedel wiegen sich in der Lüftung."},
+	"baumbeet": {"name": "Baum im Beet", "size": Vector2(4, 4), "h": 4.5, "cost": 8000, "grid": 0.5, "inside": true, "decor": 3,
+		"desc": "Echter Baum im Hochbeet mit Blumen und Sitzrand aus Holz."},
+	"flugzeugmodell": {"name": "Flugzeugmodell", "size": Vector2(4, 4), "h": 5.0, "cost": 20000, "grid": 0.5, "inside": true, "decor": 3,
+		"desc": "Großes Modell eines A320, hängt an Seilen und dreht sich langsam."},
+	"fahnen": {"name": "Fahnen", "size": Vector2(4, 0.6), "h": 4.5, "cost": 3000, "grid": 0.5, "inside": true, "decor": 2,
+		"desc": "Vier Fahnen in Airline-Farben."},
+	"fluegel": {"name": "Konzertflügel", "size": Vector2(2, 3), "h": 1.8, "cost": 25000, "grid": 0.5, "inside": true, "decor": 3,
+		"desc": "Flügel mit Pianistin. Musik im Terminal."},
+	"massagesessel": {"name": "Massagesessel", "size": Vector2(2.4, 1.2), "h": 1.4, "cost": 9000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1}, "retail": 1, "decor": 1, "desc": "Zwei Sessel, die den Rücken massieren. Gegen Münzeinwurf."},
+	"muelltrennung": {"name": "Mülltrennung", "size": Vector2(1.6, 0.6), "h": 1.0, "cost": 1200, "grid": 0.5, "inside": true, "decor": 1,
+		"desc": "Papier, Verpackung, Glas, Rest."},
+	"gruenwand": {"name": "Grüne Wand", "size": Vector2(4, 0.5), "h": 3.3, "cost": 14000, "grid": 0.5, "inside": true,
+		"needs": {"wasser": 0.3}, "decor": 3, "desc": "Senkrechter Garten mit Farnen und Blüten."},
+	"springbrunnen": {"name": "Springbrunnen", "size": Vector2(4, 4), "h": 2.0, "cost": 30000, "grid": 0.5, "inside": true,
+		"needs": {"wasser": 1}, "decor": 4, "desc": "Rundes Becken mit drei Fontänen, die steigen und fallen."},
 	"kunst": {"name": "Kunstwerk", "size": Vector2(3, 3), "h": 3.5, "cost": 25000, "grid": 0.5, "inside": true,
 		"decor": 3, "desc": "Skulptur als Blickfang."},
 }
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["strasse", "strasse4", "einbahn", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "piste"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "tower", "vorfelddepot", "hangar", "feuerwache"]],
-	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "gate", "busgate", "gepaeckband"]],
-	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst"]],
+	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "piste"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "tower", "vorfelddepot", "gepaeckumschlag", "foerderband", "hangar", "feuerwache"]],
+	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "rolltreppe", "aufzug", "treppe"]],
+	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
+	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
+		"ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium", "palme", "baumbeet", "gruenwand",
+		"springbrunnen", "fluegel", "flugzeugmodell", "fahnen"]],
 	["versorgung", "Versorgung", ["stromkabel", "wasserrohr", "heizrohr", "trafo", "wasseranschluss", "heizzentrale"]],
-	["umfeld", "Umfeld", ["parkhaus", "baum", "kuebel", "laterne", "bank"]],
+	["umfeld", "Umfeld", ["parkhaus", "parkplatz", "haltestelle", "zaun", "baum", "busch", "hecke", "blumenbeet", "teich", "felsen", "kuebel", "laterne", "bank", "picknick"]],
 ]
+
+## Höhe einer Terminal-Ebene in Metern (Keller = Ebene -1)
+const FLOOR_H := 5.0
 
 ## Versorgungsnetze mit Anzeigename und Einheit
 const UTILITIES := {"strom": ["Strom", "kW"], "wasser": ["Wasser", "m³/h"], "waerme": ["Wärme", "kW"]}
@@ -202,7 +297,11 @@ const TOOLS := {
 	"spuren": {"name": "Spuren ändern", "desc": "Klicke auf eine Straße: 2-spurig, 4-spurig, Einbahnstraße und umgekehrte Einbahnstraße im Wechsel."},
 	"kreuzung": {"name": "Kreuzung regeln", "desc": "Klicke auf eine Kreuzung: rechts vor links, Vorfahrtsstraße oder Ampel im Wechsel."},
 }
-const ROADS := ["strasse", "strasse4", "einbahn"]
+const ROADS := ["strasse", "strasse4", "einbahn", "tunnel"]
+## Tunnel: Tiefe der Fahrbahn, Länge einer Rampe, ab welcher Tiefe die Decke geschlossen ist
+const TUNNEL_DEPTH := 7.0
+const TUNNEL_RAMP := 70.0
+const TUNNEL_COVER := -5.4
 
 
 static func is_road(kind: String) -> bool:
@@ -220,6 +319,35 @@ static func is_wall(kind: String) -> bool:
 ## Gehört dieses Werkzeug zum Terminalbau (dann Innenansicht einschalten)?
 static func is_terminal_tool(id: String) -> bool:
 	return id == "halle" or is_inside(id) or is_wall(id)
+
+
+static func is_underground(kind: String) -> bool:
+	return LINES.has(kind) and bool(LINES[kind].get("underground", false))
+
+
+## Liegt dieser Stützpunkt eines Weges unter der Erde (dann darf man darüber bauen)?
+static func covered(kind: String, v: Vector3) -> bool:
+	if kind == "foerderband":
+		return true
+	return kind == "tunnel" and v.y < TUNNEL_COVER
+
+
+## Höhenverlauf eines Tunnels: sanfte Rampen an beiden Enden.
+static func tunnel_profile(samples: PackedVector3Array) -> PackedVector3Array:
+	var n := samples.size()
+	if n < 2:
+		return samples
+	var total := 0.0
+	var dist := PackedFloat32Array([0.0])
+	for i in range(1, n):
+		total += Vector2(samples[i].x - samples[i - 1].x, samples[i].z - samples[i - 1].z).length()
+		dist.append(total)
+	var out := PackedVector3Array()
+	for i in range(n):
+		var d := dist[i]
+		var y := -TUNNEL_DEPTH * smoothstep(0.0, TUNNEL_RAMP, d) * smoothstep(0.0, TUNNEL_RAMP, total - d)
+		out.append(Vector3(samples[i].x, y, samples[i].z))
+	return out
 
 
 static func utility_of(kind: String) -> String:

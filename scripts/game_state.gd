@@ -10,6 +10,7 @@ signal supply_changed       # Strom/Wasser neu berechnet
 signal view_changed(on: bool)  # Leitungsansicht an/aus
 signal interior_changed(on: bool)  # Innenansicht (Dächer aus) an/aus
 signal day_ended                   # Mitternacht (Tagesbilanz)
+signal floor_changed(f: int)       # angezeigte Ebene im Terminal (-1 Keller, 0 Erdgeschoss, 1, 2)
 
 const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
@@ -32,6 +33,28 @@ var items: Array = []        # je Objekt: {type, id, pos, rot, rect, node, cost,
 var history: Array = []
 var utility_view := false
 var interior_view := false
+var view_floor := 0          # Ebene, die in der Innenansicht gezeigt und bebaut wird
+
+## Einstellbare Bauformen je Gebäude: [Schlüssel, Anzeigename, Werte]
+const OPTIONS := {
+	"halle": [["etagen", "Ebenen", [1, 2, 3]], ["keller", "Keller", [false, true]], ["fassade", "Fassade", ["glas", "beton", "holz"]],
+		["form", "Ecken", ["eckig", "abgerundet", "rund"]], ["dach", "Dach", ["flach", "gewoelbt", "shed"]]],
+	"parkhaus": [["etagen", "Etagen", [2, 3, 4, 5, 6]], ["farbe", "Fassade", ["grau", "rot", "blau", "holz"]]],
+	"gate": [["bereich", "Bereich", ["schengen", "non_schengen"]]],
+	"busgate": [["bereich", "Bereich", ["schengen", "non_schengen"]]],
+	"tower": [["stil", "Bauform", ["klassisch", "modern"]]],
+	"hangar": [["farbe", "Farbe", ["grau", "blau", "weiss"]]],
+	"cafe": [["stil", "Laden", ["cafe", "baeckerei", "bar", "restaurant"]]],
+	"shop": [["stil", "Laden", ["kiosk", "dutyfree", "buecher", "elektronik", "apotheke", "mode"]]],
+	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]]],
+	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
+}
+const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
+	"flach": "Flachdach", "gewoelbt": "Tonnendach", "shed": "Sheddach", "schengen": "Schengen", "non_schengen": "Non-Schengen",
+	"grau": "Grau", "rot": "Rot", "blau": "Blau", "weiss": "Weiß", "klassisch": "klassisch", "modern": "modern",
+	"cafe": "Café", "baeckerei": "Bäckerei", "bar": "Bar", "restaurant": "Restaurant", "kiosk": "Kiosk", "dutyfree": "Duty Free",
+	"buecher": "Bücher", "elektronik": "Elektronik", "apotheke": "Apotheke", "mode": "Mode", "oval": "Oval", "karussell": "Karussell",
+	"laub": "Laubbaum", "nadel": "Nadelbaum", "birke": "Birke", "pappel": "Pappel", "obst": "Obstbaum"}
 var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0
 var satisfaction_factors: Array = []
@@ -102,6 +125,7 @@ func wind_from() -> Vector3:
 
 func advance(game_minutes: float) -> void:
 	minutes += game_minutes
+	Engine.set_meta("spielminuten", minutes)
 	# Wind dreht langsam; ab und zu ein neues Wetter
 	if randf() < game_minutes / 240.0:
 		_wind_goal = fposmod(_wind_goal + randf_range(-140.0, 140.0), 360.0)
@@ -141,7 +165,7 @@ func decor_near_terminals(radius: float) -> int:
 	var count := 0
 	var terms := items_of("halle")
 	for it: Dictionary in items:
-		if not (it["id"] in ["baum", "kuebel", "bank"]):
+		if not (it["id"] in ["baum", "kuebel", "bank", "busch", "hecke", "blumenbeet", "teich", "picknick", "felsen"]):
 			continue
 		var p: Vector3 = it["pos"]
 		for t: Dictionary in terms:
@@ -179,8 +203,7 @@ func line_cost(kind: String, samples: PackedVector3Array) -> int:
 ## plain: ohne Prüfung und ohne Kreuzungen (Laden von Spielständen).
 func build_line(kind: String, points: Array, free: bool = false, plain: bool = false) -> Dictionary:
 	var def: Dictionary = Catalog.LINES[kind]
-	var straight: bool = def["straight"]
-	var samples := Spline.path(points, straight)
+	var samples := line_samples(kind, points)
 	if samples.size() < 2:
 		return {}
 	var cost := 0 if free else line_cost(kind, samples)
@@ -198,6 +221,10 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	if not (check["decor"] as Array).is_empty():
 		items_changed.emit()
 	var rec := _make_line(kind, points, samples, cost)
+	if Catalog.is_wall(kind):
+		rec["floor"] = view_floor
+		(rec["node"] as Node3D).position.y = float(view_floor) * Catalog.FLOOR_H
+		_apply_visibility(rec)
 	_spend(cost)
 	var group := [rec]
 	if Catalog.is_road(kind) and not (check["junctions"] as Array).is_empty():
@@ -208,6 +235,17 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	else:
 		network_changed.emit()
 	return group[0]
+
+
+## Stützpunkte eines Weges aus den Klickpunkten (Tunnel bekommen ihren Höhenverlauf).
+static func line_samples(kind: String, points: Array) -> PackedVector3Array:
+	var s := Spline.path(points, bool(Catalog.LINES[kind]["straight"]))
+	if kind == "tunnel":
+		s = Catalog.tunnel_profile(s)
+	elif kind == "foerderband":
+		for i in range(s.size()):
+			s[i] = Vector3(s[i].x, -4.2, s[i].z)
+	return s
 
 
 ## Spuren-Werkzeug: Straßentyp wechseln (2-spurig, 4-spurig, Einbahn, Einbahn umgekehrt).
@@ -274,9 +312,10 @@ func _make_line(kind: String, points: Array, samples: PackedVector3Array, cost: 
 
 ## Welche Wege einander kreuzen dürfen
 const CROSS_OK := {
-	"strasse": ["strasse", "strasse4", "einbahn", "gehweg"],
-	"strasse4": ["strasse", "strasse4", "einbahn", "gehweg"],
-	"einbahn": ["strasse", "strasse4", "einbahn", "gehweg"],
+	"strasse": ["strasse", "strasse4", "einbahn", "gehweg", "tunnel"],
+	"strasse4": ["strasse", "strasse4", "einbahn", "gehweg", "tunnel"],
+	"einbahn": ["strasse", "strasse4", "einbahn", "gehweg", "tunnel"],
+	"tunnel": ["strasse", "strasse4", "einbahn", "tunnel"],
 	"gehweg": ["strasse", "strasse4", "einbahn", "gehweg"],
 	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
 	"rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
@@ -284,7 +323,7 @@ const CROSS_OK := {
 	"piste": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
 }
 ## Kleine Deko, die ein neuer Weg einfach wegräumt
-const DECOR := ["baum", "kuebel", "laterne", "bank"]
+const DECOR := ["baum", "kuebel", "laterne", "bank", "busch", "felsen", "picknick", "blumenbeet"]
 const GRID_CELL := 16.0
 
 var _grid: Dictionary = {}
@@ -333,6 +372,8 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 		if not r.intersects(bounds):
 			continue
 		for i in range(0, samples.size(), step):
+			if Catalog.covered(kind, samples[i]):
+				continue
 			if r.has_point(Vector2(samples[i].x, samples[i].z)):
 				if id in DECOR:
 					(out["decor"] as Array).append(it)
@@ -346,6 +387,8 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 	var reach := ceili((w * 0.5 + 30.0) / GRID_CELL)
 	for i in range(0, samples.size(), step):
 		var v := samples[i]
+		if Catalog.covered(kind, v):
+			continue
 		var c := Vector2i(floori(v.x / GRID_CELL), floori(v.z / GRID_CELL))
 		for dx in range(-reach, reach + 1):
 			for dz in range(-reach, reach + 1):
@@ -354,6 +397,8 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 					var j: int = e.y
 					var w2: float = Catalog.LINES[l["kind"]]["width"]
 					var p: Vector3 = (l["samples"] as PackedVector3Array)[j]
+					if Catalog.covered(String(l["kind"]), p):
+						continue
 					var d := Vector2(p.x - v.x, p.z - v.z).length()
 					if d >= (w + w2) * 0.5 - 0.6:
 						continue
@@ -384,10 +429,22 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 				cur = [idx[n]]
 		runs.append(cur)
 		var w2: float = Catalog.LINES[k2]["width"]
+		var ls0: PackedVector3Array = l["samples"]
 		for run: Array in runs:
 			if float(int(run[run.size() - 1]) - int(run[0])) > (w + w2) * 1.6 + 3.0:
 				out["why"] = "Liegt auf einer Straße oder kreuzt zu flach"
 				return out
+			# Tunnelrampen: nur an ihren Enden anschließen
+			if kind == "tunnel" or k2 == "tunnel":
+				var near_end := true
+				if kind == "tunnel":
+					near_end = mini(int(run[0]), samples.size() - 1 - int(run[run.size() - 1])) < int(w + w2) + 2
+				if k2 == "tunnel":
+					var j0: int = hl[run[0]][1]
+					near_end = near_end and mini(j0, ls0.size() - 1 - j0) < int(w + w2) + 2
+				if not near_end:
+					out["why"] = "Kreuzt eine Tunnelrampe: Tunnel schließen nur an ihren Enden an"
+					return out
 			var best_i: int = run[0]
 			for i: int in run:
 				if float(hl[i][0]) < float(hl[best_i][0]):
@@ -464,23 +521,36 @@ func set_utility_view(on: bool) -> void:
 
 
 func _apply_visibility(l: Dictionary) -> void:
-	if Catalog.utility_of(String(l["kind"])) != "":
-		(l["node"] as Node3D).visible = utility_view
-	elif Catalog.is_wall(String(l["kind"])):
-		_apply_interior(l["node"])
+	var kind := String(l["kind"])
+	var node := l["node"] as Node3D
+	if not is_instance_valid(node):
+		return
+	if Catalog.is_wall(kind):
+		node.visible = (floor_of(l) == view_floor) if interior_view else floor_of(l) >= 0
+		return
+	var basement := interior_view and view_floor < 0
+	if Catalog.utility_of(kind) != "":
+		node.visible = utility_view and not basement
+		return
+	node.visible = Catalog.is_underground(kind) or not basement
 
 
 ## Innenansicht: Dächer der Hallen weg, Wände niedrig, damit man hineinsieht.
 func set_interior_view(on: bool) -> void:
 	interior_view = on
-	for it: Dictionary in items_of("halle"):
-		_apply_interior(it["node"])
+	if not on and view_floor < 0:
+		view_floor = 0
+	for it: Dictionary in items:
+		_apply_floor(it)
 	for l: Dictionary in lines:
+		_apply_visibility(l)
 		if Catalog.is_wall(String(l["kind"])):
 			_apply_interior(l["node"])
 	interior_changed.emit(on)
+	floor_changed.emit(view_floor)
 
 
+## Halle oder Wand für die Innenansicht: Dach und hohe Fassade weg, niedrige Fassade auf der gezeigten Ebene.
 func _apply_interior(n: Node3D) -> void:
 	for part: String in ["Dach", "Hoch"]:
 		var c := n.get_node_or_null(part) as Node3D
@@ -488,7 +558,146 @@ func _apply_interior(n: Node3D) -> void:
 			c.visible = not interior_view
 	var low := n.get_node_or_null("Tief") as Node3D
 	if low != null:
-		low.visible = interior_view
+		low.visible = interior_view and view_floor >= 0
+		low.position.y = float(maxi(view_floor, 0)) * Catalog.FLOOR_H
+	for f in range(-1, 4):
+		var slab := n.get_node_or_null("Ebene%d" % f) as Node3D
+		if slab != null:
+			slab.visible = (not interior_view and f >= 0) or (interior_view and f <= view_floor and (f >= 0 or view_floor < 0))
+
+
+# ---------------------------------------------------------------- Ebenen und Bauformen
+
+static func floor_of(rec: Dictionary) -> int:
+	return int(rec.get("floor", 0))
+
+
+func opt(rec: Dictionary, key: String) -> Variant:
+	var o: Dictionary = rec.get("opts", {})
+	if o.has(key):
+		return o[key]
+	for e: Array in OPTIONS.get(String(rec.get("id", "")), []):
+		if e[0] == key:
+			return (e[2] as Array)[0] if not (rec.get("id", "") == "parkhaus" and key == "etagen") else 4
+	return null
+
+
+func hall_levels(h: Dictionary) -> int:
+	return int(opt(h, "etagen"))
+
+
+func hall_basement(h: Dictionary) -> bool:
+	return bool(opt(h, "keller"))
+
+
+## Ebenen, die es irgendwo gibt: [niedrigste, höchste]
+func floor_range() -> Vector2i:
+	var hi := 0
+	for h: Dictionary in items_of("halle"):
+		hi = maxi(hi, hall_levels(h) - 1)
+	return Vector2i(-1, hi)   # Untergeschoss gibt es immer: Tunnel, Förderbänder, Keller
+
+
+func set_view_floor(f: int) -> void:
+	var r := floor_range()
+	view_floor = clampi(f, r.x, r.y)
+	for it: Dictionary in items:
+		_apply_floor(it)
+	for l: Dictionary in lines:
+		_apply_visibility(l)
+	floor_changed.emit(view_floor)
+
+
+func _apply_floor(it: Dictionary) -> void:
+	var node: Node3D = it["node"]
+	if not is_instance_valid(node):
+		return
+	if it["id"] == "halle":
+		_apply_interior(node)
+	elif Catalog.is_inside(String(it["id"])):
+		var f := floor_of(it)
+		node.visible = (f == view_floor) if interior_view else f >= 0
+	else:
+		node.visible = not (interior_view and view_floor < 0)
+
+
+func floor_name(f: int) -> String:
+	return "Untergeschoss" if f < 0 else ("Erdgeschoss" if f == 0 else "%d. Obergeschoss" % f)
+
+
+## Einstellungen eines Gebäudes für das Infofeld: [Schlüssel, Name, Wert als Text]
+func options_of(rec: Dictionary) -> Array:
+	var out := []
+	for e: Array in OPTIONS.get(String(rec.get("id", "")), []):
+		var v: Variant = opt(rec, e[0])
+		var txt: String = str(v) if typeof(v) == TYPE_INT else String(OPTION_TEXT.get(v, str(v)))
+		if typeof(v) == TYPE_BOOL:
+			txt = "ja" if bool(v) else "nein"
+		out.append([e[0], e[1], txt])
+	return out
+
+
+## Bauform wechseln (dir = +1/-1). Rückgabe: Fehlertext oder leer.
+func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
+	var values: Array = []
+	for e: Array in OPTIONS.get(String(rec.get("id", "")), []):
+		if e[0] == key:
+			values = e[2]
+	if values.is_empty():
+		return ""
+	var cur: Variant = opt(rec, key)
+	var i := values.find(cur)
+	var v: Variant = values[(i + dir + values.size()) % values.size()]
+	var cost := 0
+	if rec["id"] == "halle":
+		var area := (rec["rect"] as Rect2).get_area()
+		if key == "etagen":
+			var n := int(v)
+			for it: Dictionary in inside_of(rec):
+				if floor_of(it) >= n:
+					return "Erst die Einrichtung der oberen Ebene abreißen"
+			for l: Dictionary in walls_of(rec):
+				if floor_of(l) >= n:
+					return "Erst die Wände der oberen Ebene abreißen"
+			cost = int(area * float(Catalog.ITEMS["halle"]["cost_m2"]) * 0.8) * (n - hall_levels(rec))
+		if key == "keller":
+			if not bool(v):
+				for it: Dictionary in inside_of(rec):
+					if floor_of(it) < 0:
+						return "Erst die Einrichtung im Keller abreißen"
+			cost = int(area * float(Catalog.ITEMS["halle"]["cost_m2"]) * 0.6) * (1 if bool(v) else -1)
+	if rec["id"] == "parkhaus" and key == "etagen":
+		cost = 70000 * (int(v) - int(cur))
+	if cost > money:
+		return "Nicht genug Geld: " + fmt_money(cost) + " nötig"
+	if not rec.has("opts"):
+		rec["opts"] = {}
+	rec["opts"][key] = v
+	if cost > 0:
+		_spend(cost)
+		rec["cost"] = int(rec["cost"]) + cost
+	elif cost < 0:
+		earn_quiet(-cost / 2)
+		rec["cost"] = maxi(0, int(rec["cost"]) + cost)
+	_rebuild_node(rec)
+	evaluate_supply()
+	items_changed.emit()
+	return ""
+
+
+func _rebuild_node(rec: Dictionary) -> void:
+	var old: Node3D = rec["node"]
+	var node: Node3D
+	if rec["id"] == "halle":
+		var r: Rect2 = rec["rect"]
+		node = Factory.make_hall(r.size.x, r.size.y, rec.get("opts", {}))
+	else:
+		node = Factory.make_item(String(rec["id"]), rec.get("opts", {}))
+	node.transform = old.transform
+	item_root.add_child(node)
+	old.queue_free()
+	rec["node"] = node
+	_apply_floor(rec)
 
 
 # ---------------------------------------------------------------- Gebäude und Deko
@@ -573,6 +782,8 @@ func _rect_on_lines(r: Rect2, on: String) -> String:
 		var grown := r.grow(w * 0.5 - 0.3)
 		var s: PackedVector3Array = l["samples"]
 		for i in range(0, s.size(), 2):
+			if Catalog.covered(kind, s[i]):
+				continue
 			if grown.has_point(Vector2(s[i].x, s[i].z)):
 				return "Liegt auf einem Weg: " + Catalog.label(kind)
 	return ""
@@ -640,13 +851,25 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 		var hall := hall_for_rect(r)
 		if hall.is_empty():
 			return "Nur innerhalb einer Terminalhalle"
-		if bool(def.get("wall", false)) and not touches_wall(r, hall["rect"]):
+		var f := view_floor
+		if f >= hall_levels(hall) or (f < 0 and not hall_basement(hall)):
+			return "Diese Halle hat keine %s (Ebenen im Infofeld der Halle einstellen)" % floor_name(f)
+		if bool(def.get("connector", false)) and f + 1 >= hall_levels(hall):
+			return "Darüber gibt es keine Ebene: der Halle erst eine weitere Ebene geben"
+		if id == "eingang" and f != 0:
+			return "Eingänge nur im Erdgeschoss"
+		if bool(def.get("wall", false)) and f >= 0 and not touches_wall(r, hall["rect"]):
 			return "Muss an der Außenwand der Halle stehen"
 		for it: Dictionary in inside_of(hall):
-			if inner.intersects(it["rect"]):
+			var itf := floor_of(it)
+			var covers := itf == f or (bool(Catalog.ITEMS[it["id"]].get("connector", false)) and itf + 1 == f) \
+				or (bool(def.get("connector", false)) and itf == f + 1)
+			if covers and inner.intersects(it["rect"]):
 				return "Hier steht schon etwas"
 		var probe := r.grow(-0.1)
 		for l: Dictionary in walls_of(hall):
+			if floor_of(l) != f:
+				continue
 			for v: Vector3 in wall_probe(l):
 				if probe.has_point(Vector2(v.x, v.z)):
 					return "Steht auf einer Wand"
@@ -687,6 +910,8 @@ func can_place_wall(a: Vector3, b: Vector3) -> String:
 	var tmp := {"samples": PackedVector3Array([a, b])}
 	for v: Vector3 in wall_probe(tmp):
 		for it: Dictionary in inside_of(hall):
+			if floor_of(it) != view_floor:
+				continue
 			if (it["rect"] as Rect2).grow(-0.1).has_point(Vector2(v.x, v.z)):
 				return "Wand geht durch: " + Catalog.label(String(it["id"]))
 	return ""
@@ -716,17 +941,17 @@ func can_place_hall(r: Rect2) -> String:
 	return ""
 
 
-func build_hall(r: Rect2, free: bool = false) -> Dictionary:
+func build_hall(r: Rect2, free: bool = false, opts: Dictionary = {}) -> Dictionary:
 	var cost := 0 if free else hall_cost(r)
 	if cost > money:
 		toast.emit("Nicht genug Geld")
 		return {}
-	var node := Factory.make_hall(r.size.x, r.size.y)
+	var node := Factory.make_hall(r.size.x, r.size.y, opts)
 	var c := r.get_center()
 	node.position = Vector3(c.x, 0.0, c.y)
 	item_root.add_child(node)
 	var rec := {"type": "item", "id": "halle", "pos": node.position, "rot": 0, "rect": r,
-		"node": node, "cost": cost, "supply": {}}
+		"node": node, "cost": cost, "supply": {}, "opts": opts.duplicate()}
 	items.append(rec)
 	history.append(rec)
 	_apply_interior(node)
@@ -736,7 +961,7 @@ func build_hall(r: Rect2, free: bool = false) -> Dictionary:
 	return rec
 
 
-func build_item(id: String, pos: Vector3, rot: int, free: bool = false) -> Dictionary:
+func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Dictionary = {}, floor: int = -99) -> Dictionary:
 	var cost: int = 0 if free else int(Catalog.ITEMS[id]["cost"])
 	if cost > money:
 		toast.emit("Nicht genug Geld")
@@ -745,14 +970,19 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false) -> Dicti
 		var hs := hall_side(pos)
 		if not hs.is_empty():
 			rot = rot_for_normal(hs[1])
-	var node := Factory.make_item(id)
-	node.position = Vector3(pos.x, 0.0, pos.z)
+	var f := 0
+	if Catalog.is_inside(id):
+		f = view_floor if floor == -99 else floor
+	var node := Factory.make_item(id, opts)
+	node.position = Vector3(pos.x, float(f) * Catalog.FLOOR_H, pos.z)
 	node.rotation.y = float(rot) * PI * 0.5
 	item_root.add_child(node)
 	var rec := {"type": "item", "id": id, "pos": node.position, "rot": rot,
-		"rect": footprint(id, pos, rot), "node": node, "cost": cost, "supply": {}}
+		"rect": footprint(id, pos, rot), "node": node, "cost": cost, "supply": {}, "opts": opts.duplicate()}
 	if Catalog.is_inside(id):
 		rec["hall"] = hall_for_rect(rec["rect"])
+		rec["floor"] = f
+		_apply_floor(rec)
 	items.append(rec)
 	history.append(rec)
 	_spend(cost)
@@ -899,6 +1129,62 @@ func evaluate_supply() -> void:
 	supply_changed.emit()
 
 
+## Ist die Halle über Gepäckförderbänder mit einem Gepäckumschlag verbunden? Gibt den Umschlag zurück.
+func baggage_link(hall: Dictionary) -> Dictionary:
+	var belts := []
+	for l: Dictionary in lines:
+		if l["kind"] == "foerderband":
+			belts.append(l)
+	if belts.is_empty():
+		return {}
+	var seen := {}
+	var stack := []
+	for i in range(belts.size()):
+		if _touches_item(belts[i], hall):
+			stack.append(i)
+			seen[i] = true
+	while not stack.is_empty():
+		var i: int = stack.pop_back()
+		for u: Dictionary in items_of("gepaeckumschlag"):
+			if _touches_item(belts[i], u):
+				return u
+		for j in range(belts.size()):
+			if not seen.has(j) and _touches_line(belts[i], belts[j]):
+				seen[j] = true
+				stack.append(j)
+	return {}
+
+
+## Offene Tunnelrampen als Löcher im Rasen: je [Mitte x, Mitte z, Richtung x, Richtung z, halbe Länge, halbe Breite]
+func tunnel_cuts() -> Array:
+	var out := []
+	for l: Dictionary in lines:
+		if l["kind"] != "tunnel":
+			continue
+		var s: PackedVector3Array = l["samples"]
+		var w: float = float(Catalog.LINES["tunnel"]["width"]) * 0.5 + 0.9
+		for from_end: bool in [false, true]:
+			var idx := []
+			for i in range(s.size()):
+				var k := s.size() - 1 - i if from_end else i
+				if s[k].y < -0.05 or i < 2:
+					idx.append(k)
+				if s[k].y < Catalog.TUNNEL_COVER - 0.4:
+					break
+			var a := 0
+			while a < idx.size() - 1:
+				var b := mini(a + 10, idx.size() - 1)
+				var p0: Vector3 = s[idx[a]]
+				var p1: Vector3 = s[idx[b]]
+				var d := Vector2(p1.x - p0.x, p1.z - p0.z)
+				if d.length() > 0.5:
+					var c := (Vector2(p0.x, p0.z) + Vector2(p1.x, p1.z)) * 0.5
+					var dn := d.normalized()
+					out.append([c.x, c.y, dn.x, dn.y, d.length() * 0.5 + 0.6, w])
+				a = b
+	return out
+
+
 func supplied(it: Dictionary, util: String) -> bool:
 	return String((it["supply"] as Dictionary).get(util, "ok")) == "ok"
 
@@ -944,9 +1230,10 @@ func pick(p: Vector3) -> Dictionary:
 	var q := Vector2(p.x, p.z)
 	for it: Dictionary in items:
 		if Catalog.is_inside(String(it["id"])) and (it["rect"] as Rect2).grow(0.2).has_point(q):
-			return it
+			if not interior_view or floor_of(it) == view_floor:
+				return it
 	for l: Dictionary in lines:
-		if Catalog.is_wall(String(l["kind"])):
+		if Catalog.is_wall(String(l["kind"])) and (not interior_view or floor_of(l) == view_floor):
 			for v: Vector3 in wall_probe(l):
 				if Vector2(v.x - p.x, v.z - p.z).length() < 0.7:
 					return l
@@ -1099,11 +1386,13 @@ func save_game(quiet: bool = false) -> void:
 			pts = []
 			for p: Vector3 in (l["samples"] as PackedVector3Array):
 				pts.append([snappedf(p.x, 0.01), snappedf(p.z, 0.01)])
-		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"], "raw": bool(l.get("raw", false)), "flip": bool(l.get("flip", false))})
+		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"], "raw": bool(l.get("raw", false)), "flip": bool(l.get("flip", false)),
+			"floor": floor_of(l)})
 	var its: Array = data["items"]
 	for it: Dictionary in items:
 		var p: Vector3 = it["pos"]
-		var e := {"id": it["id"], "x": snappedf(p.x, 0.01), "z": snappedf(p.z, 0.01), "rot": it["rot"], "cost": it["cost"]}
+		var e := {"id": it["id"], "x": snappedf(p.x, 0.01), "z": snappedf(p.z, 0.01), "rot": it["rot"], "cost": it["cost"],
+			"opts": it.get("opts", {}), "floor": floor_of(it)}
 		if it["id"] == "halle":
 			var r: Rect2 = it["rect"]
 			e["w"] = r.size.x
@@ -1134,7 +1423,7 @@ func load_game() -> bool:
 		if String(it["id"]) == "halle":
 			var w := float(it["w"])
 			var d := float(it["d"])
-			var rec := build_hall(Rect2(float(it["x"]) - w * 0.5, float(it["z"]) - d * 0.5, w, d), true)
+			var rec := build_hall(Rect2(float(it["x"]) - w * 0.5, float(it["z"]) - d * 0.5, w, d), true, it.get("opts", {}))
 			if not rec.is_empty():
 				rec["cost"] = int(it.get("cost", 0))
 	for l: Dictionary in data.get("lines", []):
@@ -1144,6 +1433,7 @@ func load_game() -> bool:
 		for p: Array in l["points"]:
 			pts.append(Vector3(float(p[0]), 0.0, float(p[1])))
 		var rec: Dictionary = {}
+		view_floor = int(l.get("floor", 0))
 		if bool(l.get("raw", false)):
 			rec = _make_line(String(l["kind"]), pts, PackedVector3Array(pts), int(l.get("cost", 0)), true)
 		else:
@@ -1154,9 +1444,11 @@ func load_game() -> bool:
 	for it: Dictionary in data.get("items", []):
 		if not Catalog.ITEMS.has(String(it["id"])) or String(it["id"]) == "halle":
 			continue
-		var rec := build_item(String(it["id"]), Vector3(float(it["x"]), 0.0, float(it["z"])), int(it["rot"]), true)
+		var rec := build_item(String(it["id"]), Vector3(float(it["x"]), 0.0, float(it["z"])), int(it["rot"]), true,
+			it.get("opts", {}), int(it.get("floor", 0)))
 		if not rec.is_empty():
 			rec["cost"] = int(it.get("cost", 0))
+	view_floor = 0
 	history.clear()
 	junction_controls = data.get("controls", {})
 	network_changed.emit()
@@ -1216,6 +1508,20 @@ func load_starter() -> void:
 	build_item("wasseranschluss", V.call(40, 18), 0, true)
 	build_item("heizzentrale", V.call(92, 60), 0, true)
 	build_item("feuerwache", V.call(330, -60), 0, true)
+	build_item("haltestelle", V.call(-48, 22), 2, true)
+	# Sicherheitszaun zwischen Landseite und Vorfeld, Grünanlagen am Terminal
+	build_line("zaun", [V.call(-29, -14), V.call(-170, -14)], true)
+	build_line("zaun", [V.call(29, -14), V.call(124, -14)], true)
+	for x: float in [-15.0, 15.0]:
+		build_item("blumenbeet", V.call(x, 19.5), 0, true)
+	for p: Vector2 in [Vector2(-34, 12), Vector2(34, 12), Vector2(-36, 3), Vector2(36, 3), Vector2(20, 88), Vector2(44, 90)]:
+		build_item("busch", V.call(p.x, p.y), 0, true)
+	build_item("teich", V.call(30, 100), 0, true)
+	build_item("picknick", V.call(46, 102), 0, true)
+	build_item("felsen", V.call(16, 104), 0, true)
+	build_item("gepaeckumschlag", V.call(265, -10), 0, true)
+	build_line("foerderband", [V.call(26, -4), V.call(140, -9), V.call(251, -8)], true)
+	build_line("stromkabel", [V.call(258, 16), V.call(262, 0)], true)
 	build_line("stromkabel", [V.call(57, 46), V.call(22, 2)], true)
 	build_line("stromkabel", [V.call(64, 46), V.call(160, 44), V.call(257, 22)], true)
 	build_line("stromkabel", [V.call(65, 52), V.call(81, 56)], true)
@@ -1277,6 +1583,11 @@ func _starter_terminal(V: Callable) -> void:
 	put.call("anzeige", -10, -9.5)
 	for x: float in [-5.5, 5.5, 17.5]:
 		put.call("pflanze", x, -15)
+	# Ausstattung: Bahnhofsuhr, Automat, Werbestele, Ladesäule
+	put.call("uhr", 9, 3)
+	put.call("snackautomat", -26.2, 4.5, 1)
+	put.call("werbebildschirm", -14, -9.5, 2)
+	put.call("ladestation", 17.5, -17)
 	# Heizkörper an den Wänden
 	for x: float in [-22.0, -4.0, 4.0, 22.0]:
 		put.call("heizkoerper", x, 7.75)

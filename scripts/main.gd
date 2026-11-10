@@ -25,6 +25,7 @@ var world: Node3D
 var sun: DirectionalLight3D
 var env: Environment
 var ground_mat: ShaderMaterial
+var ground: MeshInstance3D
 var cam_rig: IsoCamera
 var game: GameState
 var builder: Builder
@@ -81,11 +82,13 @@ func _ready() -> void:
 	ops.setup(game)
 	ops.terminal = terminal
 	flights.ops = ops
+	ops.flights_ref = flights
 	terminal.bus_cb = ops.pax_at_door
 	airfield = Airfield.new()
 	airfield.name = "Flugfeld"
 	world.add_child(airfield)
 	airfield.setup(game)
+	game.network_changed.connect(_update_ground_cuts)
 	cam_rig = IsoCamera.new()
 	cam_rig.name = "Kamera"
 	world.add_child(cam_rig)
@@ -107,6 +110,12 @@ func _ready() -> void:
 		game.load_game()
 	builder.set_tool("")
 	var args := OS.get_cmdline_user_args()
+	for a in args:
+		if a.begins_with("--dbg="):
+			var probe: Node = load("res://tests/dbg/%s.gd" % a.substr(6)).new()
+			add_child(probe)
+			probe.call("run", self)
+			return
 	if "--fldebug" in args:
 		var dbg: Node = load("res://tests/dbg/fl_debug.gd").new()
 		add_child(dbg)
@@ -182,7 +191,7 @@ func _make_world() -> void:
 	sun.shadow_normal_bias = 1.2
 	sun.basis = Basis.looking_at(Vector3(0.55, -0.75, -0.35).normalized(), Vector3.UP)
 	world.add_child(sun)
-	var ground := MeshInstance3D.new()
+	ground = MeshInstance3D.new()
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(8000, 8000)
 	ground.mesh = pm
@@ -191,6 +200,22 @@ func _make_world() -> void:
 	ground.material_override = ground_mat
 	ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	world.add_child(ground)
+
+
+## Offene Tunnelrampen schneiden Löcher in den Rasen.
+func _update_ground_cuts() -> void:
+	var cuts := game.tunnel_cuts()
+	var a := PackedVector4Array()
+	var b := PackedVector2Array()
+	for c: Array in cuts.slice(0, 48):
+		a.append(Vector4(c[0], c[1], c[2], c[3]))
+		b.append(Vector2(c[4], c[5]))
+	while a.size() < 48:
+		a.append(Vector4.ZERO)
+		b.append(Vector2.ZERO)
+	ground_mat.set_shader_parameter("cut_a", a)
+	ground_mat.set_shader_parameter("cut_b", b)
+	ground_mat.set_shader_parameter("cut_n", mini(cuts.size(), 48))
 
 
 func _make_thumbs() -> void:
@@ -219,12 +244,18 @@ func _connect() -> void:
 	hud.restart_requested.connect(_restart_for_update)
 	hud.downloads_requested.connect(updater.open_downloads)
 	hud.map_requested.connect(_toggle_map)
+	hud.floor_step.connect(_on_floor_step)
+	hud.option_changed.connect(_on_option)
+	game.floor_changed.connect(_on_floor)
 	updater.status_changed.connect(_on_update_status)
 	game.interior_changed.connect(hud.show_interior)
 	game.day_ended.connect(_on_day_ended)
 	builder.info.connect(hud.set_info)
 	builder.tool_changed.connect(_on_tool_changed)
 	builder.inspect_requested.connect(_inspect)
+	builder.mode_changed.connect(hud.show_draw_modes)
+	builder.hint.connect(hud.set_hint)
+	hud.draw_mode_selected.connect(builder.set_mode)
 	game.money_changed.connect(hud.set_money)
 	game.toast.connect(hud.toast)
 	game.view_changed.connect(_on_view_changed)
@@ -358,6 +389,13 @@ func _daylight() -> void:
 	env.ambient_light_color = Color(0.66, 0.70, 0.78).lerp(Color(0.34, 0.40, 0.62), night).lerp(Color(0.85, 0.68, 0.6), dusk * (1.0 - night) * 0.35)
 	env.ambient_light_energy = lerpf(0.62, 0.52, night)
 	env.background_color = Color(0.36, 0.42, 0.3).lerp(Color(0.07, 0.09, 0.14), night)
+	if game.interior_view and game.view_floor < 0:
+		# Untergeschoss: dunkel, nur Lampen in Tunneln und Kanälen leuchten
+		env.background_color = Color(0.05, 0.05, 0.06)
+		sun.light_energy = minf(sun.light_energy, 0.3)
+		env.ambient_light_energy = 0.5
+		RenderingServer.global_shader_parameter_set(&"night", 0.85)
+		game.night = 0.85
 
 
 ## Leitungsansicht: Welt abdunkeln, Leitungen leuchten (unbeleuchtetes Material).
@@ -385,7 +423,51 @@ func _process(delta: float) -> void:
 
 
 ## Info-Werkzeug: Details zu Flugzeug, Gebäude oder Weg unter dem Mauszeiger.
+var _selected: Dictionary = {}
+var _selected_at := Vector3.ZERO
+
+
+func _on_option(key: String, dir: int) -> void:
+	if _selected.is_empty():
+		return
+	var why := game.cycle_option(_selected, key, dir)
+	if why != "":
+		hud.toast(why)
+	_inspect(_selected_at)
+
+
+## Ebene gewechselt: im Keller verschwindet die Oberfläche, damit man hineinsieht.
+## Ebene wechseln; außerhalb der Innenansicht schaltet der erste Schritt sie ein.
+func _on_floor_step(d: int) -> void:
+	if not game.interior_view:
+		game.set_interior_view(true)
+		if d < 0:
+			game.set_view_floor(-1)
+		return
+	if d > 0 and game.view_floor >= game.floor_range().y:
+		game.set_interior_view(false)
+		return
+	game.set_view_floor(game.view_floor + d)
+
+
+func _on_floor(f: int) -> void:
+	hud.show_floor(f)
+	var under := game.interior_view and f < 0
+	ground.visible = not under
+	# Untergeschoss: nur Tunnel, Förderbänder und Keller; Flugfeld, Flugzeuge und Vorfeld ausblenden
+	for nd: Node3D in [airfield, flights, ops, roads.visuals]:
+		if nd != null:
+			nd.visible = not under
+	for nd: Node in get_tree().get_nodes_in_group("oberirdisch"):
+		(nd as Node3D).visible = not under
+	env.background_color = Color(0.08, 0.08, 0.09) if under else Color(0.36, 0.42, 0.3)
+	_update_grid()
+
+
 func _inspect(p: Vector3) -> void:
+	_selected = {}
+	_selected_at = p
+	hud.set_options([])
 	var plane := flights.pick(p)
 	if not plane.is_empty():
 		hud.set_info("Flug " + String(plane["code"]), flights.describe(plane), 0)
@@ -394,11 +476,13 @@ func _inspect(p: Vector3) -> void:
 	if rec.is_empty():
 		hud.set_info("Ansehen", "Hier ist nichts gebaut.", 0)
 		return
+	_selected = rec
+	hud.set_options(game.options_of(rec))
 	var body := game.details(rec)
 	if rec.get("id", "") == "halle":
 		body = terminal.hall_summary(rec) + "\n" + body
-	if rec.get("id", "") == "parkhaus":
-		var spaces := int(Catalog.ITEMS["parkhaus"]["spaces"])
+	if rec.get("id", "") in ["parkhaus", "parkplatz"]:
+		var spaces := 75 * int(game.opt(rec, "etagen")) if rec["id"] == "parkhaus" else 22
 		body = ("Zufahrt: verbunden" if traffic.has_access(rec) else "Keine Zufahrt: vor der Einfahrt muss eine Straße liegen") \
 			+ "\nBelegt: %d von %d Plätzen" % [traffic.parked_count(rec), spaces] + "\n" + body
 	if rec.get("type", "") == "line" and Catalog.is_road(String(rec["kind"])):
@@ -413,7 +497,8 @@ func ground_at(screen_pos: Vector2) -> Variant:
 	var sp := screen_pos / float(container.stretch_shrink)
 	var from := cam_rig.cam.project_ray_origin(sp)
 	var dir := cam_rig.cam.project_ray_normal(sp)
-	return Plane(Vector3.UP, 0.0).intersects_ray(from, dir)
+	var h := float(game.view_floor) * Catalog.FLOOR_H if game.interior_view else 0.0
+	return Plane(Vector3.UP, h).intersects_ray(from, dir)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -444,12 +529,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		match k.keycode:
 			KEY_ENTER, KEY_KP_ENTER:
 				builder.finish()
+			KEY_TAB:
+				builder.cycle_mode()
 			KEY_R:
 				builder.rotate()
 			KEY_L:
 				game.set_utility_view(not game.utility_view)
 			KEY_M:
 				_toggle_map()
+			KEY_PAGEUP:
+				_on_floor_step(1)
+			KEY_PAGEDOWN:
+				_on_floor_step(-1)
 			KEY_B:
 				hud.toggle_build()
 			KEY_I:
@@ -528,6 +619,102 @@ func _demo(args: PackedStringArray) -> void:
 		cam_rig.target = spots[mode][0]
 		cam_rig.zoom_goal = spots[mode][1]
 		cam_rig.zoom = spots[mode][1]
+	elif mode == "moebel":
+		# Schaufenster der Einrichtung in einer eigenen Halle
+		var hall := game.build_hall(Rect2(560, 560, 64, 40), true, {})
+		var ids := ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen",
+			"werbebildschirm", "ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium",
+			"palme", "baumbeet", "gruenwand", "springbrunnen", "fluegel", "flugzeugmodell", "fahnen", "infoschalter", "kiosk", "rollsteig"]
+		var x := 564.0
+		var z := 566.0
+		var row_h := 0.0
+		for id: String in ids:
+			var sz: Vector2 = Catalog.ITEMS[id]["size"]
+			if x + sz.x > 620.0:
+				x = 564.0
+				z += row_h + 3.0
+				row_h = 0.0
+			game.build_item(id, Vector3(x + sz.x * 0.5, 0, z + sz.y * 0.5), 0, true)
+			x += sz.x + 2.5
+			row_h = maxf(row_h, sz.y)
+		game.set_interior_view(true)
+		var zl := 40.0
+		var tgt := Vector3(586, 0, 578)
+		for a in args:
+			if a.begins_with("--zoom="):
+				zl = float(a.substr(7))
+			if a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				tgt = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.target = tgt
+		cam_rig.zoom_goal = zl
+		cam_rig.zoom = zl
+		hud.set_build_open(false)
+	elif mode == "landseite":
+		# Linienbus an der Haltestelle, Fußgänger zum Terminal
+		traffic.set_process(false)
+		var seen := false
+		for i in range(3000):
+			traffic.step(0.1)
+			for m: Dictionary in traffic.movers:
+				if m["purpose"] == "bus" and float(m["halt"]) > 9.0:
+					seen = true
+			if seen:
+				break
+		var zl := 48.0
+		var tgt := Vector3(-40, 0, 26)
+		for a in args:
+			if a.begins_with("--zoom="):
+				zl = float(a.substr(7))
+		cam_rig.target = tgt
+		cam_rig.zoom_goal = zl
+		cam_rig.zoom = zl
+		hud.set_build_open(false)
+	elif mode == "untergrund":
+		# Ansicht Untergeschoss: Gepäckförderband und ein Straßentunnel
+		game.build_line("tunnel", [Vector3(-215, 0, 110), Vector3(-290, 0, 185), Vector3(-330, 0, 300), Vector3(-330, 0, 420)], true)
+		game.build_line("strasse", [Vector3(-330, 0, 420), Vector3(-330, 0, 520)], true)
+		if not ("--flach" in args):
+			game.set_interior_view(true)
+			game.set_view_floor(-1)
+		traffic.set_process(false)
+		for i in range(600):
+			traffic.step(0.1)
+		var at := Vector3(140, 0, -8)
+		for a in args:
+			if a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				at = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.target = at
+		cam_rig.zoom_goal = 90.0
+		cam_rig.zoom = 90.0
+		hud.set_build_open(false)
+	elif mode == "dienste":
+		# Abfertigung am Stand: Fahrzeuge bei einem bestimmten Anteil der Abfertigungszeit
+		var want_f := 0.28
+		for a in args:
+			if a.begins_with("--f="):
+				want_f = float(a.substr(4))
+		var found: Dictionary = {}
+		for i in range(16000):
+			flights.step(0.05)
+			for p: Dictionary in flights.planes:
+				if p["state"] == "abfertigung" and not bool(p.get("bus", false)):
+					var f := 1.0 - float(p["timer"]) / maxf(float(p["turn"]), 0.01)
+					if f >= want_f:
+						found = p
+			if not found.is_empty():
+				break
+		var at: Vector3 = found.get("pos", Vector3(-40, 0, -55))
+		var h: Vector3 = found.get("heading", Vector3(0, 0, 1))
+		var zoom := 62.0
+		for a in args:
+			if a.begins_with("--zoom="):
+				zoom = float(a.substr(7))
+		cam_rig.target = at + h.cross(Vector3.UP) * 9.0
+		cam_rig.zoom_goal = zoom
+		cam_rig.zoom = zoom
+		hud.set_build_open(false)
 	elif mode in ["pushback", "bus", "rollen", "haltestelle"]:
 		var found: Dictionary = {}
 		for i in range(12000):
@@ -555,10 +742,15 @@ func _demo(args: PackedStringArray) -> void:
 		cam_rig.target = Vector3(-20, 0, -40)
 		cam_rig.zoom_goal = 230.0
 		cam_rig.zoom = 230.0
-		builder.set_tool("rollweg")
-		builder.on_click(Vector3(-150, 0, -95))
-		builder.on_click(Vector3(-190, 0, -120))
-		builder.on_move(Vector3(-200, 0, -170))
+		# Kurven-Werkzeug: Straße setzt am Ende der Bestandsstraße tangential fort
+		cam_rig.target = Vector3(-230, 0, 150)
+		cam_rig.zoom_goal = 120.0
+		cam_rig.zoom = 120.0
+		builder.set_tool("strasse")
+		builder.set_mode("kurve")
+		builder.on_move(Vector3(-215, 0, 110))
+		builder.on_click(Vector3(-215, 0, 110))
+		builder.on_move(Vector3(-235, 0, 200))
 	elif mode.begins_with("modelle"):
 		# Schaufenster aller Detailmodelle auf einer freien Wiese
 		var base := Vector3(600, 0, 600)

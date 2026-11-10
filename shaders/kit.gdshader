@@ -1,6 +1,6 @@
 // Detailmodelle aus dem Baukasten: Vertexfarben (sRGB), weiche oder flache Normalen.
 // Alpha der Vertexfarbe markiert Leuchtflächen: 0.6 = Fenster (nachts warm erleuchtet),
-// 0.3 = Lampe (nachts hell), 1.0 = normale Oberfläche.
+// 0.3 = Lampe (nachts hell), 0.8 = Laub (wiegt im Wind), 1.0 = normale Oberfläche.
 shader_type spatial;
 render_mode cull_disabled;
 
@@ -18,6 +18,13 @@ vec3 to_linear(vec3 c) {
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (COLOR.a > 0.75 && COLOR.a < 0.85) {
+		// Laub wiegt im Wind, oben stärker als unten
+		float h = max(VERTEX.y - 2.0, 0.0);
+		float t = TIME * 1.4 + wpos.x * 0.15 + wpos.z * 0.11;
+		VERTEX.x += sin(t) * 0.035 * h + sin(t * 2.7) * 0.012 * h;
+		VERTEX.z += cos(t * 0.8) * 0.03 * h;
+	}
 }
 
 void fragment() {
@@ -32,7 +39,7 @@ void fragment() {
 	if (COLOR.a < 0.45) {
 		// Lampe: nachts hell leuchtend
 		EMISSION = base * night * 6.0 + base * 0.15;
-	} else if (COLOR.a < 0.95) {
+	} else if (COLOR.a < 0.7) {
 		// Fenster: nachts zu gut zwei Dritteln warm erleuchtet, tagsüber leicht spiegelnd
 		float on = step(0.3, hash(floor(wpos.xz * 0.6) + floor(wpos.y * 0.4)));
 		EMISSION = vec3(1.0, 0.78, 0.5) * night * on * 1.4;

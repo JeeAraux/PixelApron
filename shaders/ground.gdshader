@@ -7,6 +7,11 @@ uniform vec3 c_light : source_color = vec3(0.44, 0.55, 0.27);
 uniform float grid = 0.0;
 uniform float bound = 3000.0;   // halbe Kantenlänge des Spielfelds
 
+// Offene Tunnelrampen: dort fehlt der Rasen. a = Mitte xz und Richtung, b = halbe Länge und Breite
+uniform vec4 cut_a[48];
+uniform vec2 cut_b[48];
+uniform int cut_n = 0;
+
 varying vec3 wpos;
 
 float hash(vec2 p) {
@@ -29,6 +34,15 @@ float vnoise(vec2 p) {
 }
 
 void fragment() {
+	for (int i = 0; i < cut_n; i++) {
+		vec2 d = wpos.xz - cut_a[i].xy;
+		vec2 f = cut_a[i].zw;
+		float along = dot(d, f);
+		float across = dot(d, vec2(-f.y, f.x));
+		if (abs(along) < cut_b[i].x && abs(across) < cut_b[i].y) {
+			discard;
+		}
+	}
 	float band = mod(floor((wpos.x - wpos.z) / 10.0), 2.0);
 	float patch = vnoise(wpos.xz / 14.0) * 0.6 + vnoise(wpos.xz / 5.0) * 0.4;
 	vec3 col = mix(c_mid, c_light, band * 0.3);

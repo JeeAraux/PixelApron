@@ -8,6 +8,9 @@ const LINE_SHADER = preload("res://shaders/line.gdshader")
 const Models = preload("res://scripts/models.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
 const PixelFont = preload("res://scripts/pixel_font.gd")
+const BeltAnim = preload("res://scripts/belt_anim.gd")
+const Furniture = preload("res://scripts/furniture.gd")
+const Landscape = preload("res://scripts/landscape.gd")
 
 const WALL := Color(0.78, 0.75, 0.67)
 const GLASS := Color(0.2, 0.3, 0.36, 0.6)      # Alpha 0.6: nachts erleuchtet
@@ -110,6 +113,10 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 	if bool(def.get("wall", false)):
 		return make_wall(kind, samples[0], samples[samples.size() - 1])
 	var w: float = def["width"]
+	if bool(def.get("fence", false)):
+		var fm := Landscape.fence(samples)
+		fm.name = kind
+		return fm
 	var mi := MeshInstance3D.new()
 	mi.name = kind
 	mi.mesh = Spline.ribbon(samples, w, y)
@@ -132,6 +139,10 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 		sm.set_shader_parameter("num_a", nums[0])
 		sm.set_shader_parameter("num_b", nums[1])
 	mi.material_override = sm
+	if kind == "tunnel":
+		mi.add_child(_tunnel_build(samples, w))
+	elif kind == "foerderband":
+		mi.add_child(_belt_build(samples, w))
 	# Schultern neben Rollweg und Piste (liegen unter allen anderen Belägen)
 	if kind == "rollweg" or kind == "rollweg_breit" or kind == "piste":
 		var sh := 3.5 if kind == "rollweg" else (5.0 if kind == "rollweg_breit" else 7.5)
@@ -148,6 +159,117 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 		smi.material_override = shm
 		mi.add_child(smi)
 	return mi
+
+
+## Bauwerk eines Straßentunnels: Stützwände der offenen Rampen mit Geländer, Portale mit Sturz
+## und Schild, im geschlossenen Teil Wände mit Fliesen und Leuchtbändern (ohne Decke, damit man
+## in der Ansicht Untergeschoss hineinsieht).
+static func _tunnel_build(s: PackedVector3Array, w: float) -> MeshInstance3D:
+	var k := Kit.new()
+	var conc := Color(0.6, 0.59, 0.55)
+	var tile := Color(0.84, 0.83, 0.78)
+	var walk := Color(0.5, 0.5, 0.48)
+	var rail := Color(0.55, 0.58, 0.6)
+	var lamp := Color(1.0, 0.93, 0.75, 0.3)
+	var n := s.size()
+	var portals := []
+	for i in range(0, n - 2, 2):
+		var a := s[i]
+		var b := s[i + 2]
+		var dir := Vector3(b.x - a.x, 0.0, b.z - a.z)
+		if dir.length() < 0.01:
+			continue
+		dir = dir.normalized()
+		var bas := Basis.looking_at(dir, Vector3.UP)
+		var mid := (a + b) * 0.5
+		var ylow := minf(a.y, b.y)
+		var seg := a.distance_to(b) * 0.5 + 0.08
+		var covered := mid.y < Catalog.TUNNEL_COVER
+		if (a.y >= Catalog.TUNNEL_COVER) != (b.y >= Catalog.TUNNEL_COVER):
+			portals.append([mid, dir, ylow])
+		if mid.y > -0.03:
+			continue
+		for sx: float in [-1.0, 1.0]:
+			var ox := sx * (w * 0.5 + 0.35)
+			# im geschlossenen Teil als Schnitt: niedrige Wände, damit man in der Ansicht Untergeschoss hineinsieht
+			var top := minf(ylow + 1.8, -0.06) if covered else 0.55
+			k.box(Vector3(ox - 0.35, ylow - 0.4, -seg), Vector3(ox + 0.35, top, seg), conc, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+			# Notgehweg mit Bordstein
+			var ow := sx * (w * 0.5 - 0.35)
+			k.box(Vector3(ow - 0.35, mid.y - 0.05, -seg), Vector3(ow + 0.35, mid.y + 0.2, seg), walk, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+			if covered:
+				var fx := sx * (w * 0.5 + 0.0)
+				k.box(Vector3(fx - 0.02, mid.y + 0.3, -seg), Vector3(fx + 0.02, mid.y + 1.5, seg), tile, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+				if i % 6 == 0:
+					k.box(Vector3(fx - 0.06, mid.y + 1.55, -0.9), Vector3(fx + 0.06, mid.y + 1.7, 0.9), lamp, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+				if i % 60 == 0:
+					# Notrufnische mit grünem Schild
+					k.box(Vector3(fx - 0.04, mid.y + 1.0, -0.5), Vector3(fx + 0.04, mid.y + 2.2, 0.5), Color(0.9, 0.45, 0.12), Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+					k.box(Vector3(fx - 0.05, mid.y + 2.5, -0.35), Vector3(fx + 0.05, mid.y + 2.9, 0.35), Color(0.15, 0.6, 0.3, 0.3), Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+			else:
+				# Geländer auf der Stützwand
+				k.box(Vector3(ox - 0.03, 0.55, -seg), Vector3(ox + 0.03, 1.55, -seg + 0.08), rail, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+				k.box(Vector3(ox - 0.04, 1.5, -seg), Vector3(ox + 0.04, 1.58, seg), rail, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+				k.box(Vector3(ox - 0.03, 1.0, -seg), Vector3(ox + 0.03, 1.05, seg), rail, Transform3D(bas, Vector3(mid.x, 0.0, mid.z)))
+	# Portale: Sturz über der Fahrbahn, Stirnwand bis knapp über den Boden, Schild
+	for pt: Array in portals:
+		var c: Vector3 = pt[0]
+		var dir: Vector3 = pt[1]
+		var y0: float = pt[2]
+		var bas := Basis.looking_at(dir, Vector3.UP)
+		var xf := Transform3D(bas, Vector3(c.x, 0.0, c.z))
+		var hw := w * 0.5 + 0.7
+		k.box(Vector3(-hw, y0 + 4.9, -0.7), Vector3(hw, 0.65, 0.7), conc, xf)
+		k.box(Vector3(-hw - 0.2, 0.55, -0.8), Vector3(hw + 0.2, 0.75, 0.8), conc.darkened(0.1), xf)
+		k.box(Vector3(-hw, y0 + 4.75, -0.75), Vector3(hw, y0 + 4.95, 0.75), Color(0.86, 0.69, 0.22), xf)
+		var face := -dir if c.distance_to(s[0]) < c.distance_to(s[n - 1]) else dir
+		var side := face.cross(Vector3.UP).normalized()
+		var sc := Vector3(c.x, (y0 + 4.9 + 0.65) * 0.5, c.z) + face * 0.75
+		k.box(Vector3(-1.6, -0.35, -0.04), Vector3(1.6, 0.35, 0.04), Color(0.1, 0.2, 0.45), Transform3D(Basis.looking_at(face, Vector3.UP), sc))
+		PixelFont.draw(k, "TUNNEL", sc + face * 0.06, -side, Vector3.UP, face, 0.09, Color(0.95, 0.95, 0.92))
+		for sx: float in [-1.0, 1.0]:
+			k.box(Vector3(sx * (w * 0.5 - 0.1) - 0.08, y0 + 4.3, -0.8), Vector3(sx * (w * 0.5 - 0.1) + 0.08, y0 + 4.7, -0.7), lamp, xf)
+	var mi := k.instance("Bauwerk")
+	return mi
+
+
+## Gepäcktunnel: Betonkanal unter der Erde, Stahlrahmen, Lampen und laufende Koffer.
+static func _belt_build(s: PackedVector3Array, w: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Bauwerk"
+	var k := Kit.new()
+	var conc := Color(0.55, 0.54, 0.5)
+	var n := s.size()
+	for i in range(0, n - 2, 2):
+		var a := s[i]
+		var b := s[i + 2]
+		var dir := Vector3(b.x - a.x, 0.0, b.z - a.z)
+		if dir.length() < 0.01:
+			continue
+		var bas := Basis.looking_at(dir.normalized(), Vector3.UP)
+		var mid := (a + b) * 0.5
+		var seg := a.distance_to(b) * 0.5 + 0.06
+		var xf := Transform3D(bas, Vector3(mid.x, 0.0, mid.z))
+		var y := mid.y
+		k.box(Vector3(-w * 0.75 - 0.6, y - 0.75, -seg), Vector3(w * 0.75 + 0.6, y - 0.45, seg), conc.darkened(0.05), xf)
+		for sx: float in [-1.0, 1.0]:
+			k.box(Vector3(sx * (w * 0.75 + 0.3) - 0.3, y - 0.75, -seg), Vector3(sx * (w * 0.75 + 0.3) + 0.3, y + 0.55, seg), conc, xf)
+			k.box(Vector3(sx * w * 0.5 - 0.06, y - 0.2, -seg), Vector3(sx * w * 0.5 + 0.06, y + 0.12, seg), Color(0.42, 0.45, 0.48), xf)
+			if i % 6 == 0:
+				k.box(Vector3(sx * w * 0.42 - 0.05, y - 0.45, -0.05), Vector3(sx * w * 0.42 + 0.05, y - 0.05, 0.05), Color(0.3, 0.32, 0.34), xf)
+		if i % 16 == 0:
+			k.box(Vector3(w * 0.75 + 0.05, y + 0.55, -0.1), Vector3(w * 0.75 + 0.15, y + 1.2, 0.1), Color(0.3, 0.32, 0.34), xf)
+			k.box(Vector3(w * 0.75 - 0.15, y + 1.15, -0.5), Vector3(w * 0.75 + 0.15, y + 1.25, 0.5), Color(1.0, 0.92, 0.7, 0.3), xf)
+	root.add_child(k.instance("Kanal"))
+	var pts := PackedVector3Array()
+	for v: Vector3 in s:
+		pts.append(v + Vector3(0, 0.12, 0))
+	var bags := MultiMeshInstance3D.new()
+	bags.name = "Koffer"
+	bags.set_script(BeltAnim)
+	root.add_child(bags)
+	bags.call("setup", pts, Models.bag_mesh(), 1.6, 2.6)
+	return root
 
 
 ## Pistenkennzahlen (missweisender Kurs / 10) für beide Enden; Norden = -Z.
@@ -198,71 +320,194 @@ static func make_wall(kind: String, a: Vector3, b: Vector3) -> Node3D:
 	return root
 
 
-## Terminalhalle w × d: Boden, Glasfassade (hoch und niedrig) und Dach als eigene Knoten.
-static func make_hall(w: float, d: float) -> Node3D:
+## Terminalhalle w × d mit Bauformen (opts): Ebenen 1–3, Keller, Fassade (Glas, Beton, Holz),
+## Ecken (eckig, abgerundet, rund), Dach (flach, Tonnendach, Sheddach).
+## Knoten: "Ebene-1" … "Ebene2" (Böden), "Hoch" (volle Fassade), "Tief" (Brüstung für die Innenansicht), "Dach".
+static func make_hall(w: float, d: float, opts: Dictionary = {}) -> Node3D:
 	var n := Node3D.new()
 	n.name = "halle"
 	var hw := w * 0.5
 	var hd := d * 0.5
-	blk(n, Vector3(-hw, 0, -hd), Vector3(hw, 0.1, hd), FLOOR)
-	var line_c := Color(0.72, 0.70, 0.64)
-	var x := -hw + 4.0
-	while x < hw - 0.5:
-		blk(n, Vector3(x - 0.05, 0.1, -hd), Vector3(x + 0.05, 0.11, hd), line_c)
-		x += 4.0
-	var z := -hd + 4.0
-	while z < hd - 0.5:
-		blk(n, Vector3(-hw, 0.1, z - 0.05), Vector3(hw, 0.11, z + 0.05), line_c)
-		z += 4.0
+	var levels := int(opts.get("etagen", 1))
+	var cellar := bool(opts.get("keller", false))
+	var facade := String(opts.get("fassade", "glas"))
+	var form := String(opts.get("form", "eckig"))
+	var roof_t := String(opts.get("dach", "flach"))
+	var fh := Catalog.FLOOR_H
+	var top := 4.6 + float(levels) * fh       # Oberkante Fassade
+	var radius := 0.0
+	if form == "abgerundet":
+		radius = minf(4.0, minf(hw, hd) * 0.4)
+	elif form == "rund":
+		radius = minf(hw, hd) * 0.45
+	var ring := _perimeter(hw, hd, radius)
+	# Böden je Ebene mit Fugenraster
+	for f in range(-1 if cellar else 0, levels):
+		var slab := Node3D.new()
+		slab.name = "Ebene%d" % f
+		n.add_child(slab)
+		var k := Kit.new()
+		var y0 := float(f) * fh
+		var fc := FLOOR if f != -1 else Color(0.6, 0.6, 0.58)
+		_polygon(k, ring, y0 - (0.25 if f != 0 else 0.0), y0 + 0.1, fc)
+		var x := -hw + 4.0
+		while x < hw - 0.5:
+			k.box(Vector3(x - 0.04, y0 + 0.1, -hd + radius * 0.3), Vector3(x + 0.04, y0 + 0.11, hd - radius * 0.3), fc.darkened(0.08))
+			x += 4.0
+		var z := -hd + 4.0
+		while z < hd - 0.5:
+			k.box(Vector3(-hw + radius * 0.3, y0 + 0.1, z - 0.04), Vector3(hw - radius * 0.3, y0 + 0.11, z + 0.04), fc.darkened(0.08))
+			z += 4.0
+		if f == -1:
+			_wall_ring(k, ring, -fh, -0.25, CONCRETE, 0.4)
+		slab.add_child(k.instance("Boden"))
+	# Fassade außen (volle Höhe)
 	var high := Node3D.new()
 	high.name = "Hoch"
 	n.add_child(high)
+	var hk := Kit.new()
+	var band := WALL
+	var wall_col := WALL
+	match facade:
+		"beton":
+			wall_col = Color(0.66, 0.65, 0.62)
+		"holz":
+			wall_col = Color(0.55, 0.38, 0.22)
+			band = Color(0.42, 0.29, 0.17)
+	_wall_ring(hk, ring, 0.0, 0.6, CONCRETE, 0.32)
+	for f in range(levels):
+		var y0 := 0.6 + float(f) * fh
+		var y1 := float(f + 1) * fh + (4.6 - fh if f == levels - 1 else 0.0) - 1.4
+		if facade == "glas":
+			_wall_ring(hk, ring, y0, y1, GLASS, 0.24)
+			_mullions(hk, ring, y0, y1, 2.0, Color(0.34, 0.38, 0.4))
+		else:
+			_wall_ring(hk, ring, y0, y1, wall_col, 0.3)
+			_wall_ring(hk, ring, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), GLASS, 0.34)
+			_mullions(hk, ring, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), 1.6, band)
+			if facade == "holz":
+				_mullions(hk, ring, y1 - 0.9, y1, 0.5, band)
+		_wall_ring(hk, ring, y1, y1 + 1.4 if f < levels - 1 else top, band, 0.3)
+	high.add_child(hk.instance("Fassade"))
+	if w >= 30.0:
+		_letters(high, "TERMINAL", Vector3(0, top - 1.2, hd + 0.18), 0.27 + 0.05 * float(levels - 1), Color(0.16, 0.25, 0.45))
+	# niedrige Brüstung für die Innenansicht
 	var low := Node3D.new()
 	low.name = "Tief"
 	n.add_child(low)
-	# vier Seiten: [Mitte, halbe Länge, entlang x?]
-	for side: Array in [[Vector3(0, 0, hd - 0.15), hw, true], [Vector3(0, 0, -hd + 0.15), hw, true],
-			[Vector3(hw - 0.15, 0, 0), hd, false], [Vector3(-hw + 0.15, 0, 0), hd, false]]:
-		var c: Vector3 = side[0]
-		var half: float = side[1]
-		var along: bool = side[2]
-		var ext := func(l: float, t: float) -> Vector3: return Vector3(l, 0, t) if along else Vector3(t, 0, l)
-		var e1: Vector3 = ext.call(half, 0.15)
-		blk(high, c - e1, c + e1 + Vector3(0, 0.6, 0), CONCRETE)
-		blk(high, c - e1 + Vector3(0, 0.6, 0), c + e1 + Vector3(0, 7.4, 0), GLASS)
-		blk(high, c - e1 + Vector3(0, 7.4, 0), c + e1 + Vector3(0, 9.0, 0), WALL)
-		var t := -half + 4.0
-		while t < half - 0.5:
-			var m: Vector3 = c + ext.call(t, 0.0)
-			var e2: Vector3 = ext.call(0.2, 0.2)
-			blk(high, m - e2 + Vector3(0, 0.6, 0), m + e2 + Vector3(0, 7.4, 0), WALL)
-			t += 4.0
-		blk(low, c - e1, c + e1 + Vector3(0, 0.6, 0), CONCRETE)
-		var gl := blk(low, c - e1 + Vector3(0, 0.6, 0), c + e1 + Vector3(0, 1.3, 0), WHITE)
-		gl.material_override = glass_mat()
-		blk(low, c - e1 + Vector3(0, 1.3, 0), c + e1 + Vector3(0, 1.45, 0), WALL)
+	var lk := Kit.new()
+	_wall_ring(lk, ring, 0.0, 0.6, CONCRETE, 0.3)
+	_wall_ring(lk, ring, 0.6, 1.3, Color(0.55, 0.75, 0.85, 0.6), 0.32)
+	_wall_ring(lk, ring, 1.3, 1.45, WALL, 0.34)
+	low.add_child(lk.instance("Bruestung"))
+	# Dach
 	var roof := Node3D.new()
 	roof.name = "Dach"
 	n.add_child(roof)
-	blk(roof, Vector3(-hw - 0.4, 9.0, -hd - 0.4), Vector3(hw + 0.4, 9.6, hd + 0.4), ROOF)
-	var sx := -hw + 6.0
-	while sx < hw - 4.0:
-		blk(roof, Vector3(sx - 1.0, 9.6, -hd + 3.0), Vector3(sx + 1.0, 9.9, hd - 3.0), Color(0.36, 0.46, 0.52))
-		sx += 12.0
-	var units := clampi(int(w * d / 500.0), 1, 12)
-	for i in range(units):
-		var ux := -hw + (float(i) + 0.5) * w / float(units)
-		var uz := (hd * 0.45) * (1.0 if i % 2 == 0 else -1.0)
-		blk(roof, Vector3(ux - 2.0, 9.6, uz - 1.5), Vector3(ux + 2.0, 10.9, uz + 1.5), Color(0.45, 0.47, 0.47))
-		for gx in range(3):
-			blk(roof, Vector3(ux - 1.6 + float(gx) * 1.2, 10.9, uz - 1.2), Vector3(ux - 0.8 + float(gx) * 1.2, 11.0, uz + 1.2), Color(0.3, 0.32, 0.33))
-	# Attika und Schriftzug TERMINAL über der Landseite
-	blk(roof, Vector3(-hw - 0.4, 9.6, hd + 0.1), Vector3(hw + 0.4, 10.1, hd + 0.4), WALL)
-	blk(roof, Vector3(-hw - 0.4, 9.6, -hd - 0.4), Vector3(hw + 0.4, 10.1, -hd - 0.1), WALL)
-	if w >= 30.0:
-		_letters(high, "TERMINAL", Vector3(0, 7.55, hd + 0.02), 0.27, Color(0.16, 0.25, 0.45))
+	var rk := Kit.new()
+	var ring_out := _perimeter(hw + 0.4, hd + 0.4, radius + (0.4 if radius > 0.0 else 0.0))
+	_polygon(rk, ring_out, top - 0.6, top, ROOF)
+	_wall_ring(rk, ring_out, top, top + 0.5, band, 0.35)
+	if roof_t == "gewoelbt" and radius < 0.1:
+		# Tonnendach quer zur Landseite: Bögen aus Blechbahnen
+		var steps := 14
+		var rise := minf(hd * 0.35, 6.0)
+		for i in range(steps):
+			var a0 := PI * float(i) / float(steps)
+			var a1 := PI * float(i + 1) / float(steps)
+			var z0 := -hd * cos(a0)
+			var z1 := -hd * cos(a1)
+			var y0 := top + rise * sin(a0)
+			var y1 := top + rise * sin(a1)
+			var col := Color(0.62, 0.64, 0.66) if i % 2 == 0 else Color(0.58, 0.6, 0.62)
+			rk.quad(Vector3(-hw - 0.3, y0, z0), Vector3(hw + 0.3, y0, z0), Vector3(hw + 0.3, y1, z1), Vector3(-hw - 0.3, y1, z1), col, Vector3(0, top - 20.0, 0))
+		for sx: float in [-1.0, 1.0]:
+			for i in range(steps):
+				var a0 := PI * float(i) / float(steps)
+				var a1 := PI * float(i + 1) / float(steps)
+				rk.tri(Vector3(sx * (hw + 0.3), top, 0), Vector3(sx * (hw + 0.3), top + rise * sin(a0), -hd * cos(a0)),
+					Vector3(sx * (hw + 0.3), top + rise * sin(a1), -hd * cos(a1)), GLASS, Vector3(0, top + 2.0, 0))
+	elif roof_t == "shed" and radius < 0.1:
+		# Sheddach: Sägezahn, Glasflächen nach Norden (-z)
+		var z := -hd
+		while z < hd - 0.5:
+			var z1 := minf(z + 6.0, hd)
+			rk.quad(Vector3(-hw, top + 2.4, z), Vector3(hw, top + 2.4, z), Vector3(hw, top, z1), Vector3(-hw, top, z1), ROOF.lightened(0.15), Vector3(0, top - 10.0, z1 + 5.0))
+			rk.box(Vector3(-hw, top, z - 0.05), Vector3(hw, top + 2.4, z + 0.05), GLASS)
+			z = z1
+	else:
+		var sx := -hw + 6.0
+		while sx < hw - 4.0:
+			rk.box(Vector3(sx - 1.0, top, -hd + 3.0 + radius * 0.5), Vector3(sx + 1.0, top + 0.3, hd - 3.0 - radius * 0.5), Color(0.36, 0.46, 0.52, 0.6))
+			sx += 12.0
+		var units := clampi(int(w * d / 500.0), 1, 12)
+		for i in range(units):
+			var ux := -hw + (float(i) + 0.5) * w / float(units)
+			var uz := (hd * 0.45) * (1.0 if i % 2 == 0 else -1.0)
+			rk.box(Vector3(ux - 2.0, top, uz - 1.5), Vector3(ux + 2.0, top + 1.3, uz + 1.5), Color(0.45, 0.47, 0.47))
+			for gx in range(3):
+				rk.cyl(Vector3(ux - 1.2 + float(gx) * 1.2, top + 1.3, uz), Vector3(ux - 1.2 + float(gx) * 1.2, top + 1.4, uz), 0.5, 0.5, Color(0.3, 0.32, 0.33), 12)
+	roof.add_child(rk.instance("Dachflaeche"))
 	bake(n)
 	return n
+
+
+## Umriss eines Rechtecks mit gerundeten Ecken (gegen den Uhrzeigersinn), radius 0 = eckig.
+static func _perimeter(hw: float, hd: float, radius: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if radius < 0.05:
+		return PackedVector2Array([Vector2(hw, hd), Vector2(-hw, hd), Vector2(-hw, -hd), Vector2(hw, -hd)])
+	var steps := 6
+	for c: Array in [[hw - radius, hd - radius, 0.0], [-hw + radius, hd - radius, PI * 0.5], [-hw + radius, -hd + radius, PI], [hw - radius, -hd + radius, PI * 1.5]]:
+		for i in range(steps + 1):
+			var a := float(c[2]) + PI * 0.5 * float(i) / float(steps)
+			out.append(Vector2(float(c[0]) + cos(a) * radius, float(c[1]) + sin(a) * radius))
+	return out
+
+
+## Fläche (konvex) zwischen y0 und y1 über dem Umriss.
+static func _polygon(k: Kit, ring: PackedVector2Array, y0: float, y1: float, col: Color) -> void:
+	var top := []
+	var bot := []
+	for p: Vector2 in ring:
+		top.append(Vector3(p.x, y1, p.y))
+		bot.append(Vector3(p.x, y0, p.y))
+	k.prism(bot, top, col)
+
+
+## Wandring entlang des Umrisses (Dicke t, nach innen).
+static func _wall_ring(k: Kit, ring: PackedVector2Array, y0: float, y1: float, col: Color, t: float) -> void:
+	if y1 - y0 < 0.01:
+		return
+	for i in range(ring.size()):
+		var a := ring[i]
+		var b := ring[(i + 1) % ring.size()]
+		var d := b - a
+		var len := d.length()
+		if len < 0.01:
+			continue
+		var mid := (a + b) * 0.5
+		var dir := Vector3(d.x, 0, d.y) / len
+		var inward := Vector3(-mid.x, 0, -mid.y).normalized()
+		var side := dir.cross(Vector3.UP)
+		if side.dot(inward) < 0.0:
+			side = -side
+		var bas := Basis(dir, Vector3.UP, side)
+		k.box(Vector3(-len * 0.5 - 0.02, y0, 0.0), Vector3(len * 0.5 + 0.02, y1, t), col, Transform3D(bas, Vector3(mid.x, 0, mid.y)))
+
+
+## Senkrechte Sprossen alle step Meter entlang des Umrisses.
+static func _mullions(k: Kit, ring: PackedVector2Array, y0: float, y1: float, step: float, col: Color) -> void:
+	for i in range(ring.size()):
+		var a := ring[i]
+		var b := ring[(i + 1) % ring.size()]
+		var len := a.distance_to(b)
+		var nseg := maxi(1, int(len / step))
+		for j in range(nseg + 1):
+			var p := a.lerp(b, float(j) / float(nseg))
+			var outv := Vector2(p.x, p.y).normalized()
+			var q := p + outv * 0.02
+			k.box(Vector3(q.x - 0.07, y0, q.y - 0.07), Vector3(q.x + 0.07, y1, q.y + 0.07), col)
 
 
 const FONT := {
@@ -344,19 +589,22 @@ static func _bake_mesh(kit: Kit, mesh: Mesh, xf: Transform3D, col: Color) -> voi
 			kit.tri_raw(a, b, c, n, col)
 
 
-static func make_item(id: String) -> Node3D:
+static func make_item(id: String, opts: Dictionary = {}) -> Node3D:
 	if id == "halle":
-		return make_hall(24.0, 16.0)
-	var n := _make_item_raw(id)
+		return make_hall(24.0, 16.0, opts)
+	var n := _make_item_raw(id, opts)
 	bake(n)
 	return n
 
 
-static func _make_item_raw(id: String) -> Node3D:
+static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 	var n := Node3D.new()
 	n.name = id
+	n.set_meta("opts", opts)
 	if Catalog.is_inside(id):
 		_inside(n, id)
+		return n
+	if Landscape.build(n, id):
 		return n
 	match id:
 		"hangar":
@@ -381,6 +629,10 @@ static func _make_item_raw(id: String) -> Node3D:
 			_stand(n, false, "stand_gross")
 		"bushalt":
 			_bus_stop(n)
+		"haltestelle":
+			_city_stop(n)
+		"gepaeckumschlag":
+			_baggage_hall(n)
 		"flutlicht":
 			_floodlight(n)
 		"fluggastbruecke":
@@ -424,7 +676,8 @@ static func _terminal_old(n: Node3D) -> void:
 
 
 static func _hangar(n: Node3D) -> void:
-	var clad := Color(0.62, 0.66, 0.68)
+	var opts: Dictionary = n.get_meta("opts", {})
+	var clad: Color = {"grau": Color(0.62, 0.66, 0.68), "blau": Color(0.3, 0.45, 0.62), "weiss": Color(0.86, 0.87, 0.86)}.get(String(opts.get("farbe", "grau")), Color(0.62, 0.66, 0.68))
 	blk(n, Vector3(-22, 0, -18), Vector3(22, 12, 18), clad)
 	# Tonnendach in Stufen (Achse quer zum Tor)
 	for i in range(6):
@@ -459,9 +712,15 @@ static func _tower(n: Node3D) -> void:
 	blk(n, Vector3(-1.2, 0, 5.95), Vector3(1.2, 2.4, 6.1), GLASS)
 	blk(n, Vector3(-6.3, 5, -6.3), Vector3(6.3, 5.5, 6.3), ROOF)
 	# Schaft mit Treppenhausfenstern
-	cyl(n, Vector3(0, 5.5, 0), 2.4, 2.2, 23.0, Color(0.84, 0.82, 0.76), 12)
-	for i in range(9):
-		blk(n, Vector3(-0.35, 7.0 + float(i) * 2.4, 2.2), Vector3(0.35, 7.9 + float(i) * 2.4, 2.45), GLASS)
+	var modern := String((n.get_meta("opts", {}) as Dictionary).get("stil", "klassisch")) == "modern"
+	if modern:
+		# schlanker Schaft mit durchgehendem Glasstreifen
+		cyl(n, Vector3(0, 5.5, 0), 2.0, 1.6, 23.0, Color(0.93, 0.93, 0.92), 16)
+		blk(n, Vector3(-0.5, 6.0, 1.45), Vector3(0.5, 28.0, 1.95), GLASS)
+	else:
+		cyl(n, Vector3(0, 5.5, 0), 2.4, 2.2, 23.0, Color(0.84, 0.82, 0.76), 12)
+		for i in range(9):
+			blk(n, Vector3(-0.35, 7.0 + float(i) * 2.4, 2.2), Vector3(0.35, 7.9 + float(i) * 2.4, 2.45), GLASS)
 	blk(n, Vector3(-2.6, 18.0, -2.6), Vector3(2.6, 18.3, 2.6), ROOF)
 	# Kanzel: Unterbau, Galerie mit Geländer, schräg gestellte Scheiben mit Pfosten, Dach
 	cyl(n, Vector3(0, 28.5, 0), 3.4, 4.8, 1.0, ROOF, 12)
@@ -487,17 +746,43 @@ static func _tower(n: Node3D) -> void:
 
 
 static func _parkhaus(n: Node3D) -> void:
-	for lvl in range(1, 5):
+	var opts: Dictionary = n.get_meta("opts", {})
+	var levels := int(opts.get("etagen", 4))
+	var tint: Color = {"grau": CONCRETE, "rot": Color(0.62, 0.3, 0.24), "blau": Color(0.36, 0.48, 0.62), "holz": Color(0.55, 0.4, 0.25)}.get(String(opts.get("farbe", "grau")), CONCRETE)
+	var top := float(levels) * 3.0
+	for lvl in range(1, levels + 1):
 		var y := float(lvl) * 3.0
 		blk(n, Vector3(-16, y, -22), Vector3(16, y + 0.4, 22), CONCRETE)
 		for side: float in [-1.0, 1.0]:
-			blk(n, Vector3(-16, y + 0.4, side * 21.85 - 0.15), Vector3(16, y + 1.3, side * 21.85 + 0.15), CONCRETE)
-			blk(n, Vector3(side * 15.85 - 0.15, y + 0.4, -22), Vector3(side * 15.85 + 0.15, y + 1.3, 22), CONCRETE)
+			blk(n, Vector3(-16, y + 0.4, side * 21.85 - 0.15), Vector3(16, y + 1.3, side * 21.85 + 0.15), tint)
+			blk(n, Vector3(side * 15.85 - 0.15, y + 0.4, -22), Vector3(side * 15.85 + 0.15, y + 1.3, 22), tint)
+			# senkrechte Lamellen an der Fassade
+			var lx := -15.0
+			while lx < 15.5:
+				blk(n, Vector3(lx - 0.06, y - 1.6, side * 22.05 - 0.06), Vector3(lx + 0.06, y + 1.3, side * 22.05 + 0.06), tint.darkened(0.15))
+				lx += 1.5
+		# Parkplatz-Markierungen auf jeder Ebene
+		for k in range(12):
+			blk(n, Vector3(-15.0 + float(k) * 2.6, y + 0.4, -20.0), Vector3(-14.9 + float(k) * 2.6, y + 0.41, -14.5), Color(0.86, 0.85, 0.8))
+			blk(n, Vector3(-15.0 + float(k) * 2.6, y + 0.4, 14.5), Vector3(-14.9 + float(k) * 2.6, y + 0.41, 20.0), Color(0.86, 0.85, 0.8))
 	for x: float in [-15.6, -5.2, 5.2, 15.6]:
 		for z: float in [-21.6, -7.2, 7.2, 21.6]:
-			blk(n, Vector3(x - 0.3, 0, z - 0.3), Vector3(x + 0.3, 12.0, z + 0.3), CONCRETE)
-	blk(n, Vector3(10.5, 0, -22), Vector3(16, 14.5, -16.5), CONCRETE)
-	blk(n, Vector3(16.0, 9.5, -21.5), Vector3(16.15, 13.5, -17.0), Color(0.16, 0.32, 0.55))
+			blk(n, Vector3(x - 0.3, 0, z - 0.3), Vector3(x + 0.3, top, z + 0.3), CONCRETE)
+	# Rampe innen, Treppenhaus mit Glas und blauem P
+	for lvl in range(levels):
+		var y0 := float(lvl) * 3.0
+		var ramp := Transform3D(Basis(Vector3.RIGHT, -atan(3.0 / 14.0)), Vector3(-2.5, y0 + 1.7, 0))
+		var rk := Kit.new()
+		rk.box(Vector3(-2.5, -0.15, -7.2), Vector3(2.5, 0.15, 7.2), CONCRETE.darkened(0.05), ramp)
+		var rmi := rk.instance("Rampe")
+		n.add_child(rmi)
+	blk(n, Vector3(10.5, 0, -22), Vector3(16, top + 2.5, -16.5), CONCRETE)
+	blk(n, Vector3(10.4, 1.0, -22.05), Vector3(15.0, top + 1.8, -21.95), GLASS)
+	blk(n, Vector3(16.0, top - 2.5, -21.5), Vector3(16.15, top + 1.5, -17.0), Color(0.16, 0.32, 0.55))
+	blk(n, Vector3(16.1, top - 1.8, -20.4), Vector3(16.2, top + 0.8, -19.8), Color(0.95, 0.95, 0.95))
+	blk(n, Vector3(16.1, top + 0.2, -20.4), Vector3(16.2, top + 0.8, -18.6), Color(0.95, 0.95, 0.95))
+	blk(n, Vector3(16.1, top - 0.6, -20.4), Vector3(16.2, top - 0.1, -18.6), Color(0.95, 0.95, 0.95))
+	blk(n, Vector3(16.1, top - 0.6, -19.2), Vector3(16.2, top + 0.8, -18.6), Color(0.95, 0.95, 0.95))
 	# Ein- und Ausfahrt an der Vorderseite (-z): Zufahrt, Kassenhäuschen, Schranken, Schilder
 	blk(n, Vector3(-11, 0.0, -31), Vector3(11, 0.05, -22), Color(0.25, 0.245, 0.23))
 	blk(n, Vector3(-0.15, 0.05, -30), Vector3(0.15, 0.06, -22), Color(0.86, 0.85, 0.8))
@@ -533,7 +818,7 @@ static func _parkhaus(n: Node3D) -> void:
 			if rng.randf() < 0.18:
 				continue
 			var car := make_car(CAR_COLORS[rng.randi() % CAR_COLORS.size()])
-			car.position = Vector3(-13.0 + float(k) * 2.6, 12.4, row)
+			car.position = Vector3(-13.0 + float(k) * 2.6, top + 0.4, row)
 			n.add_child(car)
 
 
@@ -638,13 +923,52 @@ static func _heizzentrale(n: Node3D) -> void:
 		blk(n, Vector3(-11.5, 2.8, z - 0.2), Vector3(-11.0, 3.2, z + 0.2), Color(0.85, 0.35, 0.2) if z < 4.0 else Color(0.25, 0.45, 0.75))
 
 
+## Bäume in fünf Arten. Laub hat Alpha 0.8: der Shader lässt es im Wind wiegen.
 static func _baum(n: Node3D) -> void:
-	var green := Color.from_hsv(randf_range(0.22, 0.3), randf_range(0.45, 0.6), randf_range(0.26, 0.36))
-	cyl(n, Vector3.ZERO, 0.38, 0.3, 3.2, Color(0.25, 0.19, 0.13), 6)
-	ball(n, Vector3(0, 5.2, 0), 2.6, green, 7)
-	for i in range(2):
-		var off := Vector3(randf_range(-1.3, 1.3), randf_range(5.4, 6.4), randf_range(-1.3, 1.3))
-		ball(n, off, 1.8, green.lightened(0.06 * float(i)), 6)
+	var stil := String((n.get_meta("opts", {}) as Dictionary).get("stil", ["laub", "laub", "nadel", "birke", "pappel", "obst"][randi() % 6]))
+	var k := Kit.new()
+	var bark := Color(0.3, 0.22, 0.15)
+	var g := Color.from_hsv(randf_range(0.22, 0.3), randf_range(0.45, 0.6), randf_range(0.32, 0.42))
+	var leaf := Color(g.r, g.g, g.b, 0.8)
+	var s := randf_range(0.85, 1.2)
+	match stil:
+		"nadel":
+			k.cyl(Vector3.ZERO, Vector3(0, 2.0 * s, 0), 0.3, 0.25, bark, 8)
+			var dark := Color(0.16, 0.3, 0.2, 0.8)
+			for i in range(4):
+				var y := (1.6 + float(i) * 1.9) * s
+				k.cyl(Vector3(0, y, 0), Vector3(0, y + 3.0 * s, 0), (2.6 - float(i) * 0.55) * s, 0.0, dark.lightened(float(i) * 0.04), 12, true)
+		"birke":
+			k.cyl(Vector3.ZERO, Vector3(0, 5.5 * s, 0), 0.22, 0.14, Color(0.9, 0.89, 0.85), 8)
+			for i in range(4):
+				var y := 0.8 + float(i) * 1.1
+				k.box(Vector3(-0.23, y, -0.05), Vector3(0.0, y + 0.12, 0.05), Color(0.15, 0.15, 0.15))
+			var lg := Color(0.5, 0.66, 0.3, 0.8)
+			for i in range(5):
+				var off := Vector3(randf_range(-1.0, 1.0), randf_range(4.5, 7.0) * s, randf_range(-1.0, 1.0))
+				k.sphere(off, randf_range(1.0, 1.5) * s, lg.lightened(randf() * 0.08), 10, 6, Vector3(1.0, 1.3, 1.0))
+		"pappel":
+			k.cyl(Vector3.ZERO, Vector3(0, 3.0, 0), 0.3, 0.25, bark, 8)
+			k.sphere(Vector3(0, 7.5 * s, 0), 1.7 * s, leaf, 12, 8, Vector3(1.0, 3.2, 1.0))
+		"obst":
+			k.cyl(Vector3.ZERO, Vector3(0, 1.8, 0), 0.25, 0.2, bark, 8)
+			for i in range(4):
+				var off := Vector3(randf_range(-0.9, 0.9), randf_range(2.8, 3.6), randf_range(-0.9, 0.9))
+				k.sphere(off, randf_range(1.2, 1.6), leaf.lightened(0.05), 10, 6)
+			for i in range(10):
+				var a := randf() * TAU
+				var p := Vector3(cos(a) * 1.7, randf_range(2.6, 4.0), sin(a) * 1.7)
+				k.sphere(p, 0.12, Color(0.85, 0.15, 0.1) if i % 3 != 0 else Color(0.95, 0.75, 0.15), 6, 4)
+		_:
+			k.cyl(Vector3.ZERO, Vector3(0, 3.4 * s, 0), 0.4, 0.28, bark, 10)
+			for b in range(3):
+				var a := TAU * float(b) / 3.0 + randf()
+				k.cyl(Vector3(0, 2.6 * s, 0), Vector3(cos(a) * 1.2, 4.2 * s, sin(a) * 1.2), 0.16, 0.08, bark, 6)
+			k.sphere(Vector3(0, 5.2 * s, 0), 2.5 * s, leaf, 14, 8)
+			for i in range(5):
+				var off := Vector3(randf_range(-1.6, 1.6), randf_range(4.6, 6.6) * s, randf_range(-1.6, 1.6))
+				k.sphere(off, randf_range(1.3, 1.9) * s, Color(leaf.r, leaf.g, leaf.b, 0.8).lightened(randf() * 0.07), 12, 7)
+	n.add_child(k.instance("Baum"))
 
 
 ## Standmarkierung nach ICAO (Nase zeigt nach +Z): gelbe Mittellinie, Haltebalken je Muster mit
@@ -827,6 +1151,76 @@ static func _bus_stop(n: Node3D) -> void:
 	n.add_child(k.instance("Haltestelle"))
 
 
+## Bushaltestelle an der Straße (Straße vor der Vorderseite, -Z): Wartehäuschen mit Glas,
+## Bank, Fahrplan, Haltestellenschild (grünes H auf Gelb) und beleuchteter Abfahrtsanzeige.
+static func _city_stop(n: Node3D) -> void:
+	var k := Kit.new()
+	var steel := Color(0.36, 0.41, 0.44)
+	var glass := Color(0.55, 0.72, 0.8, 0.6)
+	# Bordstein und gepflasterte Wartefläche mit taktilen Leitstreifen
+	k.box(Vector3(-8.0, 0.0, -2.0), Vector3(8.0, 0.18, 2.0), Color(0.66, 0.65, 0.61))
+	k.box(Vector3(-8.0, 0.0, -2.0), Vector3(8.0, 0.2, -1.75), Color(0.75, 0.74, 0.7))
+	k.box(Vector3(-7.0, 0.18, -1.45), Vector3(7.0, 0.2, -1.15), Color(0.85, 0.85, 0.82))
+	for x in range(-7, 8):
+		k.box(Vector3(float(x) - 0.02, 0.18, -2.0), Vector3(float(x) + 0.02, 0.19, 2.0), Color(0.58, 0.57, 0.53))
+	# Wartehäuschen
+	for sx: float in [-3.0, 3.0]:
+		k.box(Vector3(sx - 0.06, 0.18, 0.4), Vector3(sx + 0.06, 2.55, 0.52), steel)
+		k.box(Vector3(sx - 0.06, 0.18, 1.6), Vector3(sx + 0.06, 2.55, 1.72), steel)
+		k.box(Vector3(sx - 0.03, 0.35, 0.55), Vector3(sx + 0.03, 2.3, 1.6), glass)
+	k.box(Vector3(-3.0, 0.35, 1.62), Vector3(3.0, 2.3, 1.68), glass)
+	k.box(Vector3(-3.2, 2.55, 0.2), Vector3(3.2, 2.68, 1.85), Color(0.86, 0.86, 0.84))
+	k.box(Vector3(-3.2, 2.5, 0.2), Vector3(3.2, 2.55, 0.26), Color(0.16, 0.42, 0.25))
+	# Bank und Fahrplanvitrine
+	k.box(Vector3(-2.2, 0.62, 1.1), Vector3(1.0, 0.7, 1.5), Color(0.42, 0.31, 0.21))
+	k.box(Vector3(-2.2, 0.7, 1.45), Vector3(1.0, 1.1, 1.52), Color(0.42, 0.31, 0.21))
+	for x: float in [-2.0, -0.6, 0.8]:
+		k.box(Vector3(x - 0.04, 0.18, 1.15), Vector3(x + 0.04, 0.62, 1.45), steel)
+	k.box(Vector3(1.6, 1.0, 1.58), Vector3(2.7, 2.0, 1.62), Color(0.95, 0.95, 0.9, 0.3))
+	# Abfahrtsanzeige (leuchtet)
+	k.box(Vector3(-1.6, 2.15, 0.28), Vector3(1.6, 2.48, 0.34), Color(0.05, 0.05, 0.05))
+	PixelFont.draw(k, "3 MIN", Vector3(0, 2.33, 0.27), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), 0.035, Color(1.0, 0.7, 0.2, 0.3))
+	# Haltestellenschild: grünes H im gelben Kreis
+	k.cyl(Vector3(5.5, 0.18, -1.0), Vector3(5.5, 3.2, -1.0), 0.05, 0.05, steel, 8)
+	k.cyl(Vector3(5.5, 2.85, -1.05), Vector3(5.5, 2.85, -0.97), 0.38, 0.38, Color(0.95, 0.82, 0.15), 16)
+	k.cyl(Vector3(5.5, 2.85, -1.07), Vector3(5.5, 2.85, -1.05), 0.32, 0.32, Color(0.95, 0.82, 0.15), 16)
+	PixelFont.draw(k, "H", Vector3(5.5, 2.85, -1.08), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), 0.07, Color(0.1, 0.5, 0.25))
+	PixelFont.draw(k, "H", Vector3(5.5, 2.85, -0.95), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.07, Color(0.1, 0.5, 0.25))
+	k.box(Vector3(5.15, 2.2, -1.06), Vector3(5.85, 2.42, -0.95), Color(0.95, 0.95, 0.92))
+	# Mülleimer
+	k.cyl(Vector3(-5.0, 0.18, 1.2), Vector3(-5.0, 1.0, 1.2), 0.25, 0.25, Color(0.85, 0.45, 0.12), 10)
+	n.add_child(k.instance("Haltestelle"))
+
+
+## Gepäckumschlag: flache Halle mit Rolltoren zum Vorfeld, Förderbändern und Gepäckwagen davor.
+static func _baggage_hall(n: Node3D) -> void:
+	var k := Kit.new()
+	var wall := Color(0.72, 0.73, 0.72)
+	k.box(Vector3(-15, 0, -9), Vector3(15, 6.8, 9), wall)
+	k.box(Vector3(-15.3, 6.8, -9.3), Vector3(15.3, 7.3, 9.3), Color(0.35, 0.36, 0.36))
+	for x in range(-14, 15, 2):
+		k.box(Vector3(float(x) - 0.04, 0.2, -9.03), Vector3(float(x) + 0.04, 6.6, -9.0), wall.darkened(0.1))
+	# fünf Rolltore zum Vorfeld (-Z), eines halb offen mit Förderband
+	for i in range(5):
+		var x := -12.0 + float(i) * 6.0
+		k.box(Vector3(x - 2.0, 0.0, -9.05), Vector3(x + 2.0, 4.2, -9.0), Color(0.55, 0.56, 0.58))
+		for j in range(14):
+			k.box(Vector3(x - 2.0, 0.2 + float(j) * 0.29, -9.07), Vector3(x + 2.0, 0.24 + float(j) * 0.29, -9.05), Color(0.48, 0.49, 0.5))
+		k.box(Vector3(x - 2.3, 4.2, -9.2), Vector3(x + 2.3, 4.5, -9.0), Color(0.86, 0.69, 0.22))
+		k.box(Vector3(x - 0.15, 4.6, -9.1), Vector3(x + 0.15, 4.8, -9.0), Color(1.0, 0.92, 0.7, 0.3))
+	# Lichtband und Schrift
+	k.box(Vector3(-14, 5.2, -9.04), Vector3(14, 6.0, -9.0), Color(0.2, 0.3, 0.36, 0.6))
+	PixelFont.draw(k, "BAGGAGE", Vector3(0, 6.4, -9.05), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, -1), 0.12, Color(0.15, 0.2, 0.3))
+	# Lüftung und Oberlichter auf dem Dach
+	for x: float in [-9.0, 0.0, 9.0]:
+		k.box(Vector3(x - 1.5, 7.3, -2.0), Vector3(x + 1.5, 8.2, 2.0), Color(0.6, 0.62, 0.63))
+	n.add_child(k.instance("Halle"))
+	var belt := make_gse("gepaeck")
+	belt.position = Vector3(-6, 0, -12.5)
+	belt.rotation.y = PI * 0.5
+	n.add_child(belt)
+
+
 static func _depot(n: Node3D) -> void:
 	blk(n, Vector3(-13, 0, -8), Vector3(13, 6.0, -6.5), CONCRETE)
 	blk(n, Vector3(-13, 0, -8), Vector3(-11.5, 6.0, 8), CONCRETE)
@@ -863,13 +1257,13 @@ static func make_car(c: Color, kind: String = "") -> Node3D:
 	var n := Node3D.new()
 	n.set_meta("kind", kind)
 	var mi := MeshInstance3D.new()
-	mi.mesh = Models.car_mesh(kind, c)
+	mi.mesh = Models.city_bus_mesh(Color(0.86, 0.72, 0.16)) if kind == "linienbus" else Models.car_mesh(kind, c)
 	n.add_child(mi)
 	# Bremslichter und Blinker als eigene leuchtende Teile, die der Verkehr ein- und ausschaltet
 	var d: Array = Models.CAR_DIMS[kind]
 	var hl: float = float(d[0]) * 0.5
 	var hw: float = float(d[1]) * 0.5
-	var belt := 0.92 if kind != "transporter" else 1.05
+	var belt := 0.92 if kind != "transporter" else (1.05 if kind != "linienbus" else 1.0)
 	var brake := Node3D.new()
 	brake.name = "Bremslicht"
 	brake.visible = false
@@ -1002,6 +1396,12 @@ static func _collect(n: Node, xf: Transform3D, acc: Array) -> void:
 # ---------------------------------------------------------------- Terminal-Einrichtung (Vorderseite +Z)
 
 static func _inside(n: Node3D, id: String) -> void:
+	if Furniture.build(n, id):
+		return
+	var opts: Dictionary = n.get_meta("opts", {})
+	if id in ["rolltreppe", "aufzug", "treppe", "passkontrolle", "zoll"]:
+		_inside_more(n, id)
+		return
 	match id:
 		"eingang":
 			blk(n, Vector3(-3, 0, -1), Vector3(3, 0.12, 1), DARK)
@@ -1198,6 +1598,7 @@ static func _inside(n: Node3D, id: String) -> void:
 			for i in range(3):
 				blk(n, Vector3(-3.4 + float(i) * 2.5, 1.9, -2.88), Vector3(-1.8 + float(i) * 2.5, 2.3, -2.85), Color(0.9, 0.85, 0.7))
 			blk(n, Vector3(-4, 2.6, -3.0), Vector3(4, 2.85, -2.5), Color(0.6, 0.25, 0.2))
+			_shop_sign(n, String(opts.get("stil", "cafe")))
 			for t: Vector3 in [Vector3(-2.6, 0, 0.6), Vector3(0.2, 0, 1.6), Vector3(2.7, 0, 0.3)]:
 				cyl(n, t, 0.06, 0.06, 0.72, DARK, 5)
 				cyl(n, t + Vector3(0, 0.72, 0), 0.5, 0.5, 0.05, WHITE, 8)
@@ -1214,6 +1615,7 @@ static func _inside(n: Node3D, id: String) -> void:
 						k += 1
 			blk(n, Vector3(2.6, 0, 0.8), Vector3(3.8, 1.0, 2.6), DARK)
 			blk(n, Vector3(-4, 2.4, -3), Vector3(4, 2.8, -2.8), Color(0.2, 0.5, 0.45))
+			_shop_sign(n, String(opts.get("stil", "kiosk")))
 		"sitzreihe":
 			blk(n, Vector3(-2.5, 0.3, -0.1), Vector3(2.5, 0.38, 0.1), STEEL)
 			for x: float in [-2.2, 2.2]:
@@ -1272,3 +1674,113 @@ static func set_pose(person: Node3D, pose: int) -> void:
 	if mi != null and person.has_meta("look"):
 		mi.mesh = Models.person_mesh(person.get_meta("look"), pose)
 		person.set_meta("pose", pose)
+
+
+## Ladenschild über der Front (leuchtend) mit Markenfarbe und Vordach, je nach Ladenart.
+static func _shop_sign(n: Node3D, stil: String) -> void:
+	var looks := {"cafe": ["CAFE", Color(0.45, 0.28, 0.18)], "baeckerei": ["BACKSTUBE", Color(0.75, 0.55, 0.25)],
+		"bar": ["BAR", Color(0.15, 0.15, 0.22)], "restaurant": ["RESTAURANT", Color(0.55, 0.15, 0.15)],
+		"kiosk": ["PRESSE", Color(0.15, 0.4, 0.6)], "dutyfree": ["DUTY FREE", Color(0.5, 0.35, 0.6)],
+		"buecher": ["BUECHER", Color(0.2, 0.45, 0.3)], "elektronik": ["TECHNIK", Color(0.2, 0.2, 0.25)],
+		"apotheke": ["APOTHEKE", Color(0.75, 0.15, 0.15)], "mode": ["MODE", Color(0.85, 0.85, 0.82)]}
+	var e: Array = looks.get(stil, looks["cafe"])
+	var k := Kit.new()
+	var col: Color = e[1]
+	k.box(Vector3(-3.9, 2.85, 2.7), Vector3(3.9, 3.45, 2.95), col)
+	var txt := String(e[0])
+	PixelFont.draw(k, txt, Vector3(0, 3.15, 2.97), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), minf(0.075, 6.6 / float(PixelFont.width(txt) * 1.0) * 0.1), Color(1.0, 0.95, 0.8, 0.3))
+	# Markise in Streifen
+	for i in range(8):
+		var x := -3.9 + float(i) * 0.975
+		k.quad(Vector3(x, 2.85, 2.95), Vector3(x + 0.975, 2.85, 2.95), Vector3(x + 0.975, 2.35, 3.6), Vector3(x, 2.35, 3.6),
+			col if i % 2 == 0 else Color(0.95, 0.94, 0.9), Vector3(0, 0, 0))
+	n.add_child(k.instance("Schild"))
+
+
+## Rolltreppe, Aufzug, Treppe (verbinden mit der Ebene darüber), Passkontrolle und Zoll.
+static func _inside_more(n: Node3D, id: String) -> void:
+	var k := Kit.new()
+	var steel := Color(0.7, 0.72, 0.74)
+	var glass := Color(0.6, 0.78, 0.86, 0.6)
+	var fh := Catalog.FLOOR_H
+	match id:
+		"rolltreppe":
+			# Fachwerk-Unterbau, gläserne Balustraden, Handläufe; Stufen bewegt terminal.gd
+			var slope := Basis(Vector3.RIGHT, -atan(fh / 8.0))
+			var len := sqrt(64.0 + fh * fh)
+			var mid := Vector3(0, fh * 0.5, 0)
+			k.box(Vector3(-1.0, -0.6, -len * 0.5), Vector3(1.0, -0.05, len * 0.5), steel, Transform3D(slope, mid))
+			for sx: float in [-0.95, 0.95]:
+				k.box(Vector3(sx - 0.04, 0.0, -len * 0.5), Vector3(sx + 0.04, 0.95, len * 0.5), glass, Transform3D(slope, mid))
+				k.box(Vector3(sx - 0.07, 0.95, -len * 0.5), Vector3(sx + 0.07, 1.05, len * 0.5), Color(0.12, 0.12, 0.13), Transform3D(slope, mid))
+			k.box(Vector3(-1.0, 0, -5.0), Vector3(1.0, 0.08, -4.0), steel)
+			k.box(Vector3(-1.0, fh - 0.05, 4.0), Vector3(1.0, fh + 0.05, 5.0), steel)
+			var steps := Node3D.new()
+			steps.name = "Stufen"
+			steps.set_meta("no_bake", true)
+			n.add_child(steps)
+			var sk := Kit.new()
+			for i in range(24):
+				var t := float(i) / 24.0
+				var p := Vector3(0, lerpf(0.05, fh, t), lerpf(-4.0, 4.0, t))
+				sk.box(p + Vector3(-0.85, 0, -0.16), p + Vector3(0.85, 0.06, 0.16), Color(0.3, 0.31, 0.33) if i % 2 == 0 else Color(0.36, 0.37, 0.4))
+			steps.add_child(sk.instance("StufenModell"))
+		"aufzug":
+			for c: Vector2 in [Vector2(-1.4, -1.4), Vector2(1.4, -1.4), Vector2(1.4, 1.4), Vector2(-1.4, 1.4)]:
+				k.box(Vector3(c.x - 0.08, 0, c.y - 0.08), Vector3(c.x + 0.08, fh + 0.4, c.y + 0.08), steel)
+			for e: Array in [[Vector3(-1.4, 0, -1.4), Vector3(1.4, fh + 0.4, -1.36)], [Vector3(-1.4, 0, 1.36), Vector3(1.4, fh + 0.4, 1.4)], [Vector3(-1.4, 0, -1.4), Vector3(-1.36, fh + 0.4, 1.4)]]:
+				k.box(e[0], e[1], glass)
+			k.box(Vector3(-1.5, fh + 0.4, -1.5), Vector3(1.5, fh + 0.6, 1.5), steel)
+			var cab := Node3D.new()
+			cab.name = "Kabine"
+			cab.set_meta("no_bake", true)
+			n.add_child(cab)
+			var ck := Kit.new()
+			ck.box(Vector3(-1.2, 0.0, -1.2), Vector3(1.2, 0.12, 1.2), steel)
+			ck.box(Vector3(-1.2, 2.3, -1.2), Vector3(1.2, 2.45, 1.2), steel)
+			ck.box(Vector3(-1.15, 2.2, -1.15), Vector3(1.15, 2.3, 1.15), Color(1.0, 0.95, 0.8, 0.3))
+			for c: Vector2 in [Vector2(-1.15, -1.15), Vector2(1.15, -1.15), Vector2(-1.15, 1.15)]:
+				ck.box(Vector3(c.x - 0.05, 0.1, c.y - 0.05), Vector3(c.x + 0.05, 2.3, c.y + 0.05), steel)
+			cab.add_child(ck.instance("KabineModell"))
+		"treppe":
+			var nst := int(fh / 0.18)
+			for i in range(nst):
+				var y := float(i + 1) * fh / float(nst)
+				var z := -4.0 + float(i) * 8.0 / float(nst)
+				k.box(Vector3(-1.4, y - 0.18, z), Vector3(1.4, y, z + 8.0 / float(nst) + 0.02), Color(0.62, 0.6, 0.56))
+			for sx: float in [-1.45, 1.45]:
+				var slope := Basis(Vector3.RIGHT, -atan(fh / 8.0))
+				var len := sqrt(64.0 + fh * fh)
+				k.box(Vector3(sx - 0.04, 0.9, -len * 0.5), Vector3(sx + 0.04, 1.0, len * 0.5), Color(0.15, 0.15, 0.16), Transform3D(slope, Vector3(0, fh * 0.5, 0)))
+				k.box(Vector3(sx - 0.03, 0.0, -len * 0.5), Vector3(sx + 0.03, 0.9, len * 0.5), glass, Transform3D(slope, Vector3(0, fh * 0.5, 0)))
+		"passkontrolle":
+			k.box(Vector3(-3, 0, -3), Vector3(3, 0.05, 3), Color(0.32, 0.34, 0.4))
+			for i in range(3):
+				var x := -2.0 + float(i) * 2.0
+				# Kabine mit Glasaufsatz, Beamter in Uniform
+				k.box(Vector3(x + 0.35, 0, -0.9), Vector3(x + 0.95, 1.15, 0.9), Color(0.85, 0.85, 0.83))
+				k.box(Vector3(x + 0.35, 1.15, -0.9), Vector3(x + 0.95, 2.1, 0.9), glass)
+				k.box(Vector3(x + 0.3, 2.1, -0.95), Vector3(x + 1.0, 2.2, 0.95), Color(0.2, 0.3, 0.55))
+				var off := make_staff(Color(0.12, 0.2, 0.42), Color(0.1, 0.12, 0.2), i)
+				off.position = Vector3(x + 0.65, 0, 0.2)
+				off.rotation.y = -PI * 0.5
+				n.add_child(off)
+				# Spur mit Gurtpfosten
+				for z: float in [-2.6, -1.4, 1.4, 2.6]:
+					k.cyl(Vector3(x - 0.6, 0, z), Vector3(x - 0.6, 0.95, z), 0.05, 0.05, Color(0.15, 0.15, 0.16), 8)
+				k.box(Vector3(x - 0.62, 0.86, -2.6), Vector3(x - 0.58, 0.92, 2.6), Color(0.2, 0.3, 0.6))
+			k.box(Vector3(-2.9, 2.5, 2.9), Vector3(2.9, 3.1, 3.0), Color(0.2, 0.3, 0.55))
+			PixelFont.draw(k, "POLIZEI", Vector3(0, 2.8, 3.02), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.07, Color(1, 1, 1, 0.3))
+		"zoll":
+			k.box(Vector3(-3, 0, -2.5), Vector3(3, 0.05, 2.5), Color(0.4, 0.4, 0.38))
+			for e: Array in [[-1.5, Color(0.2, 0.62, 0.3), "GRUEN"], [1.5, Color(0.75, 0.18, 0.15), "ROT"]]:
+				var x: float = e[0]
+				k.box(Vector3(x - 1.3, 0.05, -2.4), Vector3(x + 1.3, 0.07, 2.4), (e[1] as Color).darkened(0.3))
+				k.box(Vector3(x - 0.06, 0, 2.2), Vector3(x + 0.06, 2.6, 2.32), Color(0.2, 0.2, 0.22))
+				k.box(Vector3(x - 1.0, 2.2, 2.3), Vector3(x + 1.0, 2.8, 2.36), e[1])
+				PixelFont.draw(k, String(e[2]), Vector3(x, 2.5, 2.38), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.06, Color(1, 1, 1, 0.3))
+			k.box(Vector3(1.0, 0, -0.6), Vector3(2.8, 0.9, 0.6), Color(0.85, 0.85, 0.83))
+			var off := make_staff(Color(0.25, 0.35, 0.3), Color(0.12, 0.14, 0.12), 1)
+			off.position = Vector3(2.2, 0, -1.0)
+			n.add_child(off)
+	n.add_child(k.instance("Ausstattung"))

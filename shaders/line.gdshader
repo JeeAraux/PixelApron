@@ -3,7 +3,7 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 base_color : source_color = vec3(0.2, 0.2, 0.19);
-uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter
+uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband
 uniform float width = 7.5;
 uniform float len = 100.0;
 uniform int flip = 0;
@@ -198,6 +198,16 @@ void fragment() {
 		vec2 o = g - vec2(hash(cell + 3.1), hash(cell + 7.7));
 		if (hash(cell + 1.3) > 0.93 && dot(o, o) < 0.03) {
 			col *= 0.78;
+		}
+	} else if (mark == 9) {
+		// Gepäckförderband: Gummiband mit Querrillen, das sich bewegt; seitlich Stahlrahmen
+		float run = v - TIME * 1.6;
+		col = vec3(0.13, 0.13, 0.14) * (0.9 + 0.2 * step(0.5, fract(run * 2.5)));
+		if (ax > 0.55) {
+			col = vec3(0.45, 0.47, 0.5);
+		}
+		if (ax > 0.95) {
+			col = vec3(0.86, 0.69, 0.22);
 		}
 	}
 	ALBEDO = col;

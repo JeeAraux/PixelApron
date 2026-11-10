@@ -69,7 +69,7 @@ func _analyze() -> void:
 				pts = 0
 			decor += pts * int(counts[id])
 		var hid := (h["node"] as Node).get_instance_id()
-		grids[hid] = {"dep": _make_grid(h, "dep"), "arr": _make_grid(h, "arr")}
+		grids[hid] = _make_grids(h)
 		var problems := []
 		if missing.is_empty():
 			problems = _security_problems(h, grids[hid])
@@ -260,6 +260,9 @@ func assign_gate(p: Dictionary) -> Dictionary:
 			if gate_use.has(gid):
 				continue
 			var score := (it["pos"] as Vector3).distance_to(sp)
+			var ns := String(game.opt(it, "bereich")) == "non_schengen"
+			if ns != (not bool(p.get("schengen", true))):
+				score += 300.0
 			if remote:
 				score += 0.0 if it["id"] == "busgate" else 400.0
 			elif it["id"] == "gate" and bridge_reaches(it, p):
@@ -304,7 +307,8 @@ func gate_door(gate: Dictionary) -> Array:
 	var n: Vector3 = cand[0][1]
 	var wall: Vector3 = cand[0][2]
 	var along := n.cross(Vector3.UP)
-	return [wall - n * 1.2 + along * 2.5, wall + n * 1.5 + along * 2.5, n]
+	var gy: float = (gate["pos"] as Vector3).y
+	return [wall - n * 1.2 + along * 2.5 + Vector3(0, gy, 0), wall + n * 1.5 + along * 2.5, n]
 
 
 ## Vorfeld-Haltestelle für ein Gate: [Halteposition, Fahrtrichtung]. Ohne Haltestelle hält der Bus
@@ -385,6 +389,8 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 			plan.append(["go", _pt(sec, Vector3(lane, 0, -ss.y * 0.5 - 0.7))])
 			plan.append(["wait", randf_range(0.5, 1.5)])
 		_maybe(plan, hall, "shop", 0.25)
+		if not bool(p.get("schengen", true)):
+			_through(plan, hall, "passkontrolle", true, 1.5)
 		_maybe(plan, hall, "cafe", 0.2)
 		_maybe(plan, hall, "wc", 0.15)
 		var row: float = [-1.0, 0.6, 2.4][randi() % 3]
@@ -404,10 +410,14 @@ func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing:
 	var band := _any(hall, "gepaeckband")
 	for i in range(n):
 		var plan := [["wait", float(i) * spacing], ["show"]]
+		if not bool(p.get("schengen", true)):
+			_through(plan, hall, "passkontrolle", false, 1.2)
 		if not band.is_empty():
 			var bs := _size(band)
 			plan.append(["go", _pt(band, Vector3(randf_range(-bs.x * 0.4, bs.x * 0.4), 0, bs.y * 0.5 + 0.5 + randf() * 0.8))])
 			plan.append(["wait", randf_range(4.0, 8.0)])
+		if not bool(p.get("schengen", true)):
+			_through(plan, hall, "zoll", false, 0.6)
 		_maybe(plan, hall, "wc", 0.2)
 		var door := _any(hall, "eingang")
 		if not door.is_empty():
@@ -451,6 +461,20 @@ func bus_pax_pending(p: Dictionary) -> bool:
 		if int(per["flight"]) == int(p["id"]) and bool(per["dep"]):
 			return true
 	return false
+
+
+## Durch eine Kontrolle gehen: forward = von vorn (+Z) nach hinten, sonst umgekehrt; kurz anhalten.
+func _through(plan: Array, hall: Dictionary, id: String, forward: bool, stop: float) -> void:
+	var it := _any(hall, id)
+	if it.is_empty():
+		return
+	var s := _size(it)
+	var x := randf_range(-s.x * 0.35, s.x * 0.35)
+	var a := _pt(it, Vector3(x, 0, s.y * 0.5 + 0.6))
+	var b := _pt(it, Vector3(x, 0, -s.y * 0.5 - 0.6))
+	plan.append(["go", a if forward else b])
+	plan.append(["wait", randf_range(stop * 0.6, stop * 1.4)])
+	plan.append(["go", b if forward else a])
 
 
 func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> void:
@@ -518,6 +542,7 @@ func step(sim: float) -> void:
 		_analyze()
 	_move_bridges(sim)
 	_belts(sim)
+	_animate_inside(sim)
 	for per: Dictionary in people.duplicate():
 		_update_person(per, sim)
 
@@ -541,6 +566,22 @@ func _update_person(per: Dictionary, sim: float) -> void:
 			per["si"] = si + 1
 		"go":
 			var path: Array = per["path"]
+			var here: Vector3 = per["pos"]
+			var goal: Vector3 = st[1]
+			var fa := _floor_at(here)
+			var fb := _floor_at(goal)
+			if fa != fb and path.is_empty():
+				# andere Ebene: erst zum Verbinder, dann fahren, dann weiter
+				var dir := 1 if fb > fa else -1
+				var con := _connector(int(per["hall_id"]), fa, dir, here)
+				if con.is_empty():
+					per["pos"] = goal
+					node.position = goal
+					per["si"] = si + 1
+					return
+				plan.insert(si, ["ride", con[1], con[2], String(con[0]["id"])])
+				plan.insert(si, ["go", con[1]])
+				return
 			if path.is_empty():
 				path = _path(int(per["hall_id"]), per["pos"], st[1], bool(per["dep"]))
 				per["path"] = path
@@ -579,6 +620,26 @@ func _update_person(per: Dictionary, sim: float) -> void:
 			if luggage != null:
 				luggage.position = Vector3(0.45, 0, -0.3)
 			per["si"] = si + 1
+		"ride":
+			# Rolltreppe, Treppe oder Aufzug: vom unteren zum oberen Ende (oder umgekehrt)
+			var a: Vector3 = st[1]
+			var b: Vector3 = st[2]
+			var speed := 0.55 if st[3] == "rolltreppe" else (0.45 if st[3] == "treppe" else 1.2)
+			per["timer"] = float(per["timer"]) + sim
+			var dur := maxf(a.distance_to(b) / speed, 1.0)
+			var t := clampf(float(per["timer"]) / dur, 0.0, 1.0)
+			var pos := a.lerp(b, t)
+			if st[3] == "aufzug":
+				pos = Vector3(a.x, lerpf(a.y, b.y, smoothstep(0.0, 1.0, t)), a.z)
+			per["pos"] = pos
+			node.position = pos
+			var flat := Vector3(b.x - a.x, 0, b.z - a.z)
+			if flat.length() > 0.1:
+				node.basis = Basis.looking_at(flat.normalized(), Vector3.UP)
+			Factory.set_pose(node, 0 if st[3] != "treppe" else 1 + int(float(per["timer"]) / 0.3) % 4)
+			if t >= 1.0:
+				per["timer"] = 0.0
+				per["si"] = si + 1
 		"stay":
 			pass
 		"bus":
@@ -600,69 +661,150 @@ func _security_problems(h: Dictionary, g: Dictionary) -> Array:
 	var gates := _cells_of(h, "gate") + _cells_of(h, "busgate")
 	if entries.is_empty() or gates.is_empty():
 		return out
-	var arr: AStarGrid2D = g["arr"]
-	var dep: AStarGrid2D = g["dep"]
-	var oneway := {}
-	for c: Vector2i in _cells_of(h, "sb_ausgang"):
-		oneway[c] = true
+	var oneway := _cell_set(_cells_of(h, "sb_ausgang"))
 	# 1. Ohne durch die Kontrolle (und ohne verkehrt durch den Ausgang) zu den Gates?
-	var free := _flood(arr, entries, oneway)
-	for c: Vector2i in gates:
-		if free.has(c):
+	var free := _flood(g, "arr", entries, oneway)
+	for c: Array in gates:
+		if free.has(_ckey(c)):
 			out.append("Sicherheitsbereich offen: Gates sind ohne Kontrolle erreichbar. Mit Wänden oder Glaswänden abtrennen.")
 			return out
 	# 2. Kommen Abfliegende durch die Kontrolle zu den Gates?
-	var dep_reach := _flood(dep, entries, {})
+	var dep_reach := _flood(g, "dep", entries, {})
 	var any_gate := false
-	for c: Vector2i in gates:
-		any_gate = any_gate or dep_reach.has(c)
+	for c: Array in gates:
+		any_gate = any_gate or dep_reach.has(_ckey(c))
 	if not any_gate:
 		out.append("Kein Weg vom Eingang durch die Kontrolle zu den Gates")
 		return out
 	# 3. Kommen Ankommende hinaus?
-	var arr_reach := _flood(arr, gates, {})
+	var arr_reach := _flood(g, "arr", gates, {})
 	var any_exit := false
-	for c: Vector2i in entries:
-		any_exit = any_exit or arr_reach.has(c)
+	for c: Array in entries:
+		any_exit = any_exit or arr_reach.has(_ckey(c))
 	if not any_exit:
 		out.append("Ankommende kommen nicht aus dem Sicherheitsbereich: Ausgang Sicherheitsbereich bauen")
+		return out
+	# 4. Non-Schengen-Bereich nur durch die Passkontrolle
+	var ns_gates := []
+	var s_gates := []
+	for it: Dictionary in game.inside_of(h):
+		if not (it["id"] in ["gate", "busgate"]):
+			continue
+		if String(game.opt(it, "bereich")) == "non_schengen":
+			ns_gates.append_array(_cells_of_item(it))
+		else:
+			s_gates.append_array(_cells_of_item(it))
+	if not ns_gates.is_empty():
+		var pk := _cells_of(h, "passkontrolle")
+		if pk.is_empty():
+			out.append("Non-Schengen-Gates brauchen eine Passkontrolle")
+			return out
+		var from_s := _flood(g, "dep", s_gates + entries, _cell_set(pk))
+		for c: Array in ns_gates:
+			if from_s.has(_ckey(c)):
+				out.append("Non-Schengen-Bereich offen: mit Wänden abtrennen, Zugang nur durch die Passkontrolle")
+				return out
 	return out
 
 
+static func _ckey(c: Array) -> String:
+	return "%d,%d,%d" % [int((c[0] as Vector2i).x), int((c[0] as Vector2i).y), int(c[1])]
+
+
+func _cell_set(cells: Array) -> Dictionary:
+	var out := {}
+	for c: Array in cells:
+		out[_ckey(c)] = true
+	return out
+
+
+## Zellen [Vector2i, Ebene] aller Teile einer Art in der Halle.
 func _cells_of(h: Dictionary, id: String) -> Array:
 	var out := []
 	for it: Dictionary in game.inside_of(h):
-		if it["id"] != id:
-			continue
-		var ir: Rect2 = (it["rect"] as Rect2).grow(-0.25)
-		for x in range(floori(ir.position.x), ceili(ir.end.x)):
-			for z in range(floori(ir.position.y), ceili(ir.end.y)):
-				out.append(Vector2i(x, z))
+		if it["id"] == id:
+			out.append_array(_cells_of_item(it))
 	return out
 
 
-func _flood(g: AStarGrid2D, starts: Array, blocked: Dictionary) -> Dictionary:
+func _cells_of_item(it: Dictionary) -> Array:
+	var out := []
+	var f := GameState.floor_of(it)
+	var ir: Rect2 = (it["rect"] as Rect2).grow(-0.25)
+	for x in range(floori(ir.position.x), ceili(ir.end.x)):
+		for z in range(floori(ir.position.y), ceili(ir.end.y)):
+			out.append([Vector2i(x, z), f])
+	return out
+
+
+## Flutfüllung über alle Ebenen; Rolltreppen, Aufzüge und Treppen verbinden ihre Ebene mit der darüber.
+func _flood(g: Dictionary, mode: String, starts: Array, blocked: Dictionary) -> Dictionary:
 	var seen := {}
 	var queue := []
-	for c: Vector2i in starts:
-		if g.is_in_boundsv(c) and not g.is_point_solid(c) and not blocked.has(c):
-			seen[c] = true
+	var links: Dictionary = g.get("links", {})
+	for c: Array in starts:
+		var gf: Dictionary = g.get(int(c[1]), {})
+		if gf.is_empty():
+			continue
+		var grid: AStarGrid2D = gf[mode]
+		var cell: Vector2i = c[0]
+		var key := _ckey(c)
+		if grid.is_in_boundsv(cell) and not grid.is_point_solid(cell) and not blocked.has(key) and not seen.has(key):
+			seen[key] = true
 			queue.append(c)
 	var qi := 0
 	while qi < queue.size():
-		var c: Vector2i = queue[qi]
+		var c: Array = queue[qi]
 		qi += 1
+		var cell: Vector2i = c[0]
+		var f: int = c[1]
+		var grid: AStarGrid2D = g[f][mode]
+		var nexts := []
 		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			var n: Vector2i = c + d
-			if seen.has(n) or not g.is_in_boundsv(n) or g.is_point_solid(n) or blocked.has(n):
+			nexts.append([cell + d, f])
+		for lf: int in links.get(_ckey(c), []):
+			nexts.append([cell, lf])
+		for nx: Array in nexts:
+			var key := _ckey(nx)
+			if seen.has(key) or blocked.has(key):
 				continue
-			seen[n] = true
-			queue.append(n)
+			var nf: int = nx[1]
+			if not g.has(nf):
+				continue
+			var ng: AStarGrid2D = g[nf][mode]
+			var ncell: Vector2i = nx[0]
+			if not ng.is_in_boundsv(ncell) or ng.is_point_solid(ncell):
+				continue
+			seen[key] = true
+			queue.append(nx)
 	return seen
 
 
+## Raster und Ebenenverbindungen einer Halle: {Ebene: {"dep", "arr"}, "links": {Zelle: [Ebenen]}}
+func _make_grids(h: Dictionary) -> Dictionary:
+	var out := {}
+	var lo := -1 if game.hall_basement(h) else 0
+	for f in range(lo, game.hall_levels(h)):
+		out[f] = {"dep": _make_grid(h, "dep", f), "arr": _make_grid(h, "arr", f)}
+	var links := {}
+	for it: Dictionary in game.inside_of(h):
+		if not bool(Catalog.ITEMS[it["id"]].get("connector", false)):
+			continue
+		var f := GameState.floor_of(it)
+		for c: Array in _cells_of_item(it):
+			var up := [c[0], f + 1]
+			if not links.has(_ckey(c)):
+				links[_ckey(c)] = []
+			(links[_ckey(c)] as Array).append(f + 1)
+			if not links.has(_ckey(up)):
+				links[_ckey(up)] = []
+			(links[_ckey(up)] as Array).append(f)
+	out["links"] = links
+	return out
+
+
 ## mode "dep": Ausgang Sicherheitsbereich ist zu (Einbahn), "arr": Kontrolle ist zu.
-func _make_grid(h: Dictionary, mode: String = "dep") -> AStarGrid2D:
+func _make_grid(h: Dictionary, mode: String = "dep", f: int = 0) -> AStarGrid2D:
 	var r: Rect2 = h["rect"]
 	var g := AStarGrid2D.new()
 	g.region = Rect2i(floori(r.position.x), floori(r.position.y), ceili(r.size.x), ceili(r.size.y))
@@ -672,7 +814,11 @@ func _make_grid(h: Dictionary, mode: String = "dep") -> AStarGrid2D:
 	g.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	g.update()
 	for it: Dictionary in game.inside_of(h):
+		var itf := GameState.floor_of(it)
 		var def: Dictionary = Catalog.ITEMS[it["id"]]
+		# Verbinder ragen in die Ebene darüber (dort ist ihr oberes Ende begehbar)
+		if itf != f and not (bool(def.get("connector", false)) and itf + 1 == f):
+			continue
 		var walk := bool(def.get("walk", false))
 		if mode == "dep" and bool(def.get("oneway", false)):
 			walk = false
@@ -687,6 +833,8 @@ func _make_grid(h: Dictionary, mode: String = "dep") -> AStarGrid2D:
 				if g.is_in_boundsv(c):
 					g.set_point_solid(c, true)
 	for l: Dictionary in game.walls_of(h):
+		if GameState.floor_of(l) != f:
+			continue
 		for v: Vector3 in game.wall_probe(l):
 			var c := Vector2i(floori(v.x), floori(v.z))
 			if g.is_in_boundsv(c):
@@ -699,10 +847,16 @@ func _cell(g: AStarGrid2D, p: Vector3) -> Vector2i:
 	return Vector2i(clampi(floori(p.x), r.position.x, r.end.x - 1), clampi(floori(p.z), r.position.y, r.end.y - 1))
 
 
+static func _floor_at(p: Vector3) -> int:
+	return roundi(p.y / Catalog.FLOOR_H)
+
+
+## Weg auf einer Ebene (a und b auf derselben Ebene).
 func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true) -> Array:
-	if not grids.has(hall_id):
+	var f := _floor_at(a)
+	if not grids.has(hall_id) or not (grids[hall_id] as Dictionary).has(f):
 		return [b]
-	var g: AStarGrid2D = grids[hall_id]["dep" if dep else "arr"]
+	var g: AStarGrid2D = grids[hall_id][f]["dep" if dep else "arr"]
 	var ca := _cell(g, a)
 	var cb := _cell(g, b)
 	var sa := g.is_point_solid(ca)
@@ -712,11 +866,35 @@ func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true) -> Array:
 	var ids := g.get_id_path(ca, cb, true)
 	g.set_point_solid(ca, sa)
 	g.set_point_solid(cb, sb)
+	var y := float(f) * Catalog.FLOOR_H
 	var out := []
 	for i in range(1, ids.size() - 1):
-		out.append(Vector3(float(ids[i].x) + 0.5, 0.0, float(ids[i].y) + 0.5))
-	out.append(b)
+		out.append(Vector3(float(ids[i].x) + 0.5, y, float(ids[i].y) + 0.5))
+	out.append(Vector3(b.x, y, b.z))
 	return out
+
+
+## Verbinder für eine Fahrt von Ebene f eine Ebene in Richtung dir (+1/-1), nah an p: [Teil, Start, Ziel] oder leer.
+func _connector(hall_id: int, f: int, dir: int, p: Vector3) -> Array:
+	var best: Array = []
+	var bd := INF
+	for it: Dictionary in game.items:
+		if not bool(Catalog.ITEMS.get(it["id"], {}).get("connector", false)):
+			continue
+		if not is_instance_valid(it.get("hall", {}).get("node")) or (it["hall"]["node"] as Node).get_instance_id() != hall_id:
+			continue
+		var cf := GameState.floor_of(it)
+		if (dir > 0 and cf != f) or (dir < 0 and cf != f - 1):
+			continue
+		var lo := _pt(it, Vector3(0, 0, -4.6 if it["id"] != "aufzug" else 0.0))
+		var hi := _pt(it, Vector3(0, Catalog.FLOOR_H, 4.6 if it["id"] != "aufzug" else 0.0))
+		var from: Vector3 = lo if dir > 0 else hi
+		var to: Vector3 = hi if dir > 0 else lo
+		var d := Vector2(from.x - p.x, from.z - p.z).length()
+		if d < bd:
+			bd = d
+			best = [it, from, to]
+	return best
 
 
 # ---------------------------------------------------------------- Fluggastbrücken
@@ -771,6 +949,7 @@ func _bridge_for_gate(gate: Dictionary) -> Dictionary:
 func _make_bridge(anchor: Vector3, out: Vector3) -> Dictionary:
 	var root := Node3D.new()
 	root.name = "Fluggastbruecke"
+	root.add_to_group("oberirdisch")
 	add_child(root)
 	var grey := Color(0.74, 0.75, 0.76)
 	var dark := Color(0.26, 0.27, 0.29)
@@ -872,7 +1051,10 @@ func _move_bridges(sim: float) -> void:
 		b["end"] = cur2
 		b["moving"] = moving
 		b["height"] = move_toward(float(b["height"]), goal_h, 0.25 * sim)
-		b["cab_dir"] = (b["cab_dir"] as Vector3).slerp(face.normalized(), clampf(sim * 0.8, 0.0, 1.0)).normalized()
+		var cd := (b["cab_dir"] as Vector3).lerp(Vector3(face.x, 0.0, face.z).normalized(), clampf(sim * 0.8, 0.0, 1.0))
+		cd.y = 0.0
+		if cd.length() > 0.01:
+			b["cab_dir"] = cd.normalized()
 		_pose_bridge(b)
 
 
@@ -954,3 +1136,31 @@ func _belts(sim: float) -> void:
 				var c := cases.get_child(i) as Node3D
 				c.position = pos + Vector3(0, 0.76, 0)
 				c.rotation.y = yaw
+
+
+# ---------------------------------------------------------------- Bewegte Einrichtung
+
+var inside_t := 0.0
+
+
+## Rolltreppenstufen laufen, Aufzugskabinen fahren auf und ab.
+func _animate_inside(sim: float) -> void:
+	inside_t += sim
+	for it: Dictionary in game.items:
+		var id: String = it["id"]
+		if id != "rolltreppe" and id != "aufzug":
+			continue
+		var node: Node3D = it["node"]
+		if not is_instance_valid(node) or not node.visible:
+			continue
+		if id == "rolltreppe":
+			var steps := node.get_node_or_null("Stufen") as Node3D
+			if steps != null:
+				var k := fmod(inside_t * 0.5, 8.0 / 24.0) / (8.0 / 24.0)
+				steps.position = Vector3(0, Catalog.FLOOR_H / 24.0 * k, 8.0 / 24.0 * k)
+		else:
+			var cab := node.get_node_or_null("Kabine") as Node3D
+			if cab != null:
+				var ph := fmod(inside_t * 0.12 + float(it["pos"].x) * 0.01, 2.0)
+				var u := clampf(ph * 1.6 - 0.3, 0.0, 1.0) if ph < 1.0 else clampf((2.0 - ph) * 1.6 - 0.3, 0.0, 1.0)
+				cab.position.y = smoothstep(0.0, 1.0, u) * Catalog.FLOOR_H

@@ -22,6 +22,9 @@ const LOOK := 45.0
 const ACCEL := 2.6
 const BRAKE := 7.0
 const PARK_FEE := 6
+const BUS_EVERY := 40.0     # Sekunden zwischen zwei Linienbussen
+const PED_MAX := 90
+const WALK := 1.35
 
 var game: GameState
 var roads: Roads
@@ -34,6 +37,10 @@ var access: Dictionary = {}        # Instanz-ID Parkhaus/Halle -> Zufahrt
 var parked: Array = []             # [Parkhaus-Datensatz, Restzeit]
 var barriers: Dictionary = {}      # Schranken-Knoten -> offen bis (clock)
 var dirty := true
+var bus_timer := 6.0
+var peds: Array = []               # Fußgänger auf der Landseite (Bus, Parkhaus, Vorfahrt → Terminal)
+var entrances: Array = []          # Punkte vor den Terminal-Eingängen (außen)
+var stop_timer := 0.0
 
 
 func setup(g: GameState, r: Roads) -> void:
@@ -87,8 +94,8 @@ func rebuild() -> void:
 func _find_access() -> void:
 	dirty = false
 	access = {}
-	for it: Dictionary in game.items_of("parkhaus"):
-		var def: Dictionary = Catalog.ITEMS["parkhaus"]
+	for it: Dictionary in game.items_of("parkhaus") + game.items_of("parkplatz"):
+		var def: Dictionary = Catalog.ITEMS[it["id"]]
 		var acc: Dictionary = def["access"]
 		var xf := (it["node"] as Node3D).transform
 		var ein: Vector3 = xf * Vector3((acc["ein"] as Vector2).x, 0, (acc["ein"] as Vector2).y)
@@ -101,7 +108,20 @@ func _find_access() -> void:
 			continue
 		access[(it["node"] as Node).get_instance_id()] = {"rec": it, "ein": a, "aus": b, "gate_in": ein, "gate_out": aus,
 			"inside_in": inside_ein, "inside_out": inside_aus}
+	entrances = []
 	for h: Dictionary in game.items_of("halle"):
+		var r: Rect2 = h["rect"]
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] != "eingang":
+				continue
+			var ep: Vector3 = it["pos"]
+			var dl := ep.x - r.position.x
+			var dr := r.end.x - ep.x
+			var dt := ep.z - r.position.y
+			var db := r.end.y - ep.z
+			var m := minf(minf(dl, dr), minf(dt, db))
+			var nrm := Vector3(-1, 0, 0) if m == dl else (Vector3(1, 0, 0) if m == dr else (Vector3(0, 0, -1) if m == dt else Vector3(0, 0, 1)))
+			entrances.append([Vector3(ep.x, 0, ep.z) + nrm * 4.0, nrm])
 		for it: Dictionary in game.inside_of(h):
 			if it["id"] != "eingang":
 				continue
@@ -109,6 +129,14 @@ func _find_access() -> void:
 			if not lp.is_empty():
 				access[(h["node"] as Node).get_instance_id()] = {"rec": h, "halt": lp}
 				break
+	# Bushaltestellen: Haltepunkt 4,5 m vor der Vorderseite
+	for it: Dictionary in game.items_of("haltestelle"):
+		var xf := (it["node"] as Node3D).transform
+		var lp := _nearest_lane(xf * Vector3(0, 0, -4.5), 14.0)
+		if lp.is_empty():
+			continue
+		access[(it["node"] as Node).get_instance_id()] = {"rec": it, "halt": lp, "bus": true,
+			"wait": xf * Vector3(-0.6, 0, 1.0), "xf": xf}
 
 
 ## Nächste rechte Spur in der Nähe eines Punkts: {line, d, k, pos (Abstand auf der Spur), point}
@@ -226,17 +254,17 @@ static func _bezier(p0: Vector3, d0: Vector3, p3: Vector3, d3: Vector3) -> Packe
 
 # ---------------------------------------------------------------- Autos erzeugen
 
-func _spawn_on_lane(l: Dictionary, d: int, k: int, pos: float, purpose: String) -> Dictionary:
+func _spawn_on_lane(l: Dictionary, d: int, k: int, pos: float, purpose: String, kind: String = "") -> Dictionary:
 	var leg := _lane_leg(l, d, k, pos)
-	return _spawn_with_legs([leg], purpose)
+	return _spawn_with_legs([leg], purpose, kind)
 
 
-func _spawn_with_legs(legs: Array, purpose: String) -> Dictionary:
-	var node := Factory.make_car(Factory.car_color())
+func _spawn_with_legs(legs: Array, purpose: String, kind: String = "") -> Dictionary:
+	var node := Factory.make_car(Factory.car_color(), kind)
 	add_child(node)
-	var kind: String = node.get_meta("kind")
+	kind = node.get_meta("kind")
 	var length: float = Models.CAR_DIMS[kind][0]
-	var vmax := randf_range(11.5, 14.5)
+	var vmax := randf_range(11.5, 14.5) if kind != "linienbus" else 10.0
 	var m := {"node": node, "legs": legs, "prev": [], "s": 0.0, "v": vmax * 0.6, "vmax": vmax, "len": length,
 		"purpose": purpose, "route": [], "wait": 0.0, "halt": 0.0, "blink": 0, "brake": false, "goal": {}}
 	movers.append(m)
@@ -260,6 +288,17 @@ func _assign_goal(m: Dictionary) -> void:
 				options.append({"lane": a["halt"], "action": "halten", "acc": a})
 		if not options.is_empty():
 			m["goal"] = options[randi() % options.size()]
+	elif purpose == "bus":
+		var stops := []
+		for key: int in access:
+			var a: Dictionary = access[key]
+			if a.has("bus"):
+				# Haltebucht so legen, dass der Bus mittig vor dem Wartehäuschen hält
+				var lane: Dictionary = (a["halt"] as Dictionary).duplicate()
+				lane["pos"] = maxf(4.0, float(lane["pos"]) - 16.0)
+				stops.append({"lane": lane, "action": "bus", "acc": a})
+		if not stops.is_empty():
+			m["goal"] = stops[randi() % stops.size()]
 	elif purpose == "raus":
 		m["goal"] = {"action": "raus"}
 
@@ -480,9 +519,11 @@ func step(dt: float) -> void:
 		adjust_timer = 1.0
 		_spawn_tick()
 	_parking_tick(dt)
+	_bus_tick(dt)
 	for m: Dictionary in movers.duplicate():
 		_drive(m, dt)
 	_animate_barriers(dt)
+	_step_peds(dt)
 
 
 func _spawn_tick() -> void:
@@ -523,6 +564,7 @@ func _parking_tick(dt: float) -> void:
 		if not _lane_free(lane["line"], int(lane["d"]), int(lane["k"]), float(lane["pos"]) + 6.0, 14.0):
 			continue
 		parked.erase(p)
+		_update_lot(int(p[0]))
 		var path := roads.lane_path(lane["line"], int(lane["d"]), int(lane["k"]))
 		var join := _point_on(path, float(lane["pos"]) + 6.0)
 		var jdir := (_point_on(path, float(lane["pos"]) + 7.0) - join).normalized()
@@ -591,6 +633,8 @@ func _drive(m: Dictionary, dt: float) -> void:
 			prev.pop_back()
 		legs.pop_front()
 		leg = legs[0]
+		if leg["type"] == "lane":
+			m.erase("commit")
 		_occupy(m, leg)
 		if leg["type"] == "drive" and leg.has("gate"):
 			_open_barrier(leg["gate"], String(leg["gate_name"]))
@@ -658,11 +702,17 @@ func _stop_distance(m: Dictionary) -> float:
 	match ctrl:
 		"ampel":
 			var sig := roads.signal_at(ni, ei)
-			if sig == "rot":
-				must = true
+			var v: float = m["v"]
+			if int(m.get("commit", -1)) == ni:
+				must = false   # bei Gelb schon zu nah zum Anhalten: fährt durch
+			elif sig == "rot":
+				must = rest - STOP_BEFORE > v * v / (2.0 * 6.5) - 0.3
+				if not must:
+					m["commit"] = ni
 			elif sig == "gelb":
-				var v: float = m["v"]
 				must = rest - STOP_BEFORE > v * v / (2.0 * 4.5) + 0.5
+				if not must:
+					m["commit"] = ni
 		"vorfahrt":
 			if not roads.is_major(ni, ei):
 				must = _junction_busy(ni, ei) or _approaching(ni, roads.nodes[ni]["major"], 30.0)
@@ -785,6 +835,22 @@ func _reach_goal(m: Dictionary) -> void:
 			m["legs"] = [bay]
 			m["s"] = 0.0
 			_occupy(m, bay)
+		"bus":
+			# Linienbus: in die Haltebucht vor der Haltestelle
+			var leg: Dictionary = m["legs"][0]
+			var here := _leg_point(leg, float(m["s"]))
+			var dir := (_leg_point(leg, float(m["s"]) + 1.0) - here).normalized()
+			var right := dir.cross(Vector3.UP)
+			var a := here + dir * 10.0 + right * 3.2
+			var b := here + dir * 22.0 + right * 3.2
+			var path := _bezier(here, dir, a, dir)
+			path.append(b)
+			_release(m, leg)
+			var bay := _make_leg("drive", path, "D%d" % randi(), {"halt_end": true, "bus_stop": goal["acc"],
+				"rejoin": [leg["line"], int(leg["d"]), int(leg["k"]), float(leg["off"]) + float(m["s"]) + 36.0]})
+			m["legs"] = [bay]
+			m["s"] = 0.0
+			_occupy(m, bay)
 		"parken":
 			var a: Dictionary = goal["acc"]
 			var leg: Dictionary = m["legs"][0]
@@ -810,10 +876,23 @@ func _end_of_path(m: Dictionary, leg: Dictionary) -> void:
 		m["halt"] = randf_range(3.5, 6.5)
 		m["s"] = float(leg["len"])
 		m["v"] = 0.0
+		if leg.has("bus_stop"):
+			m["halt"] = 15.0
+			_bus_arrived(m, leg["bus_stop"])
+		else:
+			# Fahrgäste steigen auf der Beifahrerseite aus und gehen zum Eingang
+			var node: Node3D = m["node"]
+			var right := node.basis.x
+			for i in range(1 + randi() % 2):
+				_ped_to_entrance(node.position + right * 1.6 + node.basis.z * float(i), "rein")
 		return
 	if leg.has("park"):
 		var a: Dictionary = leg["park"]
 		parked.append([(a["rec"]["node"] as Node).get_instance_id(), randf_range(40.0, 160.0)])
+		_update_lot((a["rec"]["node"] as Node).get_instance_id())
+		var xf := (a["rec"]["node"] as Node3D).transform
+		for i in range(1 + randi() % 2):
+			_ped_to_entrance(xf * Vector3(10.0 + float(i), 0, -23.0), "rein")
 		_remove(m)
 		return
 	if bool(m.get("exit_at_end", false)) or leg["type"] != "lane":
@@ -831,10 +910,12 @@ func _place(m: Dictionary, _dt: float) -> void:
 	var back := _along(m, -half)
 	var node: Node3D = m["node"]
 	var dir := front - back
-	dir.y = 0.0
-	node.position = Vector3((front.x + back.x) * 0.5, 0.0, (front.z + back.z) * 0.5)
+	var y := (front.y + back.y) * 0.5
+	node.position = Vector3((front.x + back.x) * 0.5, y, (front.z + back.z) * 0.5)
 	if dir.length_squared() > 0.0004:
-		node.basis = Basis.looking_at(dir.normalized(), Vector3.UP)
+		node.basis = Basis.looking_at(dir.normalized(), Vector3.UP)   # neigt sich auf Tunnelrampen
+	# Untergeschoss-Ansicht: nur Autos im Tunnel zeigen
+	node.visible = y < -1.0 or not (game.interior_view and game.view_floor < 0)
 	var brake := node.get_node_or_null("Bremslicht") as Node3D
 	if brake != null:
 		brake.visible = bool(m["brake"])
@@ -889,6 +970,19 @@ func _animate_barriers(dt: float) -> void:
 			barriers.erase(key)
 
 
+## Parkplatz: so viele Autos zeigen, wie dort geparkt sind.
+func _update_lot(iid: int) -> void:
+	var a: Dictionary = access.get(iid, {})
+	if a.is_empty() or a["rec"]["id"] != "parkplatz":
+		return
+	var node: Node3D = a["rec"]["node"]
+	var n := parked_count(a["rec"])
+	for i in range(22):
+		var car := node.get_node_or_null("Platz%d" % i) as Node3D
+		if car != null:
+			car.visible = i < n
+
+
 func parked_count(rec: Dictionary) -> int:
 	var n := 0
 	var id := (rec["node"] as Node).get_instance_id()
@@ -902,3 +996,188 @@ func has_access(rec: Dictionary) -> bool:
 	if dirty:
 		_find_access()
 	return access.has((rec["node"] as Node).get_instance_id())
+
+
+# ---------------------------------------------------------------- Linienbusse und Fußgänger
+
+func has_bus_line() -> bool:
+	for key: int in access:
+		if (access[key] as Dictionary).has("bus"):
+			return true
+	return false
+
+
+## Alle 40 Sekunden kommt ein Linienbus von einem Kartenrand, hält an einer Haltestelle und fährt weiter.
+func _bus_tick(dt: float) -> void:
+	bus_timer -= dt
+	stop_timer -= dt
+	if stop_timer <= 0.0:
+		stop_timer = 7.0
+		_stop_waiters()
+	if bus_timer > 0.0:
+		return
+	bus_timer = BUS_EVERY * randf_range(0.8, 1.2)
+	if not has_bus_line():
+		return
+	var buses := 0
+	for m: Dictionary in movers:
+		if m["purpose"] == "bus":
+			buses += 1
+	if buses >= 3:
+		return
+	var ends := _open_ends()
+	if ends.is_empty():
+		return
+	for _t in range(4):
+		var e: Array = ends[randi() % ends.size()]
+		var l: Dictionary = e[0]
+		var d: int = e[1]
+		var k := roads.lanes(l, d) - 1
+		if _lane_free(l, d, k, 0.0, 18.0):
+			var m := _spawn_on_lane(l, d, k, 0.0, "bus", "linienbus")
+			if (m["goal"] as Dictionary).is_empty():
+				m["purpose"] = "durch"
+			return
+
+
+## Bus hält: Fahrgäste steigen hinten aus und gehen zum Terminal, Wartende steigen vorn ein.
+func _bus_arrived(m: Dictionary, a: Dictionary) -> void:
+	var node: Node3D = m["node"]
+	var right := node.basis.x
+	var fwd := -node.basis.z
+	var n := 3 + randi() % 8
+	for i in range(n):
+		var door := node.position + right * 1.7 - fwd * ([-0.4, 3.9][i % 2] as float) + fwd * randf_range(-0.4, 0.4)
+		_ped_to_entrance(door, "rein", float(i) * 0.6)
+	var stop_id := (a["rec"]["node"] as Node).get_instance_id()
+	var front := node.position + right * 1.7 + fwd * 5.0
+	var k := 0
+	for pd: Dictionary in peds:
+		if String(pd["state"]) == "wartet" and int(pd.get("stop", -1)) == stop_id:
+			pd["state"] = "geht"
+			pd["action"] = "einsteigen"
+			pd["pts"] = PackedVector3Array([pd["pos"], front])
+			pd["i"] = 0
+			pd["delay"] = float(k) * 0.8 + 1.0
+			k += 1
+	m["halt"] = maxf(15.0, float(k) * 0.8 + 6.0)
+
+
+## Abfliegende Fahrgäste gehen vom Terminal zur Haltestelle und warten unter dem Dach.
+func _stop_waiters() -> void:
+	if entrances.is_empty():
+		return
+	for key: int in access:
+		var a: Dictionary = access[key]
+		if not a.has("bus"):
+			continue
+		var waiting := 0
+		for pd: Dictionary in peds:
+			if int(pd.get("stop", -1)) == key:
+				waiting += 1
+		if waiting >= 7 or randf() < 0.4:
+			continue
+		var xf: Transform3D = a["xf"]
+		var spot := xf * Vector3(randf_range(-2.4, 2.4), 0, randf_range(0.4, 1.2))
+		var e: Array = entrances[randi() % entrances.size()]
+		var start: Vector3 = (e[0] as Vector3) + (e[1] as Vector3) * 1.0
+		var pd := _ped(PackedVector3Array([start, start.lerp(spot, 0.5), spot]), "warten")
+		if not pd.is_empty():
+			pd["stop"] = key
+			pd["face"] = xf.basis * Vector3(0, 0, -1)
+
+
+func _ped_to_entrance(from: Vector3, action: String, delay: float = 0.0) -> void:
+	if entrances.is_empty():
+		return
+	var best: Array = entrances[0]
+	for e: Array in entrances:
+		if (e[0] as Vector3).distance_to(from) < (best[0] as Vector3).distance_to(from):
+			best = e
+	var goal: Vector3 = best[0]
+	var door: Vector3 = goal - (best[1] as Vector3) * 3.5
+	var pd := _ped(PackedVector3Array([from, from.lerp(goal, 0.5), goal, door]), action)
+	if not pd.is_empty():
+		pd["delay"] = delay
+
+
+func _ped(pts: PackedVector3Array, action: String) -> Dictionary:
+	if peds.size() >= PED_MAX:
+		return {}
+	var node := Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
+	add_child(node)
+	node.position = pts[0]
+	# jeder geht etwas versetzt (weicht den anderen aus) und in eigenem Tempo
+	var off := randf_range(-0.8, 0.8)
+	var shifted := PackedVector3Array()
+	for i in range(pts.size()):
+		var d := pts[mini(i + 1, pts.size() - 1)] - pts[maxi(i - 1, 0)]
+		d.y = 0.0
+		var side := d.normalized().cross(Vector3.UP) if d.length() > 0.01 else Vector3.ZERO
+		shifted.append(pts[i] + side * (off if i > 0 and i < pts.size() - 1 else off * 0.3))
+	var pd := {"node": node, "pts": shifted, "i": 0, "pos": shifted[0], "walk": 0.0, "action": action,
+		"state": "geht", "speed": WALK * randf_range(0.85, 1.15), "delay": 0.0}
+	peds.append(pd)
+	return pd
+
+
+func _step_peds(dt: float) -> void:
+	var hide := game.interior_view and game.view_floor < 0
+	for pd: Dictionary in peds.duplicate():
+		var node: Node3D = pd["node"]
+		if not is_instance_valid(node):
+			peds.erase(pd)
+			continue
+		node.visible = not hide and float(pd["delay"]) <= 0.0
+		if float(pd["delay"]) > 0.0:
+			pd["delay"] = float(pd["delay"]) - dt
+			continue
+		if String(pd["state"]) == "wartet":
+			Factory.set_pose(node, 0)
+			continue
+		var pts: PackedVector3Array = pd["pts"]
+		var i: int = pd["i"]
+		var pos: Vector3 = pd["pos"]
+		var budget := float(pd["speed"]) * dt
+		# Abstand halten: langsamer, wenn jemand direkt voraus geht
+		if i < pts.size() - 1:
+			var dirv := (pts[i + 1] - pos)
+			dirv.y = 0.0
+			if dirv.length() > 0.01:
+				dirv = dirv.normalized()
+				for o: Dictionary in peds:
+					if is_same(o, pd) or String(o["state"]) == "wartet":
+						continue
+					var d := (o["pos"] as Vector3) - pos
+					if d.length() < 0.9 and d.dot(dirv) > 0.3:
+						budget *= 0.35
+						break
+		var look := Vector3.ZERO
+		while budget > 0.0 and i < pts.size() - 1:
+			var target := pts[i + 1]
+			var dd := pos.distance_to(target)
+			look = target - pos
+			if dd <= budget:
+				budget -= dd
+				pos = target
+				i += 1
+			else:
+				pos += look / dd * budget
+				budget = 0.0
+		pd["walk"] = float(pd["walk"]) + float(pd["speed"]) * dt
+		pd["pos"] = pos
+		pd["i"] = i
+		node.position = pos
+		look.y = 0.0
+		if look.length_squared() > 0.0001:
+			node.basis = Basis.looking_at(look.normalized(), Vector3.UP)
+		Factory.set_pose(node, 1 + int(float(pd["walk"]) / 0.32) % 4)
+		if i >= pts.size() - 1:
+			if String(pd["action"]) == "warten":
+				pd["state"] = "wartet"
+				var face: Vector3 = pd.get("face", Vector3.ZERO)
+				if face.length() > 0.1:
+					node.basis = Basis.looking_at(face.normalized(), Vector3.UP)
+			else:
+				node.queue_free()
+				peds.erase(pd)

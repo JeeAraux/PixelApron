@@ -5,6 +5,8 @@ extends Node
 signal info(title: String, body: String, state: int)  # state: 0 neutral, 1 gut, 2 Problem
 signal tool_changed(id: String)
 signal inspect_requested(p: Vector3)
+signal mode_changed(mode: String, shown: bool)
+signal hint(text: String)   # kurzer Text am Mauszeiger (Länge, Winkel, Radius)
 
 const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
@@ -18,6 +20,10 @@ const SNAP_GROUPS := {"strasse": ["strasse", "strasse4", "einbahn"], "strasse4":
 	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"], "rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
 	"vorfeld": ["vorfeld", "rollweg", "rollweg_breit"], "piste": ["piste"]}
 const ANGLE_STEP := 15.0
+## Zeichenarten für Straßen, Rollwege und Vorfeld (wie in Städtebauspielen)
+const MODES := ["gerade", "kurve", "frei"]
+const MODE_NAMES := {"gerade": "Gerade", "kurve": "Kurve", "frei": "Freihand"}
+const MAGNET := 4.0   # Grad: so nah rastet ein Winkel auf die nächste 15-Grad-Stufe ein
 
 var game: GameState
 var roads: Node3D   # roads.gd, für das Kreuzungs-Werkzeug
@@ -39,6 +45,13 @@ var mat_mark: StandardMaterial3D
 var mat_overlay: StandardMaterial3D
 var mat_snap: StandardMaterial3D
 var snap_kind := ""          # "ende" (Wegende), "weg" (auf einem Weg) oder leer
+var snap_tan := Vector3.ZERO  # Richtung des Weges, an dem der Zeiger einrastet (bei "ende": in den Weg hinein)
+var draw_mode := "gerade"
+var start_tan := Vector3.ZERO # Richtung, in der der neue Weg am Startpunkt weiterläuft (angeschlossener Weg)
+var ref_dir := Vector3.ZERO   # Richtung der Straße unter dem Startpunkt (für rechte Winkel)
+var mat_tint_ok: StandardMaterial3D
+var mat_tint_bad: StandardMaterial3D
+var mat_guide: StandardMaterial3D
 
 
 func setup(g: GameState, r: Node3D) -> void:
@@ -49,6 +62,9 @@ func setup(g: GameState, r: Node3D) -> void:
 	mat_mark = _tmat(Color(0.92, 0.98, 1.0, 0.95))
 	mat_overlay = _tmat(Color(1.0, 0.25, 0.2, 0.45))
 	mat_snap = _tmat(Color(1.0, 0.85, 0.2, 0.95))
+	mat_tint_ok = _tmat(Color(0.45, 0.9, 1.0, 0.22))
+	mat_tint_bad = _tmat(Color(1.0, 0.3, 0.22, 0.5))
+	mat_guide = _tmat(Color(1.0, 1.0, 1.0, 0.55))
 	preview = MeshInstance3D.new()
 	preview.name = "Vorschau"
 	preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -81,6 +97,29 @@ func is_rect_tool() -> bool:
 	return Catalog.ITEMS.has(tool) and bool(Catalog.ITEMS[tool].get("rect_tool", false))
 
 
+## Zeichenarten gibt es für alle geschwungenen Wege außer Leitungen und Wänden.
+func uses_modes() -> bool:
+	if not is_line_tool():
+		return false
+	var def: Dictionary = Catalog.LINES[tool]
+	return not bool(def["straight"]) and Catalog.utility_of(tool) == "" and not Catalog.is_wall(tool)
+
+
+func set_mode(m: String) -> void:
+	if not (m in MODES):
+		return
+	draw_mode = m
+	if points.size() > 1:
+		points = [points[0]]
+	mode_changed.emit(draw_mode, uses_modes())
+	_refresh()
+
+
+func cycle_mode() -> void:
+	if uses_modes():
+		set_mode(MODES[(MODES.find(draw_mode) + 1) % MODES.size()])
+
+
 func is_drawing() -> bool:
 	return (is_line_tool() or is_rect_tool()) and not points.is_empty()
 
@@ -92,6 +131,10 @@ func set_tool(id: String) -> void:
 		ghost.queue_free()
 		ghost = null
 	tool = id
+	start_tan = Vector3.ZERO
+	ref_dir = Vector3.ZERO
+	mode_changed.emit(draw_mode, uses_modes())
+	hint.emit("")
 	if Catalog.utility_of(id) != "" and not game.utility_view:
 		game.set_utility_view(true)
 	if Catalog.is_terminal_tool(id) and not game.interior_view:
@@ -149,7 +192,13 @@ func on_click(p: Vector3) -> void:
 			var last: Vector3 = points[points.size() - 1]
 			if last.distance_to(hover) < 1.0:
 				return
-		points.append(hover)
+		if uses_modes() and draw_mode != "frei":
+			_click_mode()
+			return
+		if points.is_empty():
+			_begin(hover)
+		else:
+			points.append(hover)
 		var def: Dictionary = Catalog.LINES[tool]
 		if points.size() >= 2 and (bool(def["straight"]) or snap_kind != ""):
 			# Gerade Wege sind nach zwei Klicks fertig, alle anderen, sobald sie an einen Weg anschließen
@@ -189,7 +238,7 @@ func on_click(p: Vector3) -> void:
 
 func on_right() -> void:
 	if is_drawing():
-		if points.size() >= 2:
+		if points.size() >= 2 and not (uses_modes() and draw_mode != "frei"):
 			finish()
 		else:
 			cancel()
@@ -213,10 +262,139 @@ func rotate() -> void:
 
 func cancel() -> void:
 	points.clear()
+	start_tan = Vector3.ZERO
+	ref_dir = Vector3.ZERO
 	_refresh()
 
 
+## Erster Punkt eines Weges: Am Ende eines Weges läuft der neue tangential weiter,
+## mitten auf einem Weg merkt er sich dessen Richtung für rechte Winkel.
+func _begin(p: Vector3) -> void:
+	points = [p]
+	start_tan = Vector3.ZERO
+	ref_dir = Vector3.ZERO
+	if snap_kind == "ende" and snap_tan != Vector3.ZERO:
+		start_tan = -snap_tan
+	elif snap_kind == "weg" and snap_tan != Vector3.ZERO:
+		ref_dir = snap_tan
+
+
+## Klick in den Zeichenarten Gerade und Kurve.
+func _click_mode() -> void:
+	if points.is_empty():
+		_begin(hover)
+		_refresh()
+		return
+	if draw_mode == "kurve" and points.size() == 1 and start_tan == Vector3.ZERO:
+		# zweiter Klick legt die Richtung (Kontrollpunkt) fest
+		points.append(hover)
+		_refresh()
+		return
+	_commit(curve_points(hover))
+
+
+## Baut das gezeigte Stück und setzt am Ende tangential fort (wie in Städtebauspielen).
+func _commit(pts: Array) -> void:
+	if pts.size() < 2:
+		return
+	var st := _line_state(pts)
+	if not bool(st["ok"]):
+		game.toast.emit(String(st["why"]))
+		_refresh()
+		return
+	var attached := snap_kind != ""
+	var last: Vector3 = pts[pts.size() - 1]
+	var prev: Vector3 = pts[pts.size() - 2]
+	game.build_line(tool, pts)
+	points.clear()
+	start_tan = Vector3.ZERO
+	ref_dir = Vector3.ZERO
+	if not attached and tool != "tunnel":
+		points = [last]
+		var t := last - prev
+		t.y = 0.0
+		if t.length() > 0.01:
+			start_tan = t.normalized()
+	_refresh()
+
+
+## Punkte des Weges für den Mauszeiger e in der aktuellen Zeichenart.
+func curve_points(e: Vector3) -> Array:
+	if points.is_empty():
+		return [e]
+	var s: Vector3 = points[0]
+	if not uses_modes() or draw_mode == "frei":
+		var out := points.duplicate()
+		out.append(e)
+		return out
+	if draw_mode == "gerade":
+		return [s, e]
+	if points.size() >= 2:
+		return _quad(s, points[1], e)
+	if start_tan != Vector3.ZERO:
+		if snap_kind == "ende" and snap_tan != Vector3.ZERO:
+			return _hermite(s, start_tan, e, snap_tan)
+		return _arc(s, start_tan, e)
+	return [s, e]
+
+
+## Kreisbogen ab s in Richtung t bis e.
+static func _arc(s: Vector3, t: Vector3, e: Vector3) -> Array:
+	var d := Vector3(e.x - s.x, 0.0, e.z - s.z)
+	var l := d.length()
+	if l < 0.5:
+		return [s, e]
+	var tn := Vector3(t.x, 0.0, t.z).normalized()
+	var side := Vector3(-tn.z, 0.0, tn.x)
+	var h := d.dot(side)
+	if absf(h) < 0.01 * l and d.dot(tn) > 0.0:
+		return [s, e]
+	var r := l * l / (2.0 * h)
+	var c := s + side * r
+	var rad := absf(r)
+	var a0 := atan2(s.z - c.z, s.x - c.x)
+	var a1 := atan2(e.z - c.z, e.x - c.x)
+	var tang := Vector3(-sin(a0), 0.0, cos(a0))
+	var sweep := fposmod(a1 - a0, TAU) if tang.dot(tn) > 0.0 else -fposmod(a0 - a1, TAU)
+	var n := maxi(4, ceili(absf(sweep) * rad / 2.0))
+	var out := []
+	for i in range(n + 1):
+		var a := a0 + sweep * float(i) / float(n)
+		out.append(Vector3(c.x + cos(a) * rad, 0.0, c.z + sin(a) * rad))
+	out[n] = Vector3(e.x, 0.0, e.z)
+	return out
+
+
+## Kubische Kurve mit vorgegebener Richtung an beiden Enden (te zeigt in den Zielweg hinein).
+static func _hermite(s: Vector3, ts: Vector3, e: Vector3, te: Vector3) -> Array:
+	var l := Vector2(e.x - s.x, e.z - s.z).length()
+	var h := l * 0.42
+	var p1 := s + ts.normalized() * h
+	var p2 := e - te.normalized() * h
+	var n := maxi(6, ceili(l / 2.0))
+	var out := []
+	for i in range(n + 1):
+		var t := float(i) / float(n)
+		var u := 1.0 - t
+		out.append(s * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + e * (t * t * t))
+	return out
+
+
+## Quadratische Kurve: Start, Kontrollpunkt, Ende.
+static func _quad(s: Vector3, c: Vector3, e: Vector3) -> Array:
+	var n := maxi(6, ceili((s.distance_to(c) + c.distance_to(e)) / 2.0))
+	var out := []
+	for i in range(n + 1):
+		var t := float(i) / float(n)
+		out.append(s.lerp(c, t).lerp(c.lerp(e, t), t))
+	return out
+
+
 func finish() -> void:
+	if uses_modes() and draw_mode != "frei":
+		if not points.is_empty() and has_hover and points[points.size() - 1].distance_to(hover) > 1.0:
+			_commit(curve_points(hover))
+		return
 	if not is_line_tool() or points.size() < 2:
 		return
 	var st := _line_state(points)
@@ -268,17 +446,29 @@ func _snap_line(p: Vector3) -> Vector3:
 			ok = k in group
 		if ok:
 			candidates.append(l)
+	snap_tan = Vector3.ZERO
 	var best := SNAP_DIST
 	var q := Vector3.ZERO
+	var ends := 0
 	for l: Dictionary in candidates:
 		var smp: PackedVector3Array = l["samples"]
-		for e: Vector3 in [smp[0], smp[smp.size() - 1]]:
+		var n := smp.size()
+		for ei in range(2):
+			var e: Vector3 = smp[0] if ei == 0 else smp[n - 1]
 			var d := Vector2(e.x - p.x, e.z - p.z).length()
-			if d < best:
+			if d < best - 0.01:
 				best = d
 				q = e
 				snap_kind = "ende"
+				var inner: Vector3 = smp[mini(4, n - 1)] if ei == 0 else smp[maxi(n - 5, 0)]
+				var t := Vector3(inner.x - e.x, 0.0, inner.z - e.z)
+				snap_tan = t.normalized() if t.length() > 0.01 else Vector3.ZERO
+				ends = 1
+			elif absf(d - best) <= 0.01 and snap_kind == "ende":
+				ends += 1
 	if snap_kind != "":
+		if ends > 1:
+			snap_tan = Vector3.ZERO   # mehrere Wege enden hier: keine eindeutige Richtung
 		return Vector3(q.x, 0.0, q.z)
 	best = INF
 	for l: Dictionary in candidates:
@@ -286,24 +476,68 @@ func _snap_line(p: Vector3) -> Vector3:
 		var b: Rect2 = (l["bounds"] as Rect2).grow(reach)
 		if not b.has_point(Vector2(p.x, p.z)):
 			continue
-		for v: Vector3 in (l["samples"] as PackedVector3Array):
+		var smp: PackedVector3Array = l["samples"]
+		for i in range(smp.size()):
+			var v := smp[i]
 			var d := Vector2(v.x - p.x, v.z - p.z).length()
 			if d < reach and d < best:
 				best = d
 				q = v
 				snap_kind = "weg"
+				var t := smp[mini(i + 2, smp.size() - 1)] - smp[maxi(i - 2, 0)]
+				t.y = 0.0
+				snap_tan = t.normalized() if t.length() > 0.01 else Vector3.ZERO
 	if snap_kind != "":
 		return Vector3(q.x, 0.0, q.z)
 	if not points.is_empty() and not Input.is_key_pressed(KEY_SHIFT):
 		var last: Vector3 = points[points.size() - 1]
-		var d := Vector2(p.x - last.x, p.z - last.z)
-		if d.length() > 1.0:
-			var ang := atan2(d.y, d.x)
-			var stepr := deg_to_rad(ANGLE_STEP)
-			var snapped_ang := roundf(ang / stepr) * stepr
-			var length := roundf(d.length())
-			return last + Vector3(cos(snapped_ang), 0.0, sin(snapped_ang)) * length
-	return Vector3(roundf(p.x), 0.0, roundf(p.z))
+		if uses_modes():
+			if draw_mode == "kurve" and points.size() == 1 and start_tan != Vector3.ZERO:
+				return _snap_arc(last, start_tan, p)
+			var ref := Vector3.RIGHT
+			if points.size() == 1 and start_tan != Vector3.ZERO:
+				ref = start_tan
+			elif points.size() == 1 and ref_dir != Vector3.ZERO:
+				ref = ref_dir
+			elif points.size() >= 2:
+				var pr: Vector3 = points[points.size() - 2]
+				ref = Vector3(last.x - pr.x, 0.0, last.z - pr.z).normalized()
+			return _snap_dir(last, ref, p)
+		return _snap_dir(last, Vector3.RIGHT, p)
+	return Vector3(snappedf(p.x, 0.5), 0.0, snappedf(p.z, 0.5))
+
+
+## Richtung ab base: rastet weich auf 15-Grad-Stufen zur Bezugsrichtung ein, Länge auf halbe Meter.
+static func _snap_dir(base: Vector3, ref: Vector3, p: Vector3) -> Vector3:
+	var d := Vector3(p.x - base.x, 0.0, p.z - base.z)
+	var l := d.length()
+	if l < 1.0:
+		return Vector3(p.x, 0.0, p.z)
+	var r := Vector3(ref.x, 0.0, ref.z).normalized()
+	var ang := r.signed_angle_to(d, Vector3.UP)
+	var stepr := deg_to_rad(ANGLE_STEP)
+	var snapped_ang := roundf(ang / stepr) * stepr
+	if absf(ang - snapped_ang) < deg_to_rad(MAGNET):
+		ang = snapped_ang
+	l = snappedf(l, 0.5)
+	return base + r.rotated(Vector3.UP, ang) * l
+
+
+## Kurvenende bei bekannter Startrichtung: Der Abbiegewinkel des Bogens rastet auf 15-Grad-Stufen ein.
+static func _snap_arc(base: Vector3, t: Vector3, p: Vector3) -> Vector3:
+	var d := Vector3(p.x - base.x, 0.0, p.z - base.z)
+	var l := d.length()
+	if l < 1.0:
+		return Vector3(p.x, 0.0, p.z)
+	var r := Vector3(t.x, 0.0, t.z).normalized()
+	var half := r.signed_angle_to(d, Vector3.UP)
+	var turn := half * 2.0
+	var stepr := deg_to_rad(ANGLE_STEP)
+	var snapped_turn := roundf(turn / stepr) * stepr
+	if absf(turn - snapped_turn) < deg_to_rad(MAGNET + 1.0):
+		half = snapped_turn * 0.5
+	l = snappedf(l, 0.5)
+	return base + r.rotated(Vector3.UP, half) * l
 
 
 # ---------------------------------------------------------------- Vorschau
@@ -311,7 +545,7 @@ func _snap_line(p: Vector3) -> Vector3:
 func _line_state(pts: Array) -> Dictionary:
 	var def: Dictionary = Catalog.LINES[tool]
 	var straight: bool = def["straight"]
-	var samples := Spline.path(pts, straight)
+	var samples := GameState.line_samples(tool, pts)
 	var length := Spline.length(samples)
 	var minr := INF if straight else Spline.min_radius(samples)
 	var need: float = def["min_r"]
@@ -375,22 +609,36 @@ func _refresh_line() -> void:
 	var def: Dictionary = Catalog.LINES[tool]
 	var title := String(def["name"]) + " bauen"
 	var per_m := GameState.fmt_money(int(def["cost_m"])) + " pro Meter"
-	for p: Vector3 in points:
-		_marker(p, 1.4)
-	var pts := points.duplicate()
+	var modes := uses_modes() and draw_mode != "frei"
+	for i in range(points.size()):
+		_marker(points[i], 1.6 if i == 0 else 1.1, mat_mark)
 	if has_hover:
-		_marker(hover, 2.0 if snap_kind != "" else 0.9, mat_snap if snap_kind != "" else mat_mark)
-		var add_hover := pts.is_empty()
-		if not add_hover:
-			var last: Vector3 = pts[pts.size() - 1]
-			add_hover = last.distance_to(hover) > 0.5
-		if add_hover:
-			pts.append(hover)
+		_marker(hover, 2.6 if snap_kind != "" else 1.0, mat_snap if snap_kind != "" else mat_mark)
+	var pts: Array = []
+	if not points.is_empty() and has_hover and points[points.size() - 1].distance_to(hover) > 0.5:
+		pts = curve_points(hover)
+	if points.size() == 1 and start_tan != Vector3.ZERO:
+		_guide(points[0], points[0] + start_tan * 40.0)
+	if modes and draw_mode == "kurve" and points.size() >= 2:
+		_guide(points[0], points[1])
+		if has_hover:
+			_guide(points[1], hover)
 	if pts.size() < 2:
-		var how := "Klicke Start- und Endpunkt." if bool(def["straight"]) else "Klicke den Startpunkt, dann weitere Punkte für Kurven. Klickst du auf einen Weg, schließt der neue Weg dort an und ist fertig."
+		var how := "Klicke Start- und Endpunkt."
+		if modes and draw_mode == "gerade":
+			how = "Gerade: Startpunkt klicken, dann das Ende. Es geht automatisch am Ende weiter, Rechtsklick hört auf. Am Ende eines Weges läuft der neue in dessen Richtung weiter."
+		elif modes and draw_mode == "kurve":
+			how = "Kurve: Startpunkt, dann Richtung, dann Ende klicken. Am Ende eines Weges geht die Kurve tangential weiter, dann reichen Start und Ende."
+			if points.size() == 1 and start_tan == Vector3.ZERO:
+				how = "Kurve: Jetzt die Richtung klicken (Kontrollpunkt), danach das Ende."
+		elif not bool(def["straight"]):
+			how = "Freihand: Klicke den Startpunkt, dann weitere Punkte für Kurven. Klickst du auf einen Weg, schließt der neue Weg dort an und ist fertig."
 		if Catalog.is_wall(tool):
 			how = "Klicke Anfang und Ende der Wand, innerhalb einer Halle. Endpunkte rasten ein."
+		if uses_modes():
+			how += "\nTab wechselt: Gerade · Kurve · Freihand"
 		info.emit(title, how + "\n" + per_m, 0)
+		hint.emit("")
 		return
 	var st := _line_state(pts)
 	var w: float = def["width"]
@@ -398,26 +646,92 @@ func _refresh_line() -> void:
 	if Catalog.is_wall(tool):
 		w = 0.8
 		y = 1.3
-	preview.mesh = Spline.ribbon(st["samples"], w, y + 0.25)
-	preview.material_override = mat_ok if bool(st["ok"]) else mat_bad
-	var body := "Länge %d m · %s" % [int(st["length"]), GameState.fmt_money(int(st["cost"]))]
+	var samples: PackedVector3Array = st["samples"]
+	var flat := PackedVector3Array()
+	for v: Vector3 in samples:
+		flat.append(Vector3(v.x, 0.0, v.z))
+	var ok := bool(st["ok"])
+	if Catalog.utility_of(tool) != "" or Catalog.is_wall(tool):
+		preview.mesh = Spline.ribbon(flat, w, y + 0.25)
+		preview.material_override = mat_ok if ok else mat_bad
+	else:
+		# Vorschau im echten Aussehen des Weges, getönt
+		var look := Factory.make_line(tool, flat, y + 0.12)
+		_tint(look, mat_tint_ok if ok else mat_tint_bad)
+		marker_root.add_child(look)
+	var length: float = st["length"]
+	var body := "Länge %d m · %s" % [int(length), GameState.fmt_money(int(st["cost"]))]
 	var minr: float = st["minr"]
+	var tip := "%s m" % _num(snappedf(length, 0.5))
 	if minr < 100000.0:
 		body += "\nEngster Radius %d m (nötig %d m)" % [int(minr), int(def["min_r"])]
+		if minr < 3000.0:
+			tip += " · R %d m" % int(minr)
+	var a := pts[pts.size() - 2] as Vector3
+	var b := pts[pts.size() - 1] as Vector3
+	var ref := start_tan if start_tan != Vector3.ZERO else ref_dir
+	if ref != Vector3.ZERO and points.size() == 1:
+		var endd := Vector3(b.x - a.x, 0.0, b.z - a.z)
+		if endd.length() > 0.1:
+			tip += " · %d°" % absi(roundi(rad_to_deg(ref.signed_angle_to(endd, Vector3.UP))))
+	var crossings := 0
+	var p_first: Vector3 = pts[0]
+	var p_last: Vector3 = pts[pts.size() - 1]
 	for jn: Array in st["junctions"]:
-		_marker(jn[1], 2.4, mat_snap)
-	if bool(st["ok"]):
-		if (st["junctions"] as Array).size() > 0:
-			body += "\n%d Kreuzung(en) werden angelegt" % (st["junctions"] as Array).size()
+		var jp: Vector3 = jn[1]
+		if jp.distance_to(p_first) < 6.0 or jp.distance_to(p_last) < 6.0:
+			continue   # Anschluss am Anfang oder Ende, keine neue Kreuzung
+		crossings += 1
+		_marker(jp, 2.4, mat_snap)
+	if ok:
+		if crossings > 0:
+			body += "\n%d Kreuzung(en) werden angelegt" % crossings
 		if int(st["decor"]) > 0:
 			body += "\n%d Bäume oder Deko werden weggeräumt" % int(st["decor"])
 	if snap_kind != "" and not points.is_empty():
 		body += "\nSchließt hier an: Klick baut den Weg"
-	if not bool(st["ok"]):
+	if tool == "tunnel":
+		body += "\nDer Teil zwischen den Rampen liegt unter der Erde (Ansicht Untergeschoss: Bild ab)"
+	if not ok:
 		body += "\n" + String(st["why"])
+		tip += "\n" + String(st["why"])
+	elif modes:
+		body += "\nKlick: bauen · Rechtsklick: aufhören · Shift: frei ohne Einrasten · Tab: Zeichenart"
 	elif not bool(def["straight"]):
 		body += "\nRechtsklick oder Enter: fertig · Shift: freier Winkel"
-	info.emit(title, body, 1 if bool(st["ok"]) else 2)
+	info.emit(title, body, 1 if ok else 2)
+	hint.emit(tip)
+
+
+## Gestrichelte Hilfslinie (Richtung des angeschlossenen Weges, Kontrollpunkte).
+func _guide(a: Vector3, b: Vector3) -> void:
+	var d := Vector3(b.x - a.x, 0.0, b.z - a.z)
+	var l := d.length()
+	if l < 0.5:
+		return
+	var dir := d / l
+	var k := 0.0
+	while k < l:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		var seg := minf(1.6, l - k)
+		bm.size = Vector3(0.35, 0.05, seg)
+		mi.mesh = bm
+		mi.material_override = mat_guide
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.basis = Basis.looking_at(dir, Vector3.UP)
+		mi.position = a + dir * (k + seg * 0.5) + Vector3(0, 0.45, 0)
+		marker_root.add_child(mi)
+		k += 3.2
+
+
+func _tint(n: Node, m: Material) -> void:
+	if n is GeometryInstance3D:
+		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if n is MeshInstance3D:
+		(n as MeshInstance3D).material_overlay = m
+	for c in n.get_children():
+		_tint(c, m)
 
 
 func _refresh_rect() -> void:
@@ -517,14 +831,31 @@ func _num(v: float) -> String:
 
 
 func _marker(p: Vector3, size: float, m: Material = null) -> void:
+	# flache Scheibe mit Rand statt Würfel
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(size, size, size)
-	mi.mesh = bm
+	var cm := CylinderMesh.new()
+	cm.top_radius = size * 0.5
+	cm.bottom_radius = size * 0.5
+	cm.height = 0.12
+	cm.radial_segments = 24
+	cm.rings = 1
+	mi.mesh = cm
 	mi.material_override = m if m != null else mat_mark
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.position = p + Vector3(0, size * 0.5 + 0.3, 0)
+	mi.position = p + Vector3(0, 0.42, 0)
 	marker_root.add_child(mi)
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = size * 0.62
+	tm.outer_radius = size * 0.78
+	tm.rings = 24
+	tm.ring_segments = 6
+	ring.mesh = tm
+	ring.scale = Vector3(1.0, 0.25, 1.0)
+	ring.material_override = mi.material_override
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ring.position = p + Vector3(0, 0.45, 0)
+	marker_root.add_child(ring)
 
 
 func _paint(n: Node, m: Material) -> void:

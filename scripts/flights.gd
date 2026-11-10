@@ -53,6 +53,7 @@ var traffic: Variant = null    # traffic.gd (Zufahrt Parkhaus)
 var ops: Variant = null        # ground_ops.gd (Schlepper, Treppen, Busse)
 var gate_short := 0.0          # Spielminuten, in denen noch "zu wenige Gates" gemeldet wird
 var rwy_rev := false           # Betriebsrichtung: false = vom Anfang der Piste zum Ende
+var _route_sets: Dictionary = {}   # je rollendem Flugzeug: verbleibende Route (für Gegenverkehr)
 
 
 func setup(g: GameState) -> void:
@@ -81,6 +82,7 @@ func step(sim: float) -> void:
 	if next_flight <= 0.0:
 		next_flight = INTERVAL * lerpf(1.6, 0.55, game.satisfaction / 100.0)
 		_try_spawn()
+	_build_route_sets()
 	for p: Dictionary in planes.duplicate():
 		_update(p, sim)
 	while not movements.is_empty() and float(movements[0]) < game.minutes - 60.0:
@@ -480,11 +482,12 @@ func _update(p: Dictionary, sim: float) -> void:
 			_update_gse(p, sim)
 			var f := 1.0 - float(p["timer"]) / maxf(float(p["turn"]), 0.01)
 			if ops != null:
+				ops.turn_step(p, f, sim)
 				if f >= 0.3:
 					ops.want_board(p)
 				if f >= 0.82:
 					ops.call_tug(p, float(p["ng"]))
-			var ready: bool = ops == null or ops.remote_done(p)
+			var ready: bool = ops == null or (ops.remote_done(p) and ops.turn_clear(p))
 			if float(p["timer"]) <= 0.0 and not ready:
 				p["delay"] = float(p["delay"]) + sim * CLOCK
 			if float(p["timer"]) <= 0.0 and ready:
@@ -492,6 +495,7 @@ func _update(p: Dictionary, sim: float) -> void:
 				if terminal != null:
 					terminal.flight_left(p)
 				if ops != null:
+					ops.turn_end(p)
 					ops.call_tug(p, float(p["ng"]))
 					ops.remote_leave(p)
 				p["state"] = "pushback"
@@ -566,10 +570,19 @@ func _vacated(p: Dictionary) -> bool:
 	return graph.runway_distance(p["pos"]) > Airside.HOLD_DIST + 20.0
 
 
+## Ist ein landendes Flugzeug so nah, dass kein Start mehr dazwischen passt?
+## (Start mit Aufreihen dauert gut eine Minute; im Endanflug fliegt man rund 70 m/s.)
 func _arrival_close() -> bool:
 	for q: Dictionary in planes:
-		if q["state"] == "anflug" or q["state"] == "landung":
+		if q["state"] == "landung":
 			return true
+		if q["state"] == "anflug":
+			var remaining := (q["pos"] as Vector3).distance_to(q["td"])
+			if q.has("approach"):
+				var ap: Dictionary = q["approach"]
+				remaining = float(ap["total"]) - float(q.get("as", 0.0)) + 2600.0
+			if remaining < 5500.0:
+				return true
 	return false
 
 
@@ -853,11 +866,18 @@ func _drive(p: Dictionary, sim: float) -> String:
 	while k < nodes.size() and node_s[k] < rs - 0.5:
 		k += 1
 	p["pk"] = k
+	# Gegenverkehr: Wer weiter von der gemeinsamen Strecke entfernt ist, wartet davor
+	var yield_s := INF if ghost else _yield_point(p, nodes, node_s, k, rs)
+	if yield_s < INF:
+		limit = minf(limit, maxf(yield_s, rs))
+		why = "belegt"
 	var kk := k
 	while kk < nodes.size():
 		var n: int = nodes[kk]
 		if node_s[kk] - rs > LOOKAHEAD:
 			break
+		if node_s[kk] > limit + 6.0:
+			break   # nicht weiter reservieren, als wir fahren dürfen
 		if graph.zone[n] == 1 and runway_owner != id:
 			if _may_take_runway(id):
 				runway_owner = id
@@ -870,8 +890,29 @@ func _drive(p: Dictionary, sim: float) -> String:
 			why = "belegt"
 			p["blocked_by"] = _blocker(n, id)
 			break
+		# Blocksicherung: einen Rollwegabschnitt bis zur nächsten Kreuzung nur befahren,
+		# wenn er ganz frei ist (sonst stehen sich zwei Flugzeuge Nase an Nase gegenüber)
+		if not ghost and int(reserved.get(n, -1)) != id:
+			var blk := _block_ahead(nodes, node_s, kk, id)
+			if int(blk[0]) >= 0:
+				limit = minf(limit, node_s[kk] - CLEAR - 14.0)
+				why = "belegt"
+				p["blocked_by"] = int(blk[0])
+				break
+			for nb: int in blk[1]:
+				_reserve(nb, id)
+		if ghost and not _free_for(n, id):
+			kk += 1
+			continue
 		_reserve(n, id)
 		kk += 1
+	# Was hinter dem Haltepunkt schon reserviert war, wieder freigeben (der andere soll vorbeikommen).
+	# Nur wenn wir dort noch sicher anhalten können; sonst bleibt alles belegt, wo wir stehen.
+	if why == "belegt" and limit > rs + 5.0:
+		for j in range(k, mini(nodes.size(), k + 40)):
+			var nj: int = nodes[j]
+			if node_s[j] > limit + 6.0 and int(reserved.get(nj, -1)) == id:
+				reserved.erase(nj)
 	# Tempo: Bremskurve der Linie und Halt vor dem Hindernis
 	var ri: int = p["ri"]
 	var want := cap[ri]
@@ -905,6 +946,18 @@ func _drive(p: Dictionary, sim: float) -> String:
 		p["heading"] = hd.normalized()
 	p["mg_pos"] = mg_pos
 	p["pos"] = mg_pos + (p["heading"] as Vector3) * float(p["mg"])
+	# Wo das Flugzeug steht, ist immer belegt (auch abseits der eigenen Route, z. B. nach dem Pushback)
+	var here: int = p.get("occ", -1)
+	if not p.has("occ_at") or (p["occ_at"] as Vector3).distance_to(p["pos"]) > 3.0:
+		here = graph.nearest(p["pos"])
+		p["occ_at"] = p["pos"]
+	if here >= 0 and int(p.get("occ", -1)) != here:
+		var old_occ: int = p.get("occ", -1)
+		if old_occ >= 0 and int(reserved.get(old_occ, -1)) == id and not nodes.has(old_occ):
+			reserved.erase(old_occ)
+		if _free_for(here, id) or int(reserved.get(here, -1)) == id:
+			_reserve(here, id)
+			p["occ"] = here
 	# Knoten hinter dem Heck freigeben
 	for j in range(k):
 		var n: int = nodes[j]
@@ -918,8 +971,11 @@ func _drive(p: Dictionary, sim: float) -> String:
 			p["rerouted"] = true
 			_reroute(p)
 		elif float(p["wait"]) > 40.0 and _deadlocked(p):
-			p["ghost"] = 15.0   # Notlösung gegen gegenseitiges Blockieren
-			p["wait"] = 0.0
+			# Notlösung gegen gegenseitiges Blockieren: nur einer von beiden fährt durch
+			var q := _plane_by_id(int(p.get("blocked_by", -1)))
+			if q.is_empty() or float(q.get("ghost", 0.0)) <= 0.0 and (int(q.get("blocked_by", -1)) != int(p["id"]) or int(p["id"]) > int(q["id"])):
+				p["ghost"] = 15.0
+				p["wait"] = 0.0
 		return "belegt"
 	if v > 0.5:
 		p["wait"] = 0.0
@@ -930,6 +986,106 @@ func _drive(p: Dictionary, sim: float) -> String:
 		p["speed"] = 0.0
 		return "ziel"
 	return "fahrt"
+
+
+## Verbleibende Routen aller rollenden Flugzeuge als Knotenmengen (einmal pro Schritt).
+func _build_route_sets() -> void:
+	_route_sets = {}
+	for p: Dictionary in planes:
+		if not (p["state"] in ["rollt_ein", "rollt_aus", "wartet"]) or not p.has("route"):
+			continue
+		var nodes: Array = p["path"]
+		var node_s: PackedFloat32Array = p["route"]["node_s"]
+		var k: int = p.get("pk", 0)
+		var setn := {}
+		for j in range(k, mini(nodes.size(), k + 90)):
+			var a := graph.pos[nodes[maxi(j - 1, 0)]]
+			var b := graph.pos[nodes[mini(j + 1, nodes.size() - 1)]]
+			var d := b - a
+			d.y = 0.0
+			setn[nodes[j]] = [node_s[j], d.normalized() if d.length() > 0.01 else Vector3.ZERO]
+		_route_sets[int(p["id"])] = {"set": setn, "rs": float(p["rs"]), "nodes": nodes, "node_s": node_s, "k": k,
+			"pos": p["pos"]}
+
+
+## Erster Knoten der Route ab k, der die Route des anderen in Gegenrichtung berührt: [Index, Abstand] oder [-1, INF].
+func _opposing_entry(nodes: Array, node_s: PackedFloat32Array, k: int, rs: float, other: Dictionary) -> Array:
+	for kk in range(k, mini(nodes.size(), k + 90)):
+		if node_s[kk] - rs > 450.0:
+			break
+		var n: int = nodes[kk]
+		var hit := -1
+		if other.has(n):
+			hit = n
+		else:
+			for m: int in graph.near[n]:
+				if other.has(m):
+					hit = m
+					break
+		if hit < 0:
+			continue
+		var a := graph.pos[nodes[maxi(kk - 1, 0)]]
+		var b := graph.pos[nodes[mini(kk + 1, nodes.size() - 1)]]
+		var dme := b - a
+		dme.y = 0.0
+		if dme.length() < 0.01:
+			continue
+		var e: Array = other[hit]
+		if dme.normalized().dot(e[1]) < -0.3:
+			return [kk, maxf(node_s[kk] - rs, 0.0)]
+	return [-1, INF]
+
+
+## Haltepunkt (Bogenlänge), wenn wir einem entgegenkommenden Flugzeug den Vortritt lassen müssen, sonst INF.
+func _yield_point(p: Dictionary, nodes: Array, node_s: PackedFloat32Array, k: int, rs: float) -> float:
+	var id: int = p["id"]
+	if not _route_sets.has(id):
+		return INF
+	var mine: Dictionary = _route_sets[id]["set"]
+	var best := INF
+	for qid: int in _route_sets:
+		if qid == id:
+			continue
+		var q: Dictionary = _route_sets[qid]
+		if (q["pos"] as Vector3).distance_to(p["pos"]) > 900.0:
+			continue
+		var me := _opposing_entry(nodes, node_s, k, rs, q["set"])
+		if int(me[0]) < 0:
+			continue
+		var them := _opposing_entry(q["nodes"], q["node_s"], int(q["k"]), float(q["rs"]), mine)
+		var a: float = me[1]
+		var b: float = them[1]
+		if a > b + 0.5 or (absf(a - b) <= 0.5 and id > qid):
+			best = minf(best, node_s[int(me[0])] - CLEAR - 14.0)
+			p["blocked_by"] = qid
+	return best
+
+
+## Abschnitt ab Index kk bis einschließlich der nächsten Kreuzung: [Blockierer oder -1, Knoten].
+## Im Pistenschutzbereich endet die Prüfung (dort gilt die Pistenfreigabe).
+func _block_ahead(nodes: Array, node_s: PackedFloat32Array, kk: int, id: int) -> Array:
+	var out := []
+	var j := kk
+	var start_s := node_s[kk]
+	var seen_line := false
+	while j < nodes.size():
+		var n: int = nodes[j]
+		if graph.zone[n] == 1 and runway_owner != id:
+			break
+		if graph.in_stand[n] == 1:
+			break
+		var deg: int = (graph.adj[n] as Array).size()
+		if not _free_for(n, id):
+			return [_blocker(n, id), out]
+		out.append(n)
+		if deg == 2:
+			seen_line = true
+		elif seen_line:
+			break   # Kreuzung am Ende des Abschnitts gehört dazu
+		if node_s[j] - start_s > 600.0:
+			break
+		j += 1
+	return [-1, out]
 
 
 ## Verklemmt: Der Blockierer kommt selbst nicht weiter und wartet (auf uns oder lange).
@@ -1077,7 +1233,35 @@ func _plan_pushback(p: Dictionary) -> bool:
 	for n: int in need:
 		if not _free_for(n, id):
 			return false
+	# Pushback erst, wenn der erste Rollwegabschnitt in Abflugrichtung frei ist (kein Gegenverkehr)
+	var dep := graph.path(t_node, goal, {}, d, bool(p.get("wide", false)))
+	var dep_s := PackedFloat32Array()
+	var run := 0.0
+	for i in range(dep.size()):
+		if i > 0:
+			run += graph.pos[dep[i]].distance_to(graph.pos[dep[i - 1]])
+		dep_s.append(run)
+	var blk := _block_ahead(dep, dep_s, 0, id) if not dep.is_empty() else [-1, []]
+	if int(blk[0]) >= 0:
+		return false
+	# kein Pushback, solange uns auf dem ersten Stück jemand entgegenrollt
+	var dep_set := {}
+	for i in range(mini(dep.size(), 90)):
+		var a := graph.pos[dep[maxi(i - 1, 0)]]
+		var b := graph.pos[dep[mini(i + 1, dep.size() - 1)]]
+		var dd := b - a
+		dd.y = 0.0
+		dep_set[dep[i]] = [dep_s[i], dd.normalized() if dd.length() > 0.01 else Vector3.ZERO]
+	for qid: int in _route_sets:
+		if qid == id:
+			continue
+		var q: Dictionary = _route_sets[qid]
+		var them := _opposing_entry(q["nodes"], q["node_s"], int(q["k"]), float(q["rs"]), dep_set)
+		if int(them[0]) >= 0 and float(them[1]) < 500.0:
+			return false
 	for n: int in need:
+		_reserve(n, id)
+	for n: int in blk[1]:
 		_reserve(n, id)
 	var p0: Vector3 = p["pos"]
 	var fwd: Vector3 = p["heading"]
@@ -1124,9 +1308,15 @@ func _park(p: Dictionary) -> void:
 			slow *= 1.25
 			gate_short = 60.0
 	p["gate"] = gate
+	# Gepäckförderband vom Terminal zum Gepäckumschlag: Koffer sind schneller am Flugzeug
+	var hall: Dictionary = gate.get("hall", {}) if not gate.is_empty() else {}
+	if not hall.is_empty() and not game.baggage_link(hall).is_empty():
+		slow *= 0.9
 	p["turn"] = float(plane["turn"]) * slow
 	p["timer"] = p["turn"]
 	_spawn_gse(p)
+	if ops != null:
+		ops.turn_start(p)
 	if terminal != null:
 		terminal.flight_parked(p, gate)
 	if ops != null and bool(p.get("bus", false)) and not gate.is_empty():
@@ -1143,28 +1333,10 @@ func _spawn_gse(p: Dictionary) -> void:
 	var node: Node3D = st["node"]
 	var b := node.global_transform.basis
 	var fwd := b.z.normalized()
-	var side := b.x.normalized()
 	var c: Vector3 = p["pos"]
-	var home := (st["pos"] as Vector3) + side * 26.0 - fwd * 18.0
-	var depots := game.items_of("vorfelddepot")
-	if depot_ok() and not depots.is_empty():
-		home = depots[0]["pos"]
-	var spots := [
-		["tank", c + side * 8.5 + fwd * 3.0, fwd],
-		["gepaeck", c - side * 4.6 - fwd * 9.5, side],
-		["catering", c + side * 4.4 + fwd * 11.5, side],
-	]
+	# Einweiser vor der Nase (geht nach dem Andocken); die Fahrzeuge steuert ground_ops.gd
 	var list := []
-	for i in range(spots.size()):
-		var spot: Array = spots[i]
-		var v := Factory.make_gse(String(spot[0]))
-		add_child(v)
-		var start: Vector3 = home + side * float(i) * 4.0
-		v.position = start
-		list.append({"node": v, "home": start, "spot": spot[1], "face": spot[2], "delay": 0.04 * float(i)})
-	# Vorfeldpersonal in Warnwesten: Einweiser vor der Nase (geht nach dem Andocken), Lader am Gepäckwagen
-	var crew := [[c + fwd * (float(Catalog.PLANES[p["kind"]]["nose"]) + 3.0), -fwd, 0.12], [c - side * 3.2 - fwd * 7.5, side, 2.0],
-		[c + side * 6.8 + fwd * 3.5, -side, 2.0]]
+	var crew := [[c + fwd * (float(Catalog.PLANES[p["kind"]]["nose"]) + 3.0), -fwd, 0.06]]
 	for i in range(crew.size()):
 		var w := Factory.make_staff(Color(0.95, 0.85, 0.1), Color(0.15, 0.18, 0.28), i, true)
 		add_child(w)
@@ -1362,6 +1534,9 @@ func _satisfaction(sim: float) -> void:
 	if bonus > 0:
 		target += float(bonus)
 		factors.append(["Vorplatz: %d Bäume, Kübel und Bänke am Terminal" % decor, bonus])
+	if traffic != null and traffic.has_bus_line():
+		target += 3.0
+		factors.append(["Linienbus hält am Flughafen", 3])
 	target = clampf(target, 5.0, 100.0)
 	game.satisfaction = lerpf(game.satisfaction, target, clampf(sim * 0.01, 0.0, 1.0))
 	game.satisfaction_factors = factors

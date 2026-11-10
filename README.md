@@ -22,6 +22,17 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Großes Update 0.8:**
+  - **Wegebau wie im Städtebauspiel:** Drei Zeichenarten (Tab wechselt): *Gerade* setzt am Ende automatisch fort, *Kurve* läuft am Ende einer Straße tangential als Kreisbogen weiter, *Freihand* wie bisher. Winkel rasten weich auf 15-Grad-Stufen zur angeschlossenen Straße ein (Shift: frei). Die Vorschau zeigt den echten Belag, ein Schild am Mauszeiger zeigt Länge, Radius und Winkel.
+  - **Unter der Erde:** Straßentunnel mit Rampen, Portalen und beleuchteter Röhre (darüber darf gebaut werden, auch Pisten). Gepäckförderband im Tunnel vom Terminal zum neuen *Gepäckumschlag*, die Koffer laufen sichtbar. Ansicht *Untergeschoss* mit ▼ oder Bild ab.
+  - **Stockwerke und Bauformen:** Terminalhallen mit bis zu drei Ebenen, Keller, Rolltreppen, Aufzügen und Treppen, verschiedenen Fassaden, Dächern und runden Formen. Parkhäuser mit 2 bis 6 Etagen.
+  - **Grenzkontrolle:** Passkontrolle trennt Schengen- und Non-Schengen-Flüge, Zoll für Ankünfte.
+  - **Abfertigung nach Vorbild:** Je Flugzeugtyp eigene Positionen: Bodenstrom an der Nase, Förderbandwagen an beiden Frachttoren (das Band hebt sich, Koffer laufen hinauf oder hinunter), Gepäckzüge mit drei Wagen, die sich füllen und leeren, Catering mit Scherenhub an Tür R2, Tankwagen mit Schlauch vor der rechten Tragfläche, Pylonen und Unterlegkeile. Die Fahrzeuge fahren über eigene Wege an und weichen einander und rollenden Flugzeugen aus.
+  - **Flugzeuge weichen einander aus:** Rollwegabschnitte werden blockweise freigegeben, bei Gegenverkehr wartet der, der weiter weg ist; Pushback erst, wenn niemand entgegenkommt. Neue Typen (ATR 72, Embraer 190, A321, A330) mit feineren Nasen, Starts und Landungen mit Anflugkurven, Betrieb nach Windrichtung.
+  - **Landseite:** Linienbusse mit Haltestelle, Fahrgäste gehen zu Fuß zum Terminal und warten unter dem Dach, Autofahrer laufen vom Parkhaus oder der Vorfahrt zum Eingang. Ebenerdiger Parkplatz, Sicherheitszaun.
+  - **24 neue Möbel, viele bewegt:** Bahnhofsuhr mit laufenden Zeigern, Aquarium mit Fischschwärmen, Springbrunnen, Rollsteig, Werbestelen mit wechselnden Motiven, Kinderspielecke mit Schaukelpferd, hängendes Flugzeugmodell, Lounge, Kiosk, Info-Schalter, Automaten, Ladesäule, Flügel und mehr.
+  - **Landschaft:** Büsche, Hecken, Blumenbeete, Teich mit Enten, Felsen, Picknicktische, feinere Laternen, Bänke und Kübel. Hellere Wiese mit Blumen, Wolkenschatten, Tag und Nacht mit weichen Lichtern.
+
 - **Details (neu in 0.7):**
   - **Flugzeuge:** Die Fans drehen sich, das Fahrwerk fährt nach dem Start ein und vor der Landung aus. Beacon und Blitzlichter blinken. Dazu kommen genauere Cockpitscheiben, Frachttüren, Querruder, Spoiler, Höhen- und Seitenruder sowie ein Airline-Schriftzug.
   - **Fluggastbrücken:** Jedes Gate hat eine Brücke an der Außenwand. Sie fährt zum Flugzeug aus, dockt an der vorderen Tür an und fährt nach dem Boarding wieder ein (Reichweite etwa 36 m).

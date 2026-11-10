@@ -53,7 +53,7 @@ func run(main: Node) -> void:
 	var stand_rects := []
 	for st: Dictionary in game.stands():
 		stand_rects.append([st, (st["rect"] as Rect2).grow(-3.0)])
-	for i in range(9000):
+	for i in range(12000):
 		fl.step(0.1)
 		outdoor_pax = maxi(outdoor_pax, main.ops.walkers.size())
 		for j: Dictionary in main.ops.jobs.values():
@@ -82,7 +82,7 @@ func run(main: Node) -> void:
 				at_band = true
 		for p: Dictionary in fl.planes:
 			seen_states[p["state"]] = true
-			if not (p["gse"] as Array).is_empty():
+			if main.ops.service_count() > 3:
 				saw_gse = true
 		for a in range(fl.planes.size()):
 			var pa: Dictionary = fl.planes[a]
@@ -125,6 +125,8 @@ func run(main: Node) -> void:
 	var slow_t: float = tb.slowdown()
 	fl._park(test_plane)
 	var expect: float = float(Catalog.PLANES["a320"]["turn"]) * slow_t * (1.0 if not (test_plane["gate"] as Dictionary).is_empty() else 1.25)
+	if not (test_plane["gate"] as Dictionary).is_empty() and not game.baggage_link(test_plane["gate"]["hall"]).is_empty():
+		expect *= 0.9   # Gepäckförderband zum Umschlag
 	check(is_equal_approx(float(test_plane["turn"]), expect), "Mit Depot normale Abfertigungszeit (%.0f Min)" % float(test_plane["turn"]))
 	fl._clear_gse(test_plane)
 	fl._release_all(999)
@@ -150,7 +152,7 @@ func run(main: Node) -> void:
 	check(m1 > m0, "Einnahmen aus Flügen (%d €)" % (m1 - m0))
 	var cable: Dictionary = {}
 	for l: Dictionary in game.lines:
-		if l["kind"] == "stromkabel":
+		if l["kind"] == "stromkabel" and (l["points"][1] as Vector3).distance_to(Vector3(22, 0, 2)) < 1.0:
 			cable = l
 			break
 	var pts: Array = cable["points"]
@@ -246,7 +248,8 @@ func run(main: Node) -> void:
 			var legs: Array = mv["legs"]
 			if float(mv["v"]) < 0.05 and legs.size() > 1 and legs[0]["type"] == "lane" and legs[1]["type"] == "conn":
 				var ni: int = legs[1]["node"]
-				if rd.control_of(ni) == "ampel" and rd.signal_at(ni, int(legs[1]["from_e"])) == "rot":
+				# nur Autos, die wegen der Ampel stehen (nicht im Rückstau hinter einem Vordermann)
+				if rd.control_of(ni) == "ampel" and rd.signal_at(ni, int(legs[1]["from_e"])) == "rot" and tr._gap_ahead(mv) > 8.0:
 					var rest := float(legs[0]["len"]) - float(mv["s"]) - float(mv["len"]) * 0.5
 					if rest < 10.0:
 						red_min = minf(red_min, rest)
@@ -268,6 +271,7 @@ func run(main: Node) -> void:
 	# Straße mit Kurve
 	var money0: int = game.money
 	b.set_tool("strasse")
+	b.set_mode("frei")
 	b.on_click(Vector3(500, 0, 300))
 	b.on_click(Vector3(560, 0, 330))
 	b.on_click(Vector3(620, 0, 300))
@@ -373,7 +377,8 @@ func run(main: Node) -> void:
 
 	# Wegebau: Kollisionen, Kreuzungen, Einrasten
 	const Spline = preload("res://scripts/spline.gd")
-	var chk: Dictionary = game.check_line("strasse", Spline.path([Vector3(150, 0, -40), Vector3(230, 0, -40)], false))
+	var tw: Vector3 = (game.items_of("tower")[0]["node"] as Node3D).position
+	var chk: Dictionary = game.check_line("strasse", Spline.path([tw + Vector3(-3, 0, -40), tw + Vector3(3, 0, 40)], false))
 	check(String(chk["why"]).contains("Tower"), "Straße durch den Tower abgelehnt: " + String(chk["why"]))
 	chk = game.check_line("rollweg", Spline.path([Vector3(640, 0, 240), Vector3(640, 0, 360)], false))
 	check(String(chk["why"]).contains("Straße"), "Rollweg über eine Straße abgelehnt: " + String(chk["why"]))
@@ -394,6 +399,33 @@ func run(main: Node) -> void:
 	check(b.snap_kind == "weg", "Rastet mitten auf einer Straße ein")
 	b.on_click(Vector3(640, 0, 302))
 	check(b.points.is_empty() and game.lines.size() == n0 + 2, "Anschluss an die Straße: fertig und Einmündung angelegt")
+
+	# Zeichenart Gerade: setzt am Ende fort; Kurve schließt tangential an
+	b.set_tool("strasse")
+	b.set_mode("gerade")
+	n0 = game.lines.size()
+	b.on_click(Vector3(1200, 0, 600))
+	b.on_click(Vector3(1260, 0, 600))
+	check(game.lines.size() == n0 + 1 and b.points.size() == 1 and b.start_tan.distance_to(Vector3.RIGHT) < 0.01,
+		"Gerade: Stück gebaut, Zeichnen geht am Ende weiter")
+	b.on_move(Vector3(1300, 0, 601.5))
+	check(absf(b.hover.z - 600.0) < 0.01, "Gerade: Winkel rastet weich auf die Verlängerung ein (%.2f)" % b.hover.z)
+	b.cancel()
+	b.set_mode("kurve")
+	b.on_move(Vector3(1260.5, 0, 600.4))
+	check(b.snap_kind == "ende" and b.snap_tan.distance_to(Vector3.LEFT) < 0.05, "Kurve: Wegende mit Richtung erkannt")
+	b.on_click(Vector3(1260.5, 0, 600.4))
+	check(b.start_tan.distance_to(Vector3.RIGHT) < 0.05, "Kurve: startet in Richtung der Straße")
+	b.on_move(Vector3(1310, 0, 650))
+	b.on_click(b.hover)
+	var arc_rec: Dictionary = game.lines[game.lines.size() - 1]
+	var arc_s: PackedVector3Array = arc_rec["samples"]
+	var arc_dir := (arc_s[3] - arc_s[0]).normalized()
+	check(game.lines.size() == n0 + 2 and arc_dir.dot(Vector3.RIGHT) > 0.98 and Spline.min_radius(arc_s) > 40.0,
+		"Kurve: Bogen tangential angeschlossen (Radius %d m)" % int(Spline.min_radius(arc_s)))
+	b.cancel()
+	b.set_mode("frei")
+	b.set_tool("")
 	var tree: Dictionary = game.build_item("baum", Vector3(800, 0, 150), 0)
 	var trees_before: int = game.items_of("baum").size()
 	game.build_line("strasse", [Vector3(780, 0, 150), Vector3(830, 0, 150)])

@@ -186,7 +186,7 @@ static func ribbon(s: PackedVector3Array, width: float, y: float) -> ArrayMesh:
 		var side := t.cross(Vector3.UP)
 		if i > 0:
 			run += s[i].distance_to(s[i - 1])
-		var c := Vector3(s[i].x, y, s[i].z)
+		var c := Vector3(s[i].x, y + s[i].y, s[i].z)
 		left.append(c - side * width * 0.5)
 		right.append(c + side * width * 0.5)
 		dist.append(run)
