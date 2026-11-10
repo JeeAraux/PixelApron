@@ -650,6 +650,31 @@ func _demo(args: PackedStringArray) -> void:
 		cam_rig.zoom_goal = zl
 		cam_rig.zoom = zl
 		hud.set_build_open(false)
+	elif mode == "einrichtung":
+		# alle Terminal-Bauteile mit Varianten in einer eigenen Halle
+		game.build_hall(Rect2(560, 560, 70, 44), true, {})
+		var plan := [["checkin", 566, 566, 0, {}], ["sicherheit", 578, 568, 0, {}], ["gepaeckband", 592, 566, 0, {}],
+			["gepaeckband", 606, 566, 0, {"stil": "karussell"}], ["gepaeckanlage", 622, 567, 0, {}],
+			["gate", 568, 582, 0, {}], ["busgate", 581, 582, 0, {"bereich": "non_schengen"}], ["wc", 593, 581, 0, {}],
+			["cafe", 604, 582, 0, {}], ["cafe", 614, 582, 0, {"stil": "bar"}], ["shop", 625, 582, 0, {"stil": "dutyfree"}],
+			["shop", 566, 596, 0, {"stil": "buecher"}], ["shop", 576, 596, 0, {"stil": "elektronik"}], ["cafe", 586, 596, 0, {"stil": "baeckerei"}],
+			["sitzreihe", 596, 595, 0, {}], ["pflanze", 600, 597, 0, {}], ["anzeige", 605, 595, 0, {}], ["kunst", 612, 596, 0, {}],
+			["heizkoerper", 618, 594, 0, {}], ["sb_ausgang", 624, 595, 0, {}], ["eingang", 590, 603, 0, {"tuer": "dreh"}], ["eingang", 600, 603, 0, {}]]
+		for e: Array in plan:
+			game.build_item(String(e[0]), Vector3(float(e[1]), 0, float(e[2])), int(e[3]), true, e[4])
+		game.set_interior_view(true)
+		var zl := 46.0
+		var tgt := Vector3(595, 0, 581)
+		for a in args:
+			if a.begins_with("--zoom="):
+				zl = float(a.substr(7))
+			if a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				tgt = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.target = tgt
+		cam_rig.zoom_goal = zl
+		cam_rig.zoom = zl
+		hud.set_build_open(false)
 	elif mode == "landseite":
 		# Linienbus an der Haltestelle, Fußgänger zum Terminal
 		traffic.set_process(false)
@@ -788,10 +813,22 @@ func _demo(args: PackedStringArray) -> void:
 			cam_rig.zoom_goal = 26.0
 		cam_rig.zoom = cam_rig.zoom_goal
 	elif mode == "tower" or mode == "hangar" or mode == "feuerwache":
-		var at := {"tower": Vector3(190, 0, -40), "hangar": Vector3(-200, 0, -48), "feuerwache": Vector3(330, 0, -55)}
-		cam_rig.target = at[mode]
+		var at: Vector3 = Vector3.ZERO
+		for it: Dictionary in game.items_of(mode):
+			at = it["pos"]
+		for a in args:
+			if a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				at = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.target = at
 		cam_rig.zoom_goal = 70.0
-		cam_rig.zoom = 70.0
+		for a in args:
+			if a.begins_with("--zoom="):
+				cam_rig.zoom_goal = float(a.substr(7))
+			elif a.begins_with("--yaw="):
+				cam_rig.yaw = float(a.substr(6))
+				cam_rig.yaw_goal = cam_rig.yaw
+		cam_rig.zoom = cam_rig.zoom_goal
 	elif mode == "parkhaus":
 		game.traffic_demand = 6
 		for i in range(900):
@@ -800,7 +837,16 @@ func _demo(args: PackedStringArray) -> void:
 		cam_rig.yaw_goal = 225.0
 		cam_rig.target = Vector3(-40, 0, 34)
 		cam_rig.zoom_goal = 48.0
-		cam_rig.zoom = 48.0
+		for a in args:
+			if a.begins_with("--zoom="):
+				cam_rig.zoom_goal = float(a.substr(7))
+			elif a.begins_with("--yaw="):
+				cam_rig.yaw = float(a.substr(6))
+				cam_rig.yaw_goal = cam_rig.yaw
+			elif a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				cam_rig.target = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.zoom = cam_rig.zoom_goal
 	elif mode == "verkehr" or mode == "ampel":
 		if mode == "ampel":
 			roads.cycle_control(Vector3(115, 0, 35))
@@ -839,9 +885,17 @@ func _demo(args: PackedStringArray) -> void:
 		builder.on_click(Vector3(64, 0, 54))
 		builder.on_move(Vector3(-150, 0, -40))
 	elif mode == "terminal" or mode == "menu" or mode == "einstellungen":
-		cam_rig.target = Vector3(-2, 0, -8)
-		cam_rig.zoom_goal = 66.0
-		cam_rig.zoom = 66.0
+		var tz := 66.0
+		var tt := Vector3(-2, 0, -8)
+		for a in args:
+			if a.begins_with("--zoom="):
+				tz = float(a.substr(7))
+			if a.begins_with("--at="):
+				var xz := a.substr(5).split(",")
+				tt = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.target = tt
+		cam_rig.zoom_goal = tz
+		cam_rig.zoom = tz
 		game.set_interior_view(true)
 		for i in range(900):
 			flights.step(0.05)

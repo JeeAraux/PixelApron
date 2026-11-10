@@ -955,7 +955,8 @@ func _drive(p: Dictionary, sim: float) -> String:
 		var old_occ: int = p.get("occ", -1)
 		if old_occ >= 0 and int(reserved.get(old_occ, -1)) == id and not nodes.has(old_occ):
 			reserved.erase(old_occ)
-		if _free_for(here, id) or int(reserved.get(here, -1)) == id:
+		# wo der Rumpf steht, wird immer belegt (andere sehen ihn dann über ihren Nahbereich)
+		if int(reserved.get(here, -1)) in [-1, id]:
 			_reserve(here, id)
 			p["occ"] = here
 	# Knoten hinter dem Heck freigeben
@@ -1230,6 +1231,10 @@ func _plan_pushback(p: Dictionary) -> bool:
 	var need := graph.path(lid, t_node)
 	need.append_array(graph.path(t_node, b_node))
 	need.append(sid)
+	# auch dort, wo nach dem Pushback das Heck steht, muss frei sein
+	var tail_node := graph.nearest_taxi(graph.pos[t_node] - d * 20.0, 30.0)
+	if tail_node >= 0:
+		need.append(tail_node)
 	for n: int in need:
 		if not _free_for(n, id):
 			return false

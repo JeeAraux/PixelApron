@@ -47,13 +47,14 @@ const OPTIONS := {
 	"cafe": [["stil", "Laden", ["cafe", "baeckerei", "bar", "restaurant"]]],
 	"shop": [["stil", "Laden", ["kiosk", "dutyfree", "buecher", "elektronik", "apotheke", "mode"]]],
 	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]]],
+	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
 }
 const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
 	"flach": "Flachdach", "gewoelbt": "Tonnendach", "shed": "Sheddach", "schengen": "Schengen", "non_schengen": "Non-Schengen",
 	"grau": "Grau", "rot": "Rot", "blau": "Blau", "weiss": "Weiß", "klassisch": "klassisch", "modern": "modern",
 	"cafe": "Café", "baeckerei": "Bäckerei", "bar": "Bar", "restaurant": "Restaurant", "kiosk": "Kiosk", "dutyfree": "Duty Free",
-	"buecher": "Bücher", "elektronik": "Elektronik", "apotheke": "Apotheke", "mode": "Mode", "oval": "Oval", "karussell": "Karussell",
+	"buecher": "Bücher", "elektronik": "Elektronik", "apotheke": "Apotheke", "mode": "Mode", "oval": "Oval", "karussell": "Karussell", "schiebe": "Schiebetür", "dreh": "Drehtür",
 	"laub": "Laubbaum", "nadel": "Nadelbaum", "birke": "Birke", "pappel": "Pappel", "obst": "Obstbaum"}
 var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0

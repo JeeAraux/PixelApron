@@ -11,6 +11,9 @@ const PixelFont = preload("res://scripts/pixel_font.gd")
 const BeltAnim = preload("res://scripts/belt_anim.gd")
 const Furniture = preload("res://scripts/furniture.gd")
 const Landscape = preload("res://scripts/landscape.gd")
+const Interior = preload("res://scripts/interior.gd")
+const Buildings = preload("res://scripts/buildings.gd")
+const Landmarks = preload("res://scripts/landmarks.gd")
 
 const WALL := Color(0.78, 0.75, 0.67)
 const GLASS := Color(0.2, 0.3, 0.36, 0.6)      # Alpha 0.6: nachts erleuchtet
@@ -606,19 +609,9 @@ static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 		return n
 	if Landscape.build(n, id):
 		return n
+	if Buildings.build(n, id) or Landmarks.build(n, id):
+		return n
 	match id:
-		"hangar":
-			_hangar(n)
-		"tower":
-			_tower(n)
-		"parkhaus":
-			_parkhaus(n)
-		"feuerwache":
-			_feuerwache(n)
-		"trafo":
-			_trafo(n)
-		"heizzentrale":
-			_heizzentrale(n)
 		"baum":
 			_baum(n)
 		"stand":
@@ -637,290 +630,7 @@ static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 			_floodlight(n)
 		"fluggastbruecke":
 			_bridge_base(n)
-		"vorfelddepot":
-			_depot(n)
-		"wasseranschluss":
-			blk(n, Vector3(-2, 0, -2), Vector3(2, 0.4, 2), CONCRETE)
-			cyl(n, Vector3(0, 0.4, 0), 0.7, 0.7, 0.9, Color(0.25, 0.48, 0.72), 8)
-			cyl(n, Vector3(0, 1.3, 0), 0.9, 0.9, 0.3, Color(0.2, 0.38, 0.6), 8)
-		"kuebel":
-			cyl(n, Vector3.ZERO, 0.55, 0.65, 0.75, TERRACOTTA, 8)
-			ball(n, Vector3(0, 1.15, 0), 0.62, Color(0.25, 0.36, 0.17), 6)
-		"laterne":
-			blk(n, Vector3(-0.1, 0, -0.1), Vector3(0.1, 7.0, 0.1), STEEL)
-			blk(n, Vector3(-0.1, 6.8, -0.1), Vector3(0.1, 7.0, 1.3), STEEL)
-			blk(n, Vector3(-0.25, 6.6, 0.9), Vector3(0.25, 6.85, 1.5), Color(0.98, 0.9, 0.66, 0.3))
-		"bank":
-			blk(n, Vector3(-1.1, 0.4, -0.3), Vector3(1.1, 0.5, 0.3), WOOD)
-			blk(n, Vector3(-1.1, 0.5, 0.2), Vector3(1.1, 0.95, 0.3), WOOD)
-			for x: float in [-0.9, 0.9]:
-				blk(n, Vector3(x - 0.08, 0, -0.25), Vector3(x + 0.08, 0.4, 0.25), DARK)
 	return n
-
-
-static func _terminal_old(n: Node3D) -> void:
-	blk(n, Vector3(-24, 0, -14), Vector3(24, 9, 14), WALL)
-	blk(n, Vector3(-24.15, 2.0, -14.15), Vector3(24.15, 7.4, 14.15), GLASS)
-	for x in range(-22, 23, 4):
-		blk(n, Vector3(x - 0.2, 2.0, 14.1), Vector3(x + 0.2, 7.4, 14.25), WALL)
-		blk(n, Vector3(x - 0.2, 2.0, -14.25), Vector3(x + 0.2, 7.4, -14.1), WALL)
-	blk(n, Vector3(-24.4, 9, -14.4), Vector3(24.4, 9.7, 14.4), ROOF)
-	for p: Vector3 in [Vector3(-14, 0, -6), Vector3(-4, 0, 5), Vector3(11, 0, -3)]:
-		blk(n, p + Vector3(-2.5, 9.7, -2), p + Vector3(2.5, 11.0, 2), Color(0.45, 0.47, 0.47))
-	# Vordach auf der Landseite (+z) und Schriftband
-	blk(n, Vector3(-14, 4.6, 14.2), Vector3(14, 5.1, 19.5), STEEL)
-	for x: float in [-13.0, 0.0, 13.0]:
-		blk(n, Vector3(x - 0.25, 0, 18.9), Vector3(x + 0.25, 4.6, 19.4), STEEL)
-	blk(n, Vector3(-9, 7.6, 14.2), Vector3(9, 8.7, 14.45), DARK)
-	blk(n, Vector3(-8, 7.9, 14.3), Vector3(8, 8.4, 14.5), Color(0.93, 0.9, 0.78))
-
-
-static func _hangar(n: Node3D) -> void:
-	var opts: Dictionary = n.get_meta("opts", {})
-	var clad: Color = {"grau": Color(0.62, 0.66, 0.68), "blau": Color(0.3, 0.45, 0.62), "weiss": Color(0.86, 0.87, 0.86)}.get(String(opts.get("farbe", "grau")), Color(0.62, 0.66, 0.68))
-	blk(n, Vector3(-22, 0, -18), Vector3(22, 12, 18), clad)
-	# Tonnendach in Stufen (Achse quer zum Tor)
-	for i in range(6):
-		var t := float(i) / 6.0
-		var hz := 18.3 * sqrt(1.0 - t * t)
-		blk(n, Vector3(-22.3, 12.0 + float(i) * 0.45, -hz), Vector3(22.3, 12.45 + float(i) * 0.45, hz),
-			Color(0.44, 0.47, 0.49).lightened(float(i) * 0.02))
-	# Faltschiebetor mit Paneelen, Fensterreihe und Toranzeige
-	blk(n, Vector3(-20, 0, -18.25), Vector3(20, 11.2, -17.95), Color(0.40, 0.44, 0.47))
-	for x in range(-19, 20, 2):
-		blk(n, Vector3(float(x) - 0.06, 0, -18.4), Vector3(float(x) + 0.06, 11.2, -18.2), Color(0.30, 0.33, 0.36))
-	blk(n, Vector3(-20, 8.0, -18.42), Vector3(20, 9.0, -18.3), GLASS)
-	blk(n, Vector3(-20.6, 0, -18.6), Vector3(-20.0, 11.6, -17.8), Color(0.75, 0.62, 0.15))
-	blk(n, Vector3(20.0, 0, -18.6), Vector3(20.6, 11.6, -17.8), Color(0.75, 0.62, 0.15))
-	blk(n, Vector3(-20.6, 11.2, -18.6), Vector3(20.6, 11.8, -17.8), Color(0.75, 0.62, 0.15))
-	# Seitenfenster, Nebengebäude mit Werkstatt, Rolltor
-	for side: float in [-1.0, 1.0]:
-		blk(n, Vector3(side * 22.05 - 0.05, 7.5, -14), Vector3(side * 22.05 + 0.05, 9.5, 14), GLASS)
-	blk(n, Vector3(-22, 0, 18), Vector3(-6, 6.5, 24), Color(0.78, 0.76, 0.7))
-	blk(n, Vector3(-22.2, 6.5, 17.8), Vector3(-5.8, 6.9, 24.2), ROOF)
-	for x in range(-20, -7, 3):
-		blk(n, Vector3(float(x), 2.5, 24.0), Vector3(float(x) + 1.8, 4.5, 24.1), GLASS)
-	blk(n, Vector3(4, 0, 17.95), Vector3(10, 4.5, 18.15), STEEL)
-	_letters(n, "HANGAR", Vector3(0, 9.4, -18.45), 0.42, Color(0.92, 0.92, 0.9), -1.0)
-
-
-static func _tower(n: Node3D) -> void:
-	# Sockelbau mit Fensterbändern und Eingang
-	blk(n, Vector3(-6, 0, -6), Vector3(6, 5, 6), WALL)
-	for y: float in [1.2, 3.2]:
-		blk(n, Vector3(-6.05, y, -5), Vector3(6.05, y + 1.1, 5), GLASS)
-	blk(n, Vector3(-1.2, 0, 5.95), Vector3(1.2, 2.4, 6.1), GLASS)
-	blk(n, Vector3(-6.3, 5, -6.3), Vector3(6.3, 5.5, 6.3), ROOF)
-	# Schaft mit Treppenhausfenstern
-	var modern := String((n.get_meta("opts", {}) as Dictionary).get("stil", "klassisch")) == "modern"
-	if modern:
-		# schlanker Schaft mit durchgehendem Glasstreifen
-		cyl(n, Vector3(0, 5.5, 0), 2.0, 1.6, 23.0, Color(0.93, 0.93, 0.92), 16)
-		blk(n, Vector3(-0.5, 6.0, 1.45), Vector3(0.5, 28.0, 1.95), GLASS)
-	else:
-		cyl(n, Vector3(0, 5.5, 0), 2.4, 2.2, 23.0, Color(0.84, 0.82, 0.76), 12)
-		for i in range(9):
-			blk(n, Vector3(-0.35, 7.0 + float(i) * 2.4, 2.2), Vector3(0.35, 7.9 + float(i) * 2.4, 2.45), GLASS)
-	blk(n, Vector3(-2.6, 18.0, -2.6), Vector3(2.6, 18.3, 2.6), ROOF)
-	# Kanzel: Unterbau, Galerie mit Geländer, schräg gestellte Scheiben mit Pfosten, Dach
-	cyl(n, Vector3(0, 28.5, 0), 3.4, 4.8, 1.0, ROOF, 12)
-	cyl(n, Vector3(0, 29.5, 0), 5.3, 5.3, 0.15, ROOF, 12)
-	for i in range(24):
-		var a := TAU * float(i) / 24.0
-		var p := Vector3(cos(a), 0, sin(a)) * 5.15
-		blk(n, p + Vector3(-0.04, 29.65, -0.04), p + Vector3(0.04, 30.6, 0.04), STEEL)
-	cyl(n, Vector3(0, 30.55, 0), 5.2, 5.2, 0.06, STEEL, 24)
-	cyl(n, Vector3(0, 29.6, 0), 4.3, 4.7, 3.6, GLASS, 12)
-	for i in range(12):
-		var a := TAU * float(i) / 12.0
-		var p := Vector3(cos(a), 0, sin(a)) * 4.55
-		blk(n, p + Vector3(-0.08, 29.6, -0.08), p + Vector3(0.08, 33.2, 0.08), Color(0.35, 0.37, 0.4))
-	cyl(n, Vector3(0, 33.2, 0), 5.2, 4.4, 0.9, ROOF, 12)
-	cyl(n, Vector3(0, 34.1, 0), 2.0, 1.6, 0.6, Color(0.6, 0.6, 0.58), 10)
-	# Antennen und Radarkuppel
-	blk(n, Vector3(-0.12, 34.7, -0.12), Vector3(0.12, 40.0, 0.12), DARK)
-	blk(n, Vector3(-0.8, 38.6, -0.04), Vector3(0.8, 38.7, 0.04), DARK)
-	blk(n, Vector3(1.0, 34.7, -0.06), Vector3(1.12, 37.0, 0.06), DARK)
-	ball(n, Vector3(-1.1, 35.4, 0.5), 0.75, Color(0.92, 0.92, 0.9), 8)
-	blk(n, Vector3(-0.1, 39.9, -0.1), Vector3(0.1, 40.2, 0.1), Color(0.9, 0.15, 0.1))
-
-
-static func _parkhaus(n: Node3D) -> void:
-	var opts: Dictionary = n.get_meta("opts", {})
-	var levels := int(opts.get("etagen", 4))
-	var tint: Color = {"grau": CONCRETE, "rot": Color(0.62, 0.3, 0.24), "blau": Color(0.36, 0.48, 0.62), "holz": Color(0.55, 0.4, 0.25)}.get(String(opts.get("farbe", "grau")), CONCRETE)
-	var top := float(levels) * 3.0
-	for lvl in range(1, levels + 1):
-		var y := float(lvl) * 3.0
-		blk(n, Vector3(-16, y, -22), Vector3(16, y + 0.4, 22), CONCRETE)
-		for side: float in [-1.0, 1.0]:
-			blk(n, Vector3(-16, y + 0.4, side * 21.85 - 0.15), Vector3(16, y + 1.3, side * 21.85 + 0.15), tint)
-			blk(n, Vector3(side * 15.85 - 0.15, y + 0.4, -22), Vector3(side * 15.85 + 0.15, y + 1.3, 22), tint)
-			# senkrechte Lamellen an der Fassade
-			var lx := -15.0
-			while lx < 15.5:
-				blk(n, Vector3(lx - 0.06, y - 1.6, side * 22.05 - 0.06), Vector3(lx + 0.06, y + 1.3, side * 22.05 + 0.06), tint.darkened(0.15))
-				lx += 1.5
-		# Parkplatz-Markierungen auf jeder Ebene
-		for k in range(12):
-			blk(n, Vector3(-15.0 + float(k) * 2.6, y + 0.4, -20.0), Vector3(-14.9 + float(k) * 2.6, y + 0.41, -14.5), Color(0.86, 0.85, 0.8))
-			blk(n, Vector3(-15.0 + float(k) * 2.6, y + 0.4, 14.5), Vector3(-14.9 + float(k) * 2.6, y + 0.41, 20.0), Color(0.86, 0.85, 0.8))
-	for x: float in [-15.6, -5.2, 5.2, 15.6]:
-		for z: float in [-21.6, -7.2, 7.2, 21.6]:
-			blk(n, Vector3(x - 0.3, 0, z - 0.3), Vector3(x + 0.3, top, z + 0.3), CONCRETE)
-	# Rampe innen, Treppenhaus mit Glas und blauem P
-	for lvl in range(levels):
-		var y0 := float(lvl) * 3.0
-		var ramp := Transform3D(Basis(Vector3.RIGHT, -atan(3.0 / 14.0)), Vector3(-2.5, y0 + 1.7, 0))
-		var rk := Kit.new()
-		rk.box(Vector3(-2.5, -0.15, -7.2), Vector3(2.5, 0.15, 7.2), CONCRETE.darkened(0.05), ramp)
-		var rmi := rk.instance("Rampe")
-		n.add_child(rmi)
-	blk(n, Vector3(10.5, 0, -22), Vector3(16, top + 2.5, -16.5), CONCRETE)
-	blk(n, Vector3(10.4, 1.0, -22.05), Vector3(15.0, top + 1.8, -21.95), GLASS)
-	blk(n, Vector3(16.0, top - 2.5, -21.5), Vector3(16.15, top + 1.5, -17.0), Color(0.16, 0.32, 0.55))
-	blk(n, Vector3(16.1, top - 1.8, -20.4), Vector3(16.2, top + 0.8, -19.8), Color(0.95, 0.95, 0.95))
-	blk(n, Vector3(16.1, top + 0.2, -20.4), Vector3(16.2, top + 0.8, -18.6), Color(0.95, 0.95, 0.95))
-	blk(n, Vector3(16.1, top - 0.6, -20.4), Vector3(16.2, top - 0.1, -18.6), Color(0.95, 0.95, 0.95))
-	blk(n, Vector3(16.1, top - 0.6, -19.2), Vector3(16.2, top + 0.8, -18.6), Color(0.95, 0.95, 0.95))
-	# Ein- und Ausfahrt an der Vorderseite (-z): Zufahrt, Kassenhäuschen, Schranken, Schilder
-	blk(n, Vector3(-11, 0.0, -31), Vector3(11, 0.05, -22), Color(0.25, 0.245, 0.23))
-	blk(n, Vector3(-0.15, 0.05, -30), Vector3(0.15, 0.06, -22), Color(0.86, 0.85, 0.8))
-	blk(n, Vector3(-1.2, 0, -23.6), Vector3(1.2, 0.25, -21.0), CONCRETE)
-	blk(n, Vector3(-0.9, 0.25, -23.3), Vector3(0.9, 2.5, -21.4), Color(0.85, 0.84, 0.8))
-	blk(n, Vector3(-0.92, 1.2, -23.32), Vector3(0.92, 2.1, -21.38), GLASS)
-	blk(n, Vector3(-1.1, 2.5, -23.5), Vector3(1.1, 2.7, -21.2), ROOF)
-	for gate: Array in [["SchrankeEin", -9.2], ["SchrankeAus", 2.8]]:
-		var x0: float = gate[1]
-		blk(n, Vector3(x0 - 0.3, 0, -22.9), Vector3(x0 + 0.3, 1.1, -22.3), Color(0.85, 0.7, 0.15))
-		var pivot := Node3D.new()
-		pivot.name = gate[0]
-		pivot.position = Vector3(x0, 1.0, -22.6)
-		n.add_child(pivot)
-		for k in range(6):
-			blk(pivot, Vector3(0.2 + float(k) * 0.95, -0.06, -0.06), Vector3(0.2 + float(k + 1) * 0.95, 0.06, 0.06),
-				Color(0.9, 0.15, 0.12) if k % 2 == 0 else Color(0.95, 0.95, 0.92))
-	for arrow: Array in [[-6.0, 1.0], [6.0, -1.0]]:
-		var ax: float = arrow[0]
-		var dirz: float = arrow[1]
-		blk(n, Vector3(ax - 0.15, 0.05, -28.5), Vector3(ax + 0.15, 0.06, -25.5), Color(0.86, 0.85, 0.8))
-		blk(n, Vector3(ax - 0.6, 0.05, -27.0 + dirz * 1.6), Vector3(ax + 0.6, 0.06, -26.6 + dirz * 1.6), Color(0.86, 0.85, 0.8))
-	blk(n, Vector3(-12.2, 0, -24.2), Vector3(-12.0, 4.2, -24.0), STEEL)
-	blk(n, Vector3(-12.9, 3.0, -24.3), Vector3(-11.3, 4.6, -24.18), Color(0.12, 0.3, 0.62))
-	blk(n, Vector3(-12.5, 3.3, -24.32), Vector3(-12.2, 4.3, -24.3), Color(0.95, 0.95, 0.95))
-	blk(n, Vector3(-12.5, 4.0, -24.32), Vector3(-11.7, 4.3, -24.3), Color(0.95, 0.95, 0.95))
-	blk(n, Vector3(-11.9, 3.6, -24.32), Vector3(-11.7, 4.3, -24.3), Color(0.95, 0.95, 0.95))
-	blk(n, Vector3(-12.5, 3.6, -24.32), Vector3(-11.7, 3.85, -24.3), Color(0.95, 0.95, 0.95))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
-	for row: float in [-17.0, -11.0, -1.0, 5.0, 15.0]:
-		for k in range(11):
-			if rng.randf() < 0.18:
-				continue
-			var car := make_car(CAR_COLORS[rng.randi() % CAR_COLORS.size()])
-			car.position = Vector3(-13.0 + float(k) * 2.6, top + 0.4, row)
-			n.add_child(car)
-
-
-static func _feuerwache(n: Node3D) -> void:
-	blk(n, Vector3(-15, 0, -10), Vector3(15, 7, 10), BRICK)
-	blk(n, Vector3(-15.3, 7, -10.3), Vector3(15.3, 7.6, 10.3), ROOF)
-	# drei Fahrzeughallentore mit Fensterreihe, das mittlere offen
-	for i in range(3):
-		var x := -9.0 + float(i) * 9.0
-		blk(n, Vector3(x - 3.6, 0, 10.0), Vector3(x + 3.6, 5.6, 10.1), Color(0.85, 0.84, 0.8))
-		if i == 1:
-			blk(n, Vector3(x - 3.3, 0, 10.05), Vector3(x + 3.3, 5.3, 10.2), Color(0.1, 0.1, 0.11))
-		else:
-			blk(n, Vector3(x - 3.3, 0, 10.05), Vector3(x + 3.3, 5.3, 10.2), Color(0.72, 0.16, 0.12))
-			for y: float in [1.3, 2.6, 3.9]:
-				blk(n, Vector3(x - 3.3, y, 10.2), Vector3(x + 3.3, y + 0.06, 10.25), Color(0.55, 0.12, 0.1))
-			blk(n, Vector3(x - 3.0, 4.2, 10.2), Vector3(x + 3.0, 4.9, 10.26), GLASS)
-	blk(n, Vector3(-15.05, 4.5, -8), Vector3(15.05, 6.0, -6), GLASS)
-	# Schlauchturm mit Fenstern, Sirene, Blaulicht
-	blk(n, Vector3(11, 0, -10), Vector3(15, 13.5, -6), BRICK)
-	blk(n, Vector3(10.8, 13.5, -10.2), Vector3(15.2, 14.0, -5.8), ROOF)
-	for y: float in [3.0, 6.5, 10.0]:
-		blk(n, Vector3(12.3, y, -5.95), Vector3(13.7, y + 1.4, -5.85), GLASS)
-	blk(n, Vector3(12.6, 14.0, -8.4), Vector3(13.4, 14.6, -7.6), DARK)
-	blk(n, Vector3(-13, 7.6, 6.5), Vector3(-11, 8.2, 8.5), Color(0.2, 0.35, 0.9))
-	_letters(n, "FEUERWEHR", Vector3(0, 6.0, 10.12), 0.18, Color(0.95, 0.95, 0.92))
-	# Flugfeldlöschfahrzeuge vor der Halle
-	for i in range(2):
-		var t := _fire_truck()
-		t.position = Vector3(-9.0 + float(i) * 18.0, 0, 16.5)
-		t.rotation.y = PI
-		n.add_child(t)
-
-
-## Großes Flugfeldlöschfahrzeug (8x8, Wasserwerfer auf dem Dach)
-static func _fire_truck() -> Node3D:
-	var t := Node3D.new()
-	var red := Color(0.82, 0.14, 0.1)
-	var k := Kit.new()
-	k.box(Vector3(-1.4, 0.7, -5.5), Vector3(1.4, 3.3, 5.5), red)
-	k.box(Vector3(-1.42, 2.2, -5.5), Vector3(1.42, 3.0, -3.6), Models.GLASS)
-	k.box(Vector3(-1.45, 1.4, -5.5), Vector3(1.45, 1.6, 5.5), Color(0.95, 0.85, 0.15))
-	k.box(Vector3(-0.6, 3.3, -3.0), Vector3(0.6, 3.7, -2.0), Color(0.2, 0.2, 0.22))
-	k.cyl(Vector3(0, 3.7, -2.5), Vector3(0, 3.8, -5.0), 0.15, 0.1, Color(0.5, 0.5, 0.52), 8)
-	k.box(Vector3(-0.5, 3.3, -5.0), Vector3(0.5, 3.45, -4.6), Color(0.2, 0.35, 0.95))
-	for z: float in [-3.8, -1.6, 1.8, 4.0]:
-		for sx: float in [-1.0, 1.0]:
-			k.cyl(Vector3(sx * 1.05, 0.65, z), Vector3(sx * 1.5, 0.65, z), 0.65, 0.65, Models.TYRE, 12, true, Models.METAL)
-	var mi := MeshInstance3D.new()
-	mi.mesh = k.commit()
-	t.add_child(mi)
-	return t
-
-
-static func _trafo(n: Node3D) -> void:
-	# Betonhaus mit Lüftungsgittern, daneben zwei Transformatoren mit Kühlrippen, Zaun
-	blk(n, Vector3(-5, 0, -3.5), Vector3(0.5, 3.4, 3.5), CONCRETE)
-	blk(n, Vector3(-5.2, 3.4, -3.7), Vector3(0.7, 3.7, 3.7), ROOF)
-	for x: float in [-4.2, -2.0]:
-		blk(n, Vector3(x, 0, 3.5), Vector3(x + 1.6, 2.4, 3.62), STEEL)
-		for y: float in [0.4, 0.8, 1.2, 1.6, 2.0]:
-			blk(n, Vector3(x + 0.1, y, 3.62), Vector3(x + 1.5, y + 0.08, 3.66), DARK)
-	blk(n, Vector3(-0.8, 2.6, 3.5), Vector3(-0.2, 3.1, 3.64), Color(0.82, 0.68, 0.2))
-	for z: float in [-1.8, 1.8]:
-		blk(n, Vector3(1.4, 0, z - 1.2), Vector3(3.8, 0.3, z + 1.2), CONCRETE)
-		blk(n, Vector3(1.8, 0.3, z - 0.9), Vector3(3.4, 2.2, z + 0.9), Color(0.42, 0.48, 0.45))
-		for i in range(6):
-			var fz := z - 0.8 + float(i) * 0.32
-			blk(n, Vector3(1.6, 0.4, fz), Vector3(3.6, 2.0, fz + 0.06), Color(0.36, 0.42, 0.39))
-		for ix: float in [2.1, 2.6, 3.1]:
-			cyl(n, Vector3(ix, 2.2, z), 0.08, 0.06, 0.7, Color(0.75, 0.55, 0.4), 6)
-	for pr: Array in [[Vector3(-5.3, 0, -3.9), Vector3(4.6, 0, -3.9)], [Vector3(4.6, 0, -3.9), Vector3(4.6, 0, 3.9)], [Vector3(0.7, 0, 3.9), Vector3(4.6, 0, 3.9)]]:
-		var a: Vector3 = pr[0]
-		var b: Vector3 = pr[1]
-		var lo := Vector3(minf(a.x, b.x) - 0.03, 1.8, minf(a.z, b.z) - 0.03)
-		var hi := Vector3(maxf(a.x, b.x) + 0.03, 1.85, maxf(a.z, b.z) + 0.03)
-		blk(n, lo, hi, STEEL)
-		blk(n, Vector3(lo.x, 0.1, lo.z), Vector3(hi.x, 0.15, hi.z), STEEL)
-		var steps := int(a.distance_to(b) / 1.2)
-		for i in range(steps + 1):
-			var q := a.lerp(b, float(i) / float(maxi(steps, 1)))
-			blk(n, q + Vector3(-0.03, 0, -0.03), q + Vector3(0.03, 1.85, 0.03), STEEL)
-
-
-static func _heizzentrale(n: Node3D) -> void:
-	blk(n, Vector3(-11, 0, -7.5), Vector3(11, 7.5, 7.5), BRICK)
-	blk(n, Vector3(-11.2, 7.5, -7.7), Vector3(11.2, 7.9, 7.7), ROOF)
-	for x: float in [-6.0, 1.0]:
-		blk(n, Vector3(x, 0, 7.5), Vector3(x + 4.0, 4.2, 7.65), STEEL)
-	for x in range(-9, 10, 3):
-		blk(n, Vector3(x, 4.8, 7.5), Vector3(x + 1.4, 6.4, 7.6), GLASS)
-	# Schornstein mit Steigleiter und Ringen, Lüfter auf dem Dach, Rohrleitungen
-	cyl(n, Vector3(8, 7.9, -4), 0.9, 0.8, 15.0, STEEL, 10)
-	for y: float in [12.0, 17.0, 21.5]:
-		cyl(n, Vector3(8, y, -4), 0.95, 0.95, 0.25, DARK, 10)
-	blk(n, Vector3(8.85, 8.0, -4.2), Vector3(8.95, 22.5, -3.8), DARK)
-	for x: float in [-6.0, -2.0, 2.0]:
-		cyl(n, Vector3(x, 7.9, 0), 0.9, 0.9, 0.9, Color(0.5, 0.52, 0.54), 10)
-		blk(n, Vector3(x - 0.7, 8.8, -0.05), Vector3(x + 0.7, 8.85, 0.05), DARK)
-	for z: float in [3.0, 4.2]:
-		blk(n, Vector3(-11.1, 2.75, z - 0.25), Vector3(-11.0, 3.25, z + 0.25), DARK)
-		blk(n, Vector3(-11.5, 2.8, z - 0.2), Vector3(-11.0, 3.2, z + 0.2), Color(0.85, 0.35, 0.2) if z < 4.0 else Color(0.25, 0.45, 0.75))
 
 
 ## Bäume in fünf Arten. Laub hat Alpha 0.8: der Shader lässt es im Wind wiegen.
@@ -1211,35 +921,35 @@ static func _baggage_hall(n: Node3D) -> void:
 	# Lichtband und Schrift
 	k.box(Vector3(-14, 5.2, -9.04), Vector3(14, 6.0, -9.0), Color(0.2, 0.3, 0.36, 0.6))
 	PixelFont.draw(k, "BAGGAGE", Vector3(0, 6.4, -9.05), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, -1), 0.12, Color(0.15, 0.2, 0.3))
+	# Rückseite und Giebel: Paneelfugen, Fensterband, Notausgänge, Fallrohre, Sockel
+	k.box(Vector3(-15.05, 0, -9.05), Vector3(15.05, 0.5, 9.05), Color(0.55, 0.55, 0.53))
+	for x in range(-14, 15, 2):
+		k.box(Vector3(float(x) - 0.04, 0.5, 9.0), Vector3(float(x) + 0.04, 6.6, 9.03), wall.darkened(0.1))
+	for z in range(-8, 9, 2):
+		for sx: float in [-15.03, 15.0]:
+			k.box(Vector3(sx, 0.5, float(z) - 0.04), Vector3(sx + 0.03, 6.6, float(z) + 0.04), wall.darkened(0.1))
+	k.box(Vector3(-14.0, 4.6, 9.0), Vector3(14.0, 5.6, 9.05), Color(0.2, 0.3, 0.36, 0.6))
+	for x in range(-13, 14, 3):
+		k.box(Vector3(float(x) - 0.05, 4.6, 9.05), Vector3(float(x) + 0.05, 5.6, 9.07), wall)
+	for x: float in [-10.0, 10.0]:
+		k.box(Vector3(x - 0.6, 0.5, 9.0), Vector3(x + 0.6, 2.7, 9.08), Color(0.25, 0.5, 0.35))
+		k.box(Vector3(x - 0.4, 2.8, 9.05), Vector3(x + 0.4, 3.0, 9.1), Color(0.15, 0.75, 0.35, 0.3))
+	for x: float in [-14.6, -5.0, 5.0, 14.6]:
+		k.box(Vector3(x - 0.09, 0.0, 9.03), Vector3(x + 0.09, 7.0, 9.2), Color(0.5, 0.52, 0.54))
+	k.box(Vector3(-15.3, 6.6, 9.1), Vector3(15.3, 6.9, 9.35), Color(0.5, 0.52, 0.54))
 	# Lüftung und Oberlichter auf dem Dach
 	for x: float in [-9.0, 0.0, 9.0]:
 		k.box(Vector3(x - 1.5, 7.3, -2.0), Vector3(x + 1.5, 8.2, 2.0), Color(0.6, 0.62, 0.63))
+		for i in range(6):
+			k.box(Vector3(x - 1.45, 7.45 + float(i) * 0.12, 2.0), Vector3(x + 1.45, 7.5 + float(i) * 0.12, 2.04), Color(0.4, 0.42, 0.44))
+	for x: float in [-12.0, -5.0, 5.0, 12.0]:
+		k.box(Vector3(x - 1.0, 7.3, 4.0), Vector3(x + 1.0, 7.6, 7.5), Color(0.6, 0.75, 0.82, 0.6))
 	n.add_child(k.instance("Halle"))
 	var belt := make_gse("gepaeck")
 	belt.position = Vector3(-6, 0, -12.5)
 	belt.rotation.y = PI * 0.5
 	n.add_child(belt)
 
-
-static func _depot(n: Node3D) -> void:
-	blk(n, Vector3(-13, 0, -8), Vector3(13, 6.0, -6.5), CONCRETE)
-	blk(n, Vector3(-13, 0, -8), Vector3(-11.5, 6.0, 8), CONCRETE)
-	blk(n, Vector3(11.5, 0, -8), Vector3(13, 6.0, 8), CONCRETE)
-	blk(n, Vector3(-13.3, 6.0, -8.3), Vector3(13.3, 6.6, 8.3), ROOF)
-	for x: float in [-4.0, 4.0]:
-		blk(n, Vector3(x - 0.3, 0, 7.5), Vector3(x + 0.3, 6.0, 8.0), STEEL)
-	var v1 := make_gse("tank")
-	v1.position = Vector3(-7, 0, 0)
-	n.add_child(v1)
-	var v2 := make_gse("catering")
-	v2.position = Vector3(0, 0, 0)
-	n.add_child(v2)
-	var v3 := make_gse("gepaeck")
-	v3.position = Vector3(7, 0, 0)
-	n.add_child(v3)
-
-
-# ---------------------------------------------------------------- Fahrzeuge (Front zeigt nach -Z)
 
 static func make_gse(kind: String) -> Node3D:
 	var n := Node3D.new()
@@ -1399,253 +1109,15 @@ static func _inside(n: Node3D, id: String) -> void:
 	if Furniture.build(n, id):
 		return
 	var opts: Dictionary = n.get_meta("opts", {})
+	if Interior.build(n, id, opts):
+		if id == "cafe":
+			_shop_sign(n, String(opts.get("stil", "cafe")))
+		elif id == "shop":
+			_shop_sign(n, String(opts.get("stil", "kiosk")))
+		return
 	if id in ["rolltreppe", "aufzug", "treppe", "passkontrolle", "zoll"]:
 		_inside_more(n, id)
 		return
-	match id:
-		"eingang":
-			blk(n, Vector3(-3, 0, -1), Vector3(3, 0.12, 1), DARK)
-			blk(n, Vector3(-3, 0, -0.25), Vector3(-2.6, 3.2, 0.25), STEEL)
-			blk(n, Vector3(2.6, 0, -0.25), Vector3(3, 3.2, 0.25), STEEL)
-			blk(n, Vector3(-3, 2.9, -0.3), Vector3(3, 3.4, 0.3), STEEL)
-			for x: float in [-1.7, 1.7]:
-				var g := blk(n, Vector3(x - 0.9, 0.05, -0.06), Vector3(x + 0.9, 2.9, 0.06), WHITE)
-				g.material_override = glass_mat()
-			# Vordach außen
-			blk(n, Vector3(-3.6, 3.5, 1.0), Vector3(3.6, 3.8, 3.8), STEEL)
-			for x: float in [-3.3, 3.3]:
-				blk(n, Vector3(x - 0.1, 0, 3.5), Vector3(x + 0.1, 3.5, 3.7), STEEL)
-			blk(n, Vector3(-1.2, 3.8, 1.1), Vector3(1.2, 4.3, 1.3), Color(0.2, 0.45, 0.3))
-		"checkin":
-			for x: float in [-1.5, 1.5]:
-				blk(n, Vector3(x - 1.2, 0, -0.2), Vector3(x + 1.2, 1.05, 0.5), WHITE)
-				blk(n, Vector3(x - 1.25, 1.05, -0.25), Vector3(x + 1.25, 1.12, 0.55), DARK)
-				var staff := make_staff(Color(0.2, 0.28, 0.45), Color(0.12, 0.14, 0.2), 0 if x < 0.0 else 2)
-				staff.position = Vector3(x, 0, -0.75)
-				n.add_child(staff)
-			blk(n, Vector3(-0.3, 0, -0.2), Vector3(0.3, 0.45, 0.5), DARK)
-			blk(n, Vector3(-3, 0, -1.5), Vector3(3, 0.5, -1.15), DARK)
-			blk(n, Vector3(-3, 0, -1.5), Vector3(3, 2.9, -1.38), Color(0.24, 0.34, 0.45))
-			blk(n, Vector3(-2.2, 2.3, -1.38), Vector3(2.2, 2.6, -1.32), Color(0.95, 0.85, 0.4))
-			for x: float in [-1.5, 1.5]:
-				blk(n, Vector3(x - 0.35, 1.12, -0.05), Vector3(x + 0.35, 1.5, 0.0), DARK)
-				blk(n, Vector3(x - 0.05, 1.12, 0.0), Vector3(x + 0.05, 1.2, 0.12), STEEL)
-				blk(n, Vector3(x + 0.55, 1.05, 0.1), Vector3(x + 0.95, 1.1, 0.45), STEEL)
-			# Wartegasse im Zickzack mit Gurtpfosten
-			for row in range(3):
-				var z := 1.35 + float(row) * 0.95
-				var px := -2.8
-				while px <= 2.85:
-					cyl(n, Vector3(px, 0, z), 0.05, 0.05, 0.95, STEEL, 5)
-					cyl(n, Vector3(px, 0, z), 0.16, 0.16, 0.04, DARK, 6)
-					px += 1.4
-				var gap_left := row % 2 == 1
-				blk(n, Vector3(-2.8 if not gap_left else -1.4, 0.85, z - 0.03), Vector3(2.8 if gap_left else 1.4, 0.9, z + 0.03), Color(0.6, 0.15, 0.15))
-		"gepaeckanlage":
-			blk(n, Vector3(-4, 0, -3), Vector3(4, 0.15, 3), Color(0.55, 0.55, 0.52))
-			for e: Array in [[Vector3(-3.5, 0.8, -2.5), Vector3(3.5, 1.1, -1.7)], [Vector3(-3.5, 0.8, 1.7), Vector3(3.5, 1.1, 2.5)],
-					[Vector3(-3.5, 0.8, -2.5), Vector3(-2.7, 1.1, 2.5)], [Vector3(2.7, 0.8, -2.5), Vector3(3.5, 1.1, 2.5)]]:
-				blk(n, e[0], e[1], DARK)
-				blk(n, (e[0] as Vector3) + Vector3(0, 0.3, 0), (e[1] as Vector3) + Vector3(0, 0.12, 0), YELLOW)
-			for p: Vector3 in [Vector3(-3.1, 0, -2.1), Vector3(3.1, 0, -2.1), Vector3(-3.1, 0, 2.1), Vector3(3.1, 0, 2.1)]:
-				blk(n, p - Vector3(0.1, 0, 0.1), p + Vector3(0.1, 0.8, 0.1), STEEL)
-			blk(n, Vector3(-1.5, 0, -1.0), Vector3(1.5, 2.4, 1.0), Color(0.62, 0.64, 0.62))
-			blk(n, Vector3(-1.0, 0.8, 0.98), Vector3(1.0, 1.4, 1.04), DARK)
-			var k := 0
-			for p: Vector3 in [Vector3(-2.0, 1.1, -2.1), Vector3(0.5, 1.1, -2.1), Vector3(3.1, 1.1, 0.4), Vector3(1.2, 1.1, 2.1), Vector3(-1.8, 1.1, 2.1), Vector3(-3.1, 1.1, -0.8)]:
-				blk(n, p - Vector3(0.35, 0, 0.25), p + Vector3(0.35, 0.3, 0.25), SHIRTS[k % SHIRTS.size()])
-				k += 3
-		"sicherheit":
-			blk(n, Vector3(-3, 0, -4), Vector3(3, 0.06, 4), Color(0.25, 0.27, 0.3))
-			for x: float in [-1.6, 1.6]:
-				blk(n, Vector3(x + 0.1, 0, -2.6), Vector3(x + 1.1, 0.78, 3.2), STEEL)
-				blk(n, Vector3(x + 0.15, 0.78, -2.6), Vector3(x + 1.05, 0.82, 3.2), DARK)
-				blk(n, Vector3(x - 0.05, 0, -0.6), Vector3(x + 1.25, 1.7, 1.0), Color(0.7, 0.72, 0.72))
-				blk(n, Vector3(x + 0.15, 0.82, 0.98), Vector3(x + 1.05, 1.3, 1.04), DARK)
-				if x < 0.0:
-					blk(n, Vector3(x - 1.05, 0, -0.2), Vector3(x - 0.9, 2.2, 0.2), WHITE)
-					blk(n, Vector3(x - 0.3, 0, -0.2), Vector3(x - 0.15, 2.2, 0.2), WHITE)
-					blk(n, Vector3(x - 1.05, 2.1, -0.2), Vector3(x - 0.15, 2.3, 0.2), WHITE)
-				else:
-					# Körperscanner: runde Kabine mit Glasflügeln
-					cyl(n, Vector3(x - 0.6, 0, 0), 0.75, 0.75, 0.12, Color(0.6, 0.62, 0.65), 12)
-					cyl(n, Vector3(x - 0.6, 2.2, 0), 0.75, 0.75, 0.25, Color(0.85, 0.86, 0.88), 12)
-					for side: float in [-1.0, 1.0]:
-						blk(n, Vector3(x - 0.6 + side * 0.62 - 0.08, 0.12, -0.45), Vector3(x - 0.6 + side * 0.62 + 0.08, 2.2, 0.45), Color(0.85, 0.86, 0.88))
-				# Rollenbahn und Wannen
-				var rz := -2.5
-				while rz < 3.1:
-					blk(n, Vector3(x + 0.15, 0.82, rz), Vector3(x + 1.05, 0.84, rz + 0.04), Color(0.3, 0.31, 0.33))
-					rz += 0.25
-				for tz: float in [-2.2, 1.6, 2.4]:
-					blk(n, Vector3(x + 0.2, 0.84, tz), Vector3(x + 1.0, 0.95, tz + 0.55), Color(0.55, 0.57, 0.6))
-					blk(n, Vector3(x + 0.35, 0.95, tz + 0.1), Vector3(x + 0.75, 1.05, tz + 0.4), SHIRTS[int(absf(tz) * 10.0) % SHIRTS.size()].darkened(0.3))
-				blk(n, Vector3(x + 1.3, 0, 1.2), Vector3(x + 2.0, 0.85, 2.2), STEEL)
-				var officer := make_staff(Color(0.82, 0.84, 0.88), Color(0.1, 0.1, 0.12), 1 if x < 0.0 else 3)
-				officer.position = Vector3(x - 0.6, 0, -1.4)
-				n.add_child(officer)
-				for i in range(3):
-					blk(n, Vector3(x + 0.2, 0.82 + float(i) * 0.06, 2.6), Vector3(x + 1.0, 0.86 + float(i) * 0.06, 3.1), Color(0.5, 0.52, 0.55))
-			blk(n, Vector3(-0.08, 0, -3.6), Vector3(0.08, 1.0, 3.6), STEEL)
-		"gate":
-			blk(n, Vector3(-5, 0, -4), Vector3(5, 0.06, 4), Color(0.30, 0.33, 0.42))
-			blk(n, Vector3(-1.5, 0, -3.3), Vector3(1.5, 1.05, -2.5), WHITE)
-			blk(n, Vector3(-1.55, 1.05, -3.35), Vector3(1.55, 1.12, -2.45), DARK)
-			var agent := make_staff(Color(0.24, 0.34, 0.45), Color(0.12, 0.14, 0.2), 2)
-			agent.position = Vector3(0, 0, -3.7)
-			n.add_child(agent)
-			blk(n, Vector3(2.4, 0, -4.0), Vector3(4.6, 2.7, -3.75), STEEL)
-			blk(n, Vector3(2.6, 0, -3.9), Vector3(4.4, 2.5, -3.7), DARK)
-			for mx: float in [-0.8, 0.8]:
-				blk(n, Vector3(mx - 0.3, 1.12, -2.95), Vector3(mx + 0.3, 1.45, -2.9), DARK)
-			# Boarding-Schleuse mit Glasklappen und Anzeige über der Tür
-			for gx: float in [2.7, 3.5, 4.3]:
-				blk(n, Vector3(gx - 0.12, 0, -3.3), Vector3(gx + 0.12, 1.0, -2.6), Color(0.75, 0.76, 0.78))
-				blk(n, Vector3(gx + 0.12, 0.3, -2.98), Vector3(gx + 0.42, 0.95, -2.92), Color(0.6, 0.8, 0.9))
-			blk(n, Vector3(2.6, 2.75, -3.9), Vector3(4.4, 3.2, -3.82), Color(0.08, 0.08, 0.1))
-			blk(n, Vector3(2.75, 2.9, -3.83), Vector3(3.9, 3.05, -3.8), YELLOW_SIGN)
-			blk(n, Vector3(-4.7, 0, -3.6), Vector3(-4.5, 3.0, -3.4), STEEL)
-			blk(n, Vector3(-4.95, 2.4, -3.62), Vector3(-3.2, 3.1, -3.44), Color(0.12, 0.15, 0.22))
-			blk(n, Vector3(-4.8, 2.6, -3.44), Vector3(-3.4, 2.85, -3.4), YELLOW)
-			for z: float in [-1.0, 0.6, 2.4]:
-				var flip := 1.0 if z > 0.0 else -1.0
-				blk(n, Vector3(-3.7, 0.42, z - 0.3), Vector3(3.7, 0.52, z + 0.3), SEAT)
-				blk(n, Vector3(-3.7, 0.52, z + 0.2 * flip - 0.05), Vector3(3.7, 0.95, z + 0.2 * flip + 0.05), SEAT.darkened(0.15))
-				for x: float in [-3.4, 0.0, 3.4]:
-					blk(n, Vector3(x - 0.08, 0, z - 0.2), Vector3(x + 0.08, 0.42, z + 0.2), STEEL)
-		"busgate":
-			blk(n, Vector3(-5, 0, -4), Vector3(5, 0.06, 4), Color(0.24, 0.38, 0.38))
-			blk(n, Vector3(-1.5, 0, -3.3), Vector3(1.5, 1.05, -2.5), WHITE)
-			blk(n, Vector3(-1.55, 1.05, -3.35), Vector3(1.55, 1.12, -2.45), DARK)
-			var agent2 := make_staff(Color(0.24, 0.34, 0.45), Color(0.12, 0.14, 0.2), 1)
-			agent2.position = Vector3(0, 0, -3.7)
-			n.add_child(agent2)
-			for mx: float in [-0.8, 0.8]:
-				blk(n, Vector3(mx - 0.3, 1.12, -2.95), Vector3(mx + 0.3, 1.45, -2.9), DARK)
-			# Glastür zum Vorfeld mit Treppe hinab, darüber "BUS"
-			blk(n, Vector3(1.6, 0, -4.0), Vector3(4.8, 2.9, -3.8), STEEL)
-			var gd := blk(n, Vector3(1.9, 0.05, -3.95), Vector3(4.5, 2.6, -3.85), WHITE)
-			gd.material_override = glass_mat()
-			for i in range(4):
-				blk(n, Vector3(1.9, 0.0, -3.7 + float(i) * 0.3), Vector3(4.5, 0.05 + float(3 - i) * 0.04, -3.4 + float(i) * 0.3), Color(0.5, 0.5, 0.48))
-			blk(n, Vector3(1.8, 2.9, -3.95), Vector3(4.6, 3.35, -3.85), Color(0.08, 0.08, 0.1))
-			blk(n, Vector3(2.1, 3.0, -3.86), Vector3(4.3, 3.25, -3.83), Color(0.95, 0.65, 0.15))
-			for gx: float in [1.9, 2.8]:
-				blk(n, Vector3(gx - 0.1, 0, -2.9), Vector3(gx + 0.1, 1.0, -2.2), Color(0.75, 0.76, 0.78))
-			for z: float in [-1.0, 0.6, 2.4]:
-				var flip2 := 1.0 if z > 0.0 else -1.0
-				blk(n, Vector3(-3.7, 0.42, z - 0.3), Vector3(3.7, 0.52, z + 0.3), Color(0.2, 0.45, 0.42))
-				blk(n, Vector3(-3.7, 0.52, z + 0.2 * flip2 - 0.05), Vector3(3.7, 0.95, z + 0.2 * flip2 + 0.05), Color(0.16, 0.36, 0.34))
-				for x: float in [-3.4, 0.0, 3.4]:
-					blk(n, Vector3(x - 0.08, 0, z - 0.2), Vector3(x + 0.08, 0.42, z + 0.2), STEEL)
-		"gepaeckband":
-			blk(n, Vector3(-4.5, 0, -1.8), Vector3(4.5, 0.55, 1.8), STEEL)
-			blk(n, Vector3(-4.3, 0.55, -1.6), Vector3(4.3, 0.6, 1.6), DARK)
-			blk(n, Vector3(-3.6, 0, -0.75), Vector3(3.6, 0.85, 0.75), Color(0.62, 0.64, 0.64))
-			# Koffer auf dem Band: eigene Knoten, terminal.gd lässt sie umlaufen
-			var cases := Node3D.new()
-			cases.name = "Koffer"
-			cases.set_meta("no_bake", true)
-			n.add_child(cases)
-			for i in range(9):
-				var bag := blk(cases, Vector3(-0.35, 0.6, -0.22), Vector3(0.35, 0.92, 0.22), SHIRTS[(i * 3 + 1) % SHIRTS.size()].darkened(0.25))
-				bag.name = "K%d" % i
-			blk(n, Vector3(4.6, 0, -0.15), Vector3(4.8, 2.2, 0.15), STEEL)
-			blk(n, Vector3(4.5, 1.6, -0.7), Vector3(4.9, 2.3, 0.7), DARK)
-			blk(n, Vector3(4.9, 1.9, -0.5), Vector3(4.93, 2.05, 0.5), YELLOW)
-		"wc":
-			var tile := Color(0.80, 0.84, 0.86)
-			blk(n, Vector3(-3, 0, -2.5), Vector3(3, 0.07, 2.5), Color(0.86, 0.88, 0.89))
-			blk(n, Vector3(-3, 0, -2.5), Vector3(3, 2.6, -2.35), tile)
-			blk(n, Vector3(-3, 0, -2.5), Vector3(-2.85, 2.6, 2.5), tile)
-			blk(n, Vector3(2.85, 0, -2.5), Vector3(3, 2.6, 2.5), tile)
-			for seg: Vector2 in [Vector2(-3, -2.0), Vector2(-0.6, 0.6), Vector2(2.0, 3)]:
-				blk(n, Vector3(seg.x, 0, 2.35), Vector3(seg.y, 2.6, 2.5), tile)
-			blk(n, Vector3(-0.08, 0, -2.5), Vector3(0.08, 2.6, 2.35), tile)
-			for side: float in [-1.0, 1.0]:
-				for i in range(3):
-					var x := side * (0.6 + float(i) * 0.75)
-					blk(n, Vector3(x - 0.04, 0, -2.35), Vector3(x + 0.04, 2.0, -1.0), Color(0.55, 0.62, 0.68))
-					blk(n, Vector3(x + side * 0.2 - 0.18, 0, -2.35), Vector3(x + side * 0.2 + 0.18, 0.45, -1.9), WHITE)
-				blk(n, Vector3(side * 2.85 - 0.3 * side - 0.25, 0.8, -0.4), Vector3(side * 2.85 - 0.3 * side + 0.25, 0.95, 1.2), WHITE)
-			blk(n, Vector3(-0.7, 2.62, 2.32), Vector3(0.7, 3.1, 2.52), Color(0.2, 0.4, 0.75))
-			blk(n, Vector3(-0.08, 2.7, 2.52), Vector3(0.08, 3.0, 2.55), WHITE)
-		"sb_ausgang":
-			for x: float in [-2.0, 2.0]:
-				blk(n, Vector3(x - 0.12, 0, -0.2), Vector3(x + 0.12, 2.6, 0.2), STEEL)
-			blk(n, Vector3(-2.1, 2.45, -0.25), Vector3(2.1, 2.8, 0.25), STEEL)
-			for x: float in [-0.95, 0.95]:
-				var g := blk(n, Vector3(x - 0.9, 0.05, -0.05), Vector3(x + 0.9, 2.4, 0.05), WHITE)
-				g.material_override = glass_mat()
-			blk(n, Vector3(-0.6, 2.5, 0.26), Vector3(0.6, 2.75, 0.3), Color(0.15, 0.6, 0.3))
-			blk(n, Vector3(-0.5, 2.5, -0.3), Vector3(0.5, 2.75, -0.26), Color(0.8, 0.12, 0.1))
-			blk(n, Vector3(-0.08, 2.55, -0.32), Vector3(0.08, 2.7, -0.3), WHITE)
-			blk(n, Vector3(-0.35, 2.6, -0.32), Vector3(0.35, 2.65, -0.3), WHITE)
-		"heizkoerper":
-			blk(n, Vector3(-1, 0.15, -0.1), Vector3(1, 0.85, 0.1), WHITE)
-			var x := -0.8
-			while x < 0.85:
-				blk(n, Vector3(x - 0.03, 0.18, 0.1), Vector3(x + 0.03, 0.82, 0.13), Color(0.75, 0.75, 0.73))
-				x += 0.2
-			blk(n, Vector3(-1.1, 0.1, -0.05), Vector3(-0.98, 0.25, 0.08), Color(0.75, 0.2, 0.15))
-		"cafe":
-			blk(n, Vector3(-4, 0, -3), Vector3(4, 0.06, 3), Color(0.55, 0.42, 0.29))
-			blk(n, Vector3(-3.8, 0, -2.8), Vector3(3.8, 1.05, -1.9), Color(0.35, 0.24, 0.17))
-			blk(n, Vector3(-3.85, 1.05, -2.85), Vector3(3.85, 1.12, -1.85), DARK)
-			blk(n, Vector3(-3.0, 1.12, -2.7), Vector3(-2.2, 1.6, -2.2), STEEL)
-			blk(n, Vector3(-1.8, 1.12, -2.6), Vector3(-0.4, 1.4, -2.0), Color(0.85, 0.75, 0.55))
-			blk(n, Vector3(-3.8, 1.2, -3.0), Vector3(3.8, 2.6, -2.88), DARK)
-			for i in range(3):
-				blk(n, Vector3(-3.4 + float(i) * 2.5, 1.9, -2.88), Vector3(-1.8 + float(i) * 2.5, 2.3, -2.85), Color(0.9, 0.85, 0.7))
-			blk(n, Vector3(-4, 2.6, -3.0), Vector3(4, 2.85, -2.5), Color(0.6, 0.25, 0.2))
-			_shop_sign(n, String(opts.get("stil", "cafe")))
-			for t: Vector3 in [Vector3(-2.6, 0, 0.6), Vector3(0.2, 0, 1.6), Vector3(2.7, 0, 0.3)]:
-				cyl(n, t, 0.06, 0.06, 0.72, DARK, 5)
-				cyl(n, t + Vector3(0, 0.72, 0), 0.5, 0.5, 0.05, WHITE, 8)
-				for side: float in [-1.0, 1.0]:
-					blk(n, t + Vector3(side * 0.85 - 0.22, 0, -0.22), t + Vector3(side * 0.85 + 0.22, 0.45, 0.22), Color(0.6, 0.25, 0.2))
-		"shop":
-			blk(n, Vector3(-4, 0, -3), Vector3(4, 0.06, 3), Color(0.82, 0.80, 0.75))
-			var k := 0
-			for z: float in [-2.6, -0.6, 1.2]:
-				blk(n, Vector3(-3.4, 0, z - 0.3), Vector3(1.8, 1.6, z + 0.3), WHITE)
-				for y: float in [0.35, 0.75, 1.15]:
-					for side: float in [-1.0, 1.0]:
-						blk(n, Vector3(-3.3, y, z + side * 0.3 - 0.03), Vector3(1.7, y + 0.28, z + side * 0.3 + 0.03), SHIRTS[k % SHIRTS.size()])
-						k += 1
-			blk(n, Vector3(2.6, 0, 0.8), Vector3(3.8, 1.0, 2.6), DARK)
-			blk(n, Vector3(-4, 2.4, -3), Vector3(4, 2.8, -2.8), Color(0.2, 0.5, 0.45))
-			_shop_sign(n, String(opts.get("stil", "kiosk")))
-		"sitzreihe":
-			blk(n, Vector3(-2.5, 0.3, -0.1), Vector3(2.5, 0.38, 0.1), STEEL)
-			for x: float in [-2.2, 2.2]:
-				blk(n, Vector3(x - 0.06, 0, -0.3), Vector3(x + 0.06, 0.32, 0.3), STEEL)
-			for i in range(5):
-				var x := -2.0 + float(i)
-				blk(n, Vector3(x - 0.42, 0.38, -0.3), Vector3(x + 0.42, 0.48, 0.3), SEAT)
-				blk(n, Vector3(x - 0.42, 0.48, -0.42), Vector3(x + 0.42, 0.95, -0.32), SEAT.darkened(0.15))
-		"pflanze":
-			cyl(n, Vector3.ZERO, 0.42, 0.48, 0.65, WHITE, 8)
-			ball(n, Vector3(0, 1.15, 0), 0.6, Color(0.24, 0.42, 0.2), 6)
-			ball(n, Vector3(0.15, 1.65, -0.1), 0.38, Color(0.3, 0.5, 0.24), 6)
-		"anzeige":
-			for x: float in [-1.2, 1.2]:
-				blk(n, Vector3(x - 0.06, 0, -0.06), Vector3(x + 0.06, 1.8, 0.06), STEEL)
-			blk(n, Vector3(-1.5, 1.8, -0.2), Vector3(1.5, 3.4, 0.2), DARK)
-			var lens := [2.4, 1.8, 2.2, 1.4, 2.0]
-			for side: float in [-1.0, 1.0]:
-				blk(n, Vector3(-1.35, 3.1, side * 0.2), Vector3(1.35, 3.25, side * 0.215), Color(0.94, 0.65, 0.2))
-				for i in range(5):
-					var y := 2.9 - float(i) * 0.2
-					var l: float = lens[(i + (1 if side > 0 else 0)) % 5]
-					blk(n, Vector3(-1.3, y, side * 0.2), Vector3(-1.3 + l, y + 0.09, side * 0.215), Color(0.95, 0.88, 0.5) if i % 2 == 0 else WHITE)
-		"kunst":
-			cyl(n, Vector3.ZERO, 1.4, 1.45, 0.4, Color(0.7, 0.68, 0.64), 10)
-			var a := blk(n, Vector3(-0.3, 0.4, -0.3), Vector3(0.3, 2.6, 0.3), Color(0.75, 0.25, 0.18))
-			a.rotation_degrees = Vector3(0, 0, 18)
-			var b := blk(n, Vector3(-0.25, 0.4, -0.25), Vector3(0.25, 3.3, 0.25), Color(0.2, 0.4, 0.65))
-			b.rotation_degrees = Vector3(-14, 30, 0)
-			ball(n, Vector3(0.4, 2.9, 0.2), 0.45, YELLOW, 7)
 
 
 ## Passagier oder Personal, etwa 1,75 m groß. Der Körper ist ein Mesh in sechs Posen

@@ -22,6 +22,7 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Feinschliff 0.8.1:** Alle älteren Bauten im feinen Stil neu gebaut. Hangar mit Bogendach, Faltschiebetor und einer ATR 72 in der Wartung, Tower mit durchsichtiger Kanzel, Lotsen an den Pulten und drehendem Radar, Feuerwache mit offenen Toren, Löschfahrzeugen, Sirene, Solardach und wehender Fahne, Parkhaus mit Rampen, geparkten Autos auf jeder Ebene, begrünter Fassade, gläsernem Treppenhaus und Solardach. Check-in, Sicherheitskontrolle, Gates, Gepäckband, Café und Shops mit vielen Details (Drehtür oder Schiebetür, Gepäckkarussell, Café, Bäckerei, Bar oder Restaurant), Abflugtafeln und Gate-Anzeigen. Trafostation, Heizzentrale mit Rauch, Wasseranschluss und Vorfelddepot neu. Rollverkehr noch sicherer beim Pushback.
 - **Großes Update 0.8:**
   - **Wegebau wie im Städtebauspiel:** Drei Zeichenarten (Tab wechselt): *Gerade* setzt am Ende automatisch fort, *Kurve* läuft am Ende einer Straße tangential als Kreisbogen weiter, *Freihand* wie bisher. Winkel rasten weich auf 15-Grad-Stufen zur angeschlossenen Straße ein (Shift: frei). Die Vorschau zeigt den echten Belag, ein Schild am Mauszeiger zeigt Länge, Radius und Winkel.
   - **Unter der Erde:** Straßentunnel mit Rampen, Portalen und beleuchteter Röhre (darüber darf gebaut werden, auch Pisten). Gepäckförderband im Tunnel vom Terminal zum neuen *Gepäckumschlag*, die Koffer laufen sichtbar. Ansicht *Untergeschoss* mit ▼ oder Bild ab.
@@ -155,6 +156,8 @@ Beim ersten Öffnen legt Godot den Ordner `.godot/` an. Den musst du nicht siche
 | `scripts/main.gd` | Setzt alles zusammen, verteilt Eingaben |
 | `scripts/catalog.gd` | **Alle Teile und Regeln als Daten:** Preise, Größen, Radius, Strom- und Wasserbedarf, Flugzeugtypen |
 | `scripts/factory.gd` | Formen der Gebäude, Flugzeuge, Autos und Wege |
+| `scripts/interior.gd`, `buildings.gd`, `landmarks.gd` | Feine Modelle: Einrichtung der Hallen, Versorgungsbauten, Hangar, Tower, Feuerwache, Parkhaus |
+| `scripts/furniture.gd`, `landscape.gd` | Möbel und Landschaft, bewegt über `deco_anim.gd` und `belt_anim.gd` |
 | `scripts/builder.gd` | Bauwerkzeug mit Vorschau, Raster, Einrasten, Prüfungen |
 | `scripts/game_state.gd` | Geld, Zeit, gebaute Teile, Strom- und Wassernetz, Rückgängig, Speichern, Startflughafen |
 | `scripts/airside.gd` | Rollnetz als Graph und Wegsuche (A*) |

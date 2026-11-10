@@ -249,7 +249,9 @@ func run(main: Node) -> void:
 			if float(mv["v"]) < 0.05 and legs.size() > 1 and legs[0]["type"] == "lane" and legs[1]["type"] == "conn":
 				var ni: int = legs[1]["node"]
 				# nur Autos, die wegen der Ampel stehen (nicht im Rückstau hinter einem Vordermann)
-				if rd.control_of(ni) == "ampel" and rd.signal_at(ni, int(legs[1]["from_e"])) == "rot" and tr._gap_ahead(mv) > 8.0:
+				# (wer bei Gelb schon zu nah war und durchfährt, zählt nicht)
+				if rd.control_of(ni) == "ampel" and rd.signal_at(ni, int(legs[1]["from_e"])) == "rot" and tr._gap_ahead(mv) > 8.0 \
+						and int(mv.get("commit", -1)) != ni:
 					var rest := float(legs[0]["len"]) - float(mv["s"]) - float(mv["len"]) * 0.5
 					if rest < 10.0:
 						red_min = minf(red_min, rest)

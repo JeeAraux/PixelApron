@@ -84,6 +84,33 @@ func tri_raw(a: Vector3, b: Vector3, c: Vector3, n: Vector3, col: Color) -> void
 	count += 1
 
 
+## Fertiges Baukasten-Mesh (z. B. ein Auto) mit Farben und Normalen einfügen. still = true
+## nimmt Lampen und Scheiben das Leuchten (abgestellte Fahrzeuge).
+func add_mesh(mesh: Mesh, xf: Transform3D, still: bool = false) -> void:
+	for si in range(mesh.get_surface_count()):
+		var arr := mesh.surface_get_arrays(si)
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var cols: PackedColorArray = PackedColorArray()
+		if arr[Mesh.ARRAY_COLOR] != null:
+			cols = arr[Mesh.ARRAY_COLOR]
+		var idx: PackedInt32Array = PackedInt32Array()
+		if arr[Mesh.ARRAY_INDEX] != null:
+			idx = arr[Mesh.ARRAY_INDEX]
+		if idx.is_empty():
+			idx.resize(verts.size())
+			for i in range(verts.size()):
+				idx[i] = i
+		for i in idx:
+			var c := cols[i] if cols.size() > i else Color.WHITE
+			if still and c.a < 0.75:
+				c = Color(c.r, c.g, c.b, 1.0) if c.a < 0.45 else Color(c.r * 0.8, c.g * 0.8, c.b * 0.8, 1.0)
+			st.set_color(c)
+			st.set_normal((xf.basis * norms[i]).normalized() if norms.size() > i else Vector3.UP)
+			st.add_vertex(xf * verts[i])
+		count += idx.size() / 3
+
+
 func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color, center: Vector3) -> void:
 	tri(a, b, c, col, center)
 	tri(a, c, d, col, center)

@@ -6,6 +6,8 @@ extends Node
 ##   Wipp*                schaukelt um die X-Achse (Meta "amp", "speed")
 ##   Hub*                 hebt und senkt sich (Wasserfontänen, Meta "amp", "speed")
 ##   Blink*               blinkt (Meta "period")
+##   Schieb*              Schiebetür, fährt um Meta "dx"/"dz" auf und zu
+##   Schwenk*             pendelt um die Hochachse (Fahnen, Windsäcke; Meta "amp", "speed")
 ## Läuft nur, solange das Objekt sichtbar ist.
 
 var parts: Array = []
@@ -17,7 +19,8 @@ func _ready() -> void:
 	for c in p.get_children():
 		if c is Node3D:
 			var nm := String(c.name)
-			if nm.begins_with("Zeiger") or nm.begins_with("Dreh") or nm.begins_with("Wipp") or nm.begins_with("Hub") or nm.begins_with("Blink"):
+			if nm.begins_with("Zeiger") or nm.begins_with("Dreh") or nm.begins_with("Wipp") or nm.begins_with("Hub") \
+					or nm.begins_with("Blink") or nm.begins_with("Schieb") or nm.begins_with("Schwenk"):
 				parts.append([c, (c as Node3D).position, (c as Node3D).rotation])
 	t = randf() * 10.0
 
@@ -50,6 +53,16 @@ func _process(dt: float) -> void:
 			var ph := float(n.get_meta("phase", 0.0))
 			n.scale.y = 0.75 + 0.25 * (0.5 + 0.5 * sin(t * float(n.get_meta("speed", 3.0)) + ph))
 			n.position.y = base_pos.y
+		elif nm.begins_with("Schieb"):
+			# Schiebetür: öffnet sich, bleibt kurz offen, schließt wieder (Meta "dx" = Weg, "phase")
+			var cyc := fmod(t * 0.45 + float(n.get_meta("phase", 0.0)), 3.0)
+			var open := clampf(minf(cyc * 2.0, (2.2 - cyc) * 2.0), 0.0, 1.0)
+			n.position = base_pos + Vector3(float(n.get_meta("dx", 0.0)), 0.0, float(n.get_meta("dz", 0.0))) * smoothstep(0.0, 1.0, open)
+		elif nm.begins_with("Schwenk"):
+			# Wind: langsames Pendeln mit kleinem Flattern darüber
+			var sp := float(n.get_meta("speed", 0.6))
+			var amp := float(n.get_meta("amp", 0.3))
+			n.rotation.y = base_rot.y + sin(t * sp) * amp + sin(t * sp * 4.3 + 1.0) * amp * 0.12
 		elif nm.begins_with("Blink"):
 			var per := float(n.get_meta("period", 1.2))
 			n.visible = fmod(t + float(n.get_meta("phase", 0.0)), per) < per * 0.55
