@@ -314,6 +314,34 @@ static func _parkhaus(n: Node3D) -> void:
 			blk(n, Vector3(x - 0.3, 0, z - 0.3), Vector3(x + 0.3, 12.0, z + 0.3), CONCRETE)
 	blk(n, Vector3(10.5, 0, -22), Vector3(16, 14.5, -16.5), CONCRETE)
 	blk(n, Vector3(16.0, 9.5, -21.5), Vector3(16.15, 13.5, -17.0), Color(0.16, 0.32, 0.55))
+	# Ein- und Ausfahrt an der Vorderseite (-z): Zufahrt, Kassenhäuschen, Schranken, Schilder
+	blk(n, Vector3(-11, 0.0, -31), Vector3(11, 0.05, -22), Color(0.25, 0.245, 0.23))
+	blk(n, Vector3(-0.15, 0.05, -30), Vector3(0.15, 0.06, -22), Color(0.86, 0.85, 0.8))
+	blk(n, Vector3(-1.2, 0, -23.6), Vector3(1.2, 0.25, -21.0), CONCRETE)
+	blk(n, Vector3(-0.9, 0.25, -23.3), Vector3(0.9, 2.5, -21.4), Color(0.85, 0.84, 0.8))
+	blk(n, Vector3(-0.92, 1.2, -23.32), Vector3(0.92, 2.1, -21.38), GLASS)
+	blk(n, Vector3(-1.1, 2.5, -23.5), Vector3(1.1, 2.7, -21.2), ROOF)
+	for gate: Array in [["SchrankeEin", -9.2], ["SchrankeAus", 2.8]]:
+		var x0: float = gate[1]
+		blk(n, Vector3(x0 - 0.3, 0, -22.9), Vector3(x0 + 0.3, 1.1, -22.3), Color(0.85, 0.7, 0.15))
+		var pivot := Node3D.new()
+		pivot.name = gate[0]
+		pivot.position = Vector3(x0, 1.0, -22.6)
+		n.add_child(pivot)
+		for k in range(6):
+			blk(pivot, Vector3(0.2 + float(k) * 0.95, -0.06, -0.06), Vector3(0.2 + float(k + 1) * 0.95, 0.06, 0.06),
+				Color(0.9, 0.15, 0.12) if k % 2 == 0 else Color(0.95, 0.95, 0.92))
+	for arrow: Array in [[-6.0, 1.0], [6.0, -1.0]]:
+		var ax: float = arrow[0]
+		var dirz: float = arrow[1]
+		blk(n, Vector3(ax - 0.15, 0.05, -28.5), Vector3(ax + 0.15, 0.06, -25.5), Color(0.86, 0.85, 0.8))
+		blk(n, Vector3(ax - 0.6, 0.05, -27.0 + dirz * 1.6), Vector3(ax + 0.6, 0.06, -26.6 + dirz * 1.6), Color(0.86, 0.85, 0.8))
+	blk(n, Vector3(-12.2, 0, -24.2), Vector3(-12.0, 4.2, -24.0), STEEL)
+	blk(n, Vector3(-12.9, 3.0, -24.3), Vector3(-11.3, 4.6, -24.18), Color(0.12, 0.3, 0.62))
+	blk(n, Vector3(-12.5, 3.3, -24.32), Vector3(-12.2, 4.3, -24.3), Color(0.95, 0.95, 0.95))
+	blk(n, Vector3(-12.5, 4.0, -24.32), Vector3(-11.7, 4.3, -24.3), Color(0.95, 0.95, 0.95))
+	blk(n, Vector3(-11.9, 3.6, -24.32), Vector3(-11.7, 4.3, -24.3), Color(0.95, 0.95, 0.95))
+	blk(n, Vector3(-12.5, 3.6, -24.32), Vector3(-11.7, 3.85, -24.3), Color(0.95, 0.95, 0.95))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	for row: float in [-17.0, -11.0, -1.0, 5.0, 15.0]:
@@ -405,10 +433,50 @@ static func make_car(c: Color, kind: String = "") -> Node3D:
 		var r := randf()
 		kind = "kompakt" if r < 0.25 else "limousine" if r < 0.45 else "kombi" if r < 0.65 else "suv" if r < 0.82 else "transporter" if r < 0.93 else "taxi"
 	var n := Node3D.new()
+	n.set_meta("kind", kind)
 	var mi := MeshInstance3D.new()
 	mi.mesh = Models.car_mesh(kind, c)
 	n.add_child(mi)
+	# Bremslichter und Blinker als eigene leuchtende Teile, die der Verkehr ein- und ausschaltet
+	var d: Array = Models.CAR_DIMS[kind]
+	var hl: float = float(d[0]) * 0.5
+	var hw: float = float(d[1]) * 0.5
+	var belt := 0.92 if kind != "transporter" else 1.05
+	var brake := Node3D.new()
+	brake.name = "Bremslicht"
+	brake.visible = false
+	n.add_child(brake)
+	for sx: float in [-1.0, 1.0]:
+		_glow(brake, Vector3(sx * (hw - 0.24), belt - 0.16, hl + 0.04), Vector3(0.3, 0.14, 0.04), Color(1.0, 0.1, 0.05))
+	for side: Array in [["BlinkerL", -1.0], ["BlinkerR", 1.0]]:
+		var b := Node3D.new()
+		b.name = side[0]
+		b.visible = false
+		n.add_child(b)
+		var sx: float = side[1]
+		_glow(b, Vector3(sx * (hw - 0.05), belt - 0.15, -hl - 0.03), Vector3(0.12, 0.1, 0.05), Color(1.0, 0.6, 0.05))
+		_glow(b, Vector3(sx * (hw - 0.05), belt - 0.15, hl + 0.05), Vector3(0.12, 0.1, 0.05), Color(1.0, 0.6, 0.05))
 	return n
+
+
+static func _glow(parent: Node3D, pos: Vector3, size: Vector3, c: Color) -> void:
+	var key := "glow_" + c.to_html()
+	if not _mats.has(key):
+		var m := StandardMaterial3D.new()
+		m.albedo_color = c
+		m.emission_enabled = true
+		m.emission = c
+		m.emission_energy_multiplier = 2.5
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_mats[key] = m
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	mi.position = pos
+	mi.material_override = _mats[key]
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
 
 
 static func make_plane(kind: String, livery: Color) -> Node3D:
@@ -418,6 +486,23 @@ static func make_plane(kind: String, livery: Color) -> Node3D:
 	mi.mesh = Models.plane_mesh(kind, livery)
 	n.add_child(mi)
 	return n
+
+
+## Vorschaubild für Werkzeuge: Spuren (Stück 4-spurige Straße mit Pfeil), Kreuzung (Ampel).
+static func make_tool_thumb(id: String) -> Node3D:
+	if id == "spuren":
+		var n := make_line_thumb("strasse4")
+		blk(n, Vector3(-1.5, 0.3, -5), Vector3(1.5, 0.6, 3), Color(0.95, 0.8, 0.2))
+		blk(n, Vector3(-3.5, 0.3, -7), Vector3(3.5, 0.6, -5), Color(0.95, 0.8, 0.2))
+		return n
+	var t := Node3D.new()
+	blk(t, Vector3(-3, -0.2, -3), Vector3(3, 0, 3), Color(0.23, 0.225, 0.21))
+	blk(t, Vector3(-0.12, 0, -0.12), Vector3(0.12, 4.0, 0.12), STEEL)
+	blk(t, Vector3(-0.45, 2.3, -0.3), Vector3(0.45, 4.3, 0.3), DARK)
+	var lamp_cols := [Color(0.95, 0.15, 0.1), Color(0.95, 0.75, 0.1), Color(0.2, 0.9, 0.35)]
+	for i in range(3):
+		blk(t, Vector3(-0.28, 3.75 - float(i) * 0.62, 0.3), Vector3(0.28, 4.15 - float(i) * 0.62, 0.36), lamp_cols[i])
+	return t
 
 
 ## Kleines Wegstück auf einem Wiesenstück, für die Vorschaubilder im Baumenü.
@@ -568,6 +653,17 @@ static func _inside(n: Node3D, id: String) -> void:
 				blk(n, Vector3(side * 2.85 - 0.3 * side - 0.25, 0.8, -0.4), Vector3(side * 2.85 - 0.3 * side + 0.25, 0.95, 1.2), WHITE)
 			blk(n, Vector3(-0.7, 2.62, 2.32), Vector3(0.7, 3.1, 2.52), Color(0.2, 0.4, 0.75))
 			blk(n, Vector3(-0.08, 2.7, 2.52), Vector3(0.08, 3.0, 2.55), WHITE)
+		"sb_ausgang":
+			for x: float in [-2.0, 2.0]:
+				blk(n, Vector3(x - 0.12, 0, -0.2), Vector3(x + 0.12, 2.6, 0.2), STEEL)
+			blk(n, Vector3(-2.1, 2.45, -0.25), Vector3(2.1, 2.8, 0.25), STEEL)
+			for x: float in [-0.95, 0.95]:
+				var g := blk(n, Vector3(x - 0.9, 0.05, -0.05), Vector3(x + 0.9, 2.4, 0.05), WHITE)
+				g.material_override = glass_mat()
+			blk(n, Vector3(-0.6, 2.5, 0.26), Vector3(0.6, 2.75, 0.3), Color(0.15, 0.6, 0.3))
+			blk(n, Vector3(-0.5, 2.5, -0.3), Vector3(0.5, 2.75, -0.26), Color(0.8, 0.12, 0.1))
+			blk(n, Vector3(-0.08, 2.55, -0.32), Vector3(0.08, 2.7, -0.3), WHITE)
+			blk(n, Vector3(-0.35, 2.6, -0.32), Vector3(0.35, 2.65, -0.3), WHITE)
 		"heizkoerper":
 			blk(n, Vector3(-1, 0.15, -0.1), Vector3(1, 0.85, 0.1), WHITE)
 			var x := -0.8

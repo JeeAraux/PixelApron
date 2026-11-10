@@ -5,9 +5,15 @@ extends RefCounted
 ## Wege werden als Kurve gezogen. width und min_r in Metern, cost_m in Euro pro Meter.
 ## y legt fest, was oben liegt, wenn sich Wege überlappen. utility = Leitung unter der Erde.
 const LINES := {
-	"strasse": {"name": "Straße", "width": 7.5, "cost_m": 350, "min_r": 10.0, "min_len": 5.0,
+	"strasse": {"name": "Straße", "width": 7.5, "cost_m": 350, "min_r": 10.0, "min_len": 5.0, "lanes": [1, 1],
 		"color": Color(0.23, 0.225, 0.21), "mark": 1, "y": 0.06, "straight": false, "utility": "",
-		"desc": "Zweispurige Straße, Autos fahren rechts. Mindestradius 10 m."},
+		"desc": "Eine Spur je Richtung. Kreuzt sie eine andere Straße, entsteht eine Kreuzung."},
+	"strasse4": {"name": "Straße 4-spurig", "width": 14.0, "cost_m": 720, "min_r": 14.0, "min_len": 5.0, "lanes": [2, 2],
+		"color": Color(0.23, 0.225, 0.21), "mark": 6, "y": 0.061, "straight": false, "utility": "",
+		"desc": "Zwei Spuren je Richtung. Linke Spur zum Linksabbiegen. Kreuzungen bekommen automatisch Ampeln."},
+	"einbahn": {"name": "Einbahnstraße", "width": 7.5, "cost_m": 380, "min_r": 10.0, "min_len": 5.0, "lanes": [2, 0],
+		"color": Color(0.23, 0.225, 0.21), "mark": 7, "y": 0.062, "straight": false, "utility": "",
+		"desc": "Zwei Spuren in Zeichenrichtung. Mit dem Werkzeug Spuren drehst du die Richtung um."},
 	"gehweg": {"name": "Gehweg", "width": 3.0, "cost_m": 90, "min_r": 2.0, "min_len": 2.0,
 		"color": Color(0.55, 0.53, 0.48), "mark": 4, "y": 0.07, "straight": false, "utility": "",
 		"desc": "Gepflasterter Fußweg."},
@@ -56,7 +62,8 @@ const ITEMS := {
 	"feuerwache": {"name": "Feuerwache", "size": Vector2(30, 20), "h": 13.0, "cost": 700000, "grid": 2.0,
 		"needs": {"strom": 50, "wasser": 6}, "desc": "Flughafenfeuerwehr."},
 	"parkhaus": {"name": "Parkhaus", "size": Vector2(32, 44), "h": 14.5, "cost": 1500000, "grid": 2.0,
-		"needs": {"strom": 80}, "desc": "Vier Ebenen für Autos der Passagiere."},
+		"needs": {"strom": 80}, "access": {"ein": Vector2(-6, -24), "aus": Vector2(6, -24)}, "spaces": 300,
+		"desc": "Vier Ebenen, 300 Plätze. Ein- und Ausfahrt mit Schranke an der Vorderseite (Pfeil beim Setzen): dort muss eine Straße vorbeiführen. Bringt Parkgebühren."},
 	"trafo": {"name": "Trafostation", "size": Vector2(10, 7), "h": 3.7, "cost": 180000, "grid": 1.0,
 		"supply": {"strom": 630}, "desc": "Liefert 630 kW Strom über Kabel."},
 	"wasseranschluss": {"name": "Wasseranschluss", "size": Vector2(4, 4), "h": 1.6, "cost": 25000, "grid": 1.0,
@@ -86,6 +93,9 @@ const ITEMS := {
 	"gate": {"name": "Gate", "size": Vector2(10, 8), "h": 3.2, "cost": 90000, "grid": 1.0, "inside": true,
 		"wall": true, "walk": true, "needs": {"strom": 4},
 		"desc": "Wartebereich mit Ausgang zum Flugzeug. An die Außenwand zum Vorfeld stellen. Ein Gate je Flugzeug am Stand."},
+	"sb_ausgang": {"name": "Ausgang Sicherheitsbereich", "short": "SB-Ausgang", "size": Vector2(4, 1), "h": 2.9, "cost": 30000,
+		"grid": 1.0, "inside": true, "walk": true, "oneway": true, "needs": {"strom": 1},
+		"desc": "Einbahn-Tür in einer Lücke der Trennwand: Ankommende verlassen den Sicherheitsbereich, hinein kommt niemand. Vorderseite (Pfeil) zeigt nach draußen."},
 	"gepaeckband": {"name": "Gepäckband", "size": Vector2(10, 5), "h": 2.2, "cost": 120000, "grid": 1.0,
 		"inside": true, "needs": {"strom": 10}, "cap": 300,
 		"desc": "Hier holen ankommende Passagiere ihre Koffer, 300 Passagiere pro Stunde."},
@@ -113,9 +123,9 @@ const ITEMS := {
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["strasse", "gehweg", "rollweg", "vorfeld", "piste"]],
+	["wege", "Wege", ["strasse", "strasse4", "einbahn", "spuren", "kreuzung", "gehweg", "rollweg", "vorfeld", "piste"]],
 	["flug", "Flugbetrieb", ["stand", "tower", "vorfelddepot", "hangar", "feuerwache"]],
-	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "eingang", "checkin", "gepaeckanlage", "sicherheit", "gate", "gepaeckband"]],
+	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "gate", "gepaeckband"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst"]],
 	["versorgung", "Versorgung", ["stromkabel", "wasserrohr", "heizrohr", "trafo", "wasseranschluss", "heizzentrale"]],
 	["umfeld", "Umfeld", ["parkhaus", "baum", "kuebel", "laterne", "bank"]],
@@ -148,7 +158,21 @@ static func label(id: String) -> String:
 		return String(ITEMS[id]["name"])
 	if id == "abriss":
 		return "Abriss"
+	if TOOLS.has(id):
+		return String(TOOLS[id]["name"])
 	return id
+
+
+## Werkzeuge ohne eigenes Bauteil
+const TOOLS := {
+	"spuren": {"name": "Spuren ändern", "desc": "Klicke auf eine Straße: 2-spurig, 4-spurig, Einbahnstraße und umgekehrte Einbahnstraße im Wechsel."},
+	"kreuzung": {"name": "Kreuzung regeln", "desc": "Klicke auf eine Kreuzung: rechts vor links, Vorfahrtsstraße oder Ampel im Wechsel."},
+}
+const ROADS := ["strasse", "strasse4", "einbahn"]
+
+
+static func is_road(kind: String) -> bool:
+	return kind in ROADS
 
 
 static func is_inside(id: String) -> bool:

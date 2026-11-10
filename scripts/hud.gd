@@ -301,6 +301,8 @@ func _price(id: String) -> String:
 		if Catalog.ITEMS[id].has("cost_m2"):
 			return "%s €/m²" % GameState.fmt_money(int(Catalog.ITEMS[id]["cost_m2"])).trim_suffix(" €")
 		return GameState.fmt_short(int(Catalog.ITEMS[id]["cost"]))
+	if Catalog.TOOLS.has(id):
+		return "Werkzeug"
 	return "50 % zurück"
 
 
@@ -310,6 +312,8 @@ func _tooltip(id: String) -> String:
 		desc = String(Catalog.LINES[id].get("desc", ""))
 	elif Catalog.ITEMS.has(id):
 		desc = String(Catalog.ITEMS[id].get("desc", ""))
+	elif Catalog.TOOLS.has(id):
+		desc = String(Catalog.TOOLS[id]["desc"])
 	else:
 		desc = "Gebäude oder Wege abreißen. Du bekommst die Hälfte der Kosten zurück. (Entf)"
 	return Catalog.label(id) + " · " + _price(id) + "\n" + desc

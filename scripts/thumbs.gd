@@ -19,7 +19,13 @@ func render(ids: Array) -> Dictionary:
 		vp.msaa_3d = Viewport.MSAA_DISABLED
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		add_child(vp)
-		var model: Node3D = Factory.make_line_thumb(id) if Catalog.LINES.has(id) else Factory.make_item(id)
+		var model: Node3D
+		if Catalog.LINES.has(id):
+			model = Factory.make_line_thumb(id)
+		elif Catalog.TOOLS.has(id):
+			model = Factory.make_tool_thumb(id)
+		else:
+			model = Factory.make_item(id)
 		if id == "stand":
 			Factory.blk(model, Vector3(-24, -0.3, -26), Vector3(24, 0.0, 26), Color(0.47, 0.46, 0.42))
 		elif Catalog.is_inside(id):

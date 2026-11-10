@@ -13,11 +13,13 @@ const GameState = preload("res://scripts/game_state.gd")
 
 const SNAP_DIST := 7.0
 ## An welche Wege ein neuer Weg einrastet
-const SNAP_GROUPS := {"strasse": ["strasse"], "gehweg": ["gehweg", "strasse"], "rollweg": ["rollweg", "vorfeld", "piste"],
-	"vorfeld": ["vorfeld", "rollweg"], "piste": ["piste"]}
+const SNAP_GROUPS := {"strasse": ["strasse", "strasse4", "einbahn"], "strasse4": ["strasse", "strasse4", "einbahn"],
+	"einbahn": ["strasse", "strasse4", "einbahn"], "gehweg": ["gehweg", "strasse", "strasse4", "einbahn"],
+	"rollweg": ["rollweg", "vorfeld", "piste"], "vorfeld": ["vorfeld", "rollweg"], "piste": ["piste"]}
 const ANGLE_STEP := 15.0
 
 var game: GameState
+var roads: Node3D   # roads.gd, für das Kreuzungs-Werkzeug
 var root3d: Node3D
 var tool := ""
 var points: Array = []
@@ -117,7 +119,7 @@ func on_move(p: Variant) -> void:
 		has_hover = true
 		return
 	var s := _snap(raw_hover)
-	if has_hover and s.is_equal_approx(hover) and tool != "abriss":
+	if has_hover and s.is_equal_approx(hover) and not (tool in ["abriss", "spuren", "kreuzung"]):
 		return
 	hover = s
 	has_hover = true
@@ -162,6 +164,18 @@ func on_click(p: Vector3) -> void:
 		_refresh()
 	elif tool == "":
 		inspect_requested.emit(p)
+	elif tool == "spuren":
+		var rec := game.pick(p)
+		if rec.get("type", "") == "line" and Catalog.is_road(String(rec["kind"])):
+			var why := game.cycle_road(rec)
+			game.toast.emit(why if why != "" else "Jetzt: " + _road_name(rec))
+		else:
+			game.toast.emit("Klicke auf eine Straße")
+		_refresh()
+	elif tool == "kreuzung":
+		var ctrl: String = roads.cycle_control(p)
+		game.toast.emit("Kreuzung: " + String(roads.CONTROL_NAMES.get(ctrl, "")) if ctrl != "" else "Klicke auf eine Kreuzung (mindestens drei Straßen)")
+		_refresh()
 	elif tool == "abriss":
 		_refresh()
 		if not target.is_empty():
@@ -338,6 +352,22 @@ func _refresh() -> void:
 		_refresh_item()
 	elif tool == "abriss":
 		_refresh_demolish()
+	elif tool == "spuren":
+		_clear_highlight()
+		var rec := game.pick(hover) if has_hover else {}
+		if rec.get("type", "") == "line" and Catalog.is_road(String(rec["kind"])):
+			target = rec
+			_highlight(rec)
+			info.emit("Spuren ändern", _road_name(rec) + "\nKlick: nächster Typ (2-spurig → 4-spurig → Einbahn → Einbahn umgekehrt)", 1)
+		else:
+			info.emit("Spuren ändern", "Klicke auf eine Straße, um Spuren und Richtung zu ändern.", 0)
+	elif tool == "kreuzung":
+		var ni: int = roads.nearest_junction(hover) if has_hover else -1
+		if ni >= 0:
+			_marker(roads.nodes[ni]["pos"], 3.0, mat_snap)
+			info.emit("Kreuzung regeln", "Jetzt: %s\nKlick: rechts vor links → Vorfahrtsstraße → Ampel" % String(roads.CONTROL_NAMES.get(roads.control_of(ni), "")), 1)
+		else:
+			info.emit("Kreuzung regeln", "Fahre über eine Kreuzung mit mindestens drei Straßen.", 0)
 
 
 func _refresh_line() -> void:
@@ -445,6 +475,14 @@ func _refresh_demolish() -> void:
 	_highlight(target)
 	var cost: int = target["cost"]
 	info.emit("Abriss", "%s abreißen\nErstattung %s" % [game.describe(target), GameState.fmt_money(cost / 2)], 2)
+
+
+func _road_name(rec: Dictionary) -> String:
+	var kind: String = rec["kind"]
+	var name := Catalog.label(kind)
+	if kind == "einbahn" and bool(rec.get("flip", false)):
+		name += " (umgedreht)"
+	return name
 
 
 func _supply_text(def: Dictionary) -> String:

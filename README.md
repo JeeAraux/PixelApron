@@ -22,6 +22,17 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Straßennetz (neu in 0.6):**
+  - **Straßentypen:** 2-spurig, 4-spurig (zwei Spuren je Richtung) und Einbahnstraße. Mit dem Werkzeug *Spuren ändern* klickst du eine Straße durch alle Typen, auch die Richtung der Einbahnstraße.
+  - **Kreuzungen:** Sie bekommen eine eigene Fläche, Haltelinien und Schilder.
+  - **Regelung:** Mit *Kreuzung regeln* schaltest du zwischen rechts vor links, Vorfahrtsstraße (Vorfahrt-achten-Linien für die Nebenstraße) und Ampel mit Phasen um. Kreuzungen 4-spuriger Straßen bekommen automatisch eine Ampel.
+  - **Autos:** Sie fahren auf ihrer Spur und durch Kreuzungen auf sauberen Kurvenbögen. Sie wechseln die Spur vor dem Abbiegen und halten Abstand. Sie bremsen an der Haltelinie, warten auf Grün oder auf Vorfahrt, und Linksabbieger lassen den Gegenverkehr durch. Blinker und Bremslichter leuchten.
+  - **Ziele:** Autos fahren ins Parkhaus, durch die Einfahrt mit Schranke, parken und kommen später über die Ausfahrt wieder heraus (Parkgebühr). Andere halten in einer Haltebucht vor dem Terminal oder fahren einfach durch.
+  - **Parkhaus:** Ein- und Ausfahrt liegen an der Vorderseite, davor muss eine Straße liegen. Die Infoanzeige zeigt die Zufahrt und die belegten Plätze.
+- **Sicherheitsbereich (neu in 0.6):**
+  - Hinter die Kontrolle darf niemand ohne Kontrolle. Das Spiel prüft, ob die Gates vom Eingang nur durch die Sicherheitskontrolle erreichbar sind.
+  - Ankommende verlassen den Bereich über einen *Ausgang Sicherheitsbereich*, eine Einbahn-Tür in der Trennwand.
+  - Fehlt etwas oder ist eine Lücke offen, sagt der Flugplan, was zu tun ist.
 - **Wege mit Kurven:**
   - Straße, Gehweg, Rollweg und Vorfeld ziehst du durch beliebig viele Punkte. Die Ecken werden automatisch ausgerundet.
   - Die Piste baust du gerade mit zwei Klicks.

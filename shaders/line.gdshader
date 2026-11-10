@@ -6,6 +6,7 @@ uniform vec3 base_color : source_color = vec3(0.2, 0.2, 0.19);
 uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld
 uniform float width = 7.5;
 uniform float len = 100.0;
+uniform int flip = 0;
 
 varying vec3 wpos;
 
@@ -34,6 +35,39 @@ void fragment() {
 		}
 		if (ax > half_w - 0.15) {
 			col = vec3(0.55, 0.54, 0.5);
+		}
+	} else if (mark == 6) {
+		// 4 Spuren: doppelte Mittellinie, gestrichelte Spurtrenner
+		if (abs(ax - 0.22) < 0.1) {
+			col = white;
+		}
+		if (abs(ax - width * 0.25) < 0.12 && mod(v, 6.0) < 3.0) {
+			col = white;
+		}
+		if (abs(ax - (half_w - 0.4)) < 0.15) {
+			col = white * 0.92;
+		}
+		if (ax > half_w - 0.15) {
+			col = vec3(0.55, 0.54, 0.5);
+		}
+	} else if (mark == 7) {
+		// Einbahnstraße: gestrichelte Mitte, Pfeile
+		if (ax < 0.12 && mod(v, 6.0) < 3.0) {
+			col = white;
+		}
+		if (abs(ax - (half_w - 0.4)) < 0.15) {
+			col = white * 0.92;
+		}
+		if (ax > half_w - 0.15) {
+			col = vec3(0.55, 0.54, 0.5);
+		}
+		float pv = mod(flip == 1 ? len - v : v, 30.0);
+		float lx = abs(ax - width * 0.25);
+		if (pv > 12.0 && pv < 15.0 && lx < 0.12 + (pv - 12.0) * 0.0) {
+			col = white;
+		}
+		if (pv >= 15.0 && pv < 16.5 && lx < (16.5 - pv) * 0.45) {
+			col = white;
 		}
 	} else if (mark == 2) {
 		if (ax < 0.22) {

@@ -31,6 +31,7 @@ var hint := ""                 # Hinweis, der den Betrieb bremst
 var movements: Array = []      # Spielminuten der letzten Landungen und Starts
 var pax_log: Array = []        # [Spielminute, Passagiere, Abflug?] der letzten zwei Stunden
 var terminal: Variant = null   # terminal.gd (Gates, Passagiere, Kapazität)
+var traffic: Variant = null    # traffic.gd (Zufahrt Parkhaus)
 var gate_short := 0.0          # Spielminuten, in denen noch "zu wenige Gates" gemeldet wird
 
 
@@ -530,7 +531,7 @@ func _update_gse(p: Dictionary, _sim: float) -> void:
 			look = (home - spot).normalized()
 		v.position = Vector3(pos.x, 0.0, pos.z)
 		if look.length_squared() > 0.001:
-			v.basis = Basis.looking_at(look, Vector3.UP)
+			v.basis = v.basis.orthonormalized().slerp(Basis.looking_at(look.normalized(), Vector3.UP), 0.2)
 
 
 func _clear_gse(p: Dictionary) -> void:
@@ -547,7 +548,14 @@ func _place(p: Dictionary) -> void:
 	node.position = Vector3(pos.x, float(p["alt"]), pos.z)
 	var h: Vector3 = p["heading"]
 	if h.length_squared() > 0.0001:
-		node.basis = Basis.looking_at(h, Vector3.UP)
+		# weich drehen statt an jedem Wegpunkt abzuknicken
+		var hs: Vector3 = p.get("hs", h)
+		hs = hs.lerp(h.normalized(), 0.18 if p["state"] in ["rollt_ein", "rollt_aus", "wartet"] else 1.0)
+		hs.y = 0.0
+		if hs.length_squared() < 0.0001:
+			hs = h
+		p["hs"] = hs.normalized()
+		node.basis = Basis.looking_at(p["hs"], Vector3.UP)
 
 
 func _remove(p: Dictionary, msg: String) -> void:
@@ -601,11 +609,13 @@ func _satisfaction(sim: float) -> void:
 		factors.append(["Kein Vorfelddepot mit Strom: Abfertigung dauert länger", -6])
 		hint = "Ohne Vorfelddepot dauert jede Abfertigung länger"
 	var parking := false
+	var any_parking := false
 	for ph: Dictionary in game.items_of("parkhaus"):
-		parking = parking or game.supplied(ph, "strom")
+		any_parking = true
+		parking = parking or (game.supplied(ph, "strom") and (traffic == null or traffic.has_access(ph)))
 	if not parking:
 		target -= 12.0
-		factors.append(["Kein Parkhaus mit Strom", -12])
+		factors.append(["Parkhaus ohne Strom oder ohne Zufahrt" if any_parking else "Kein Parkhaus", -12])
 	if gate_short > 0.0:
 		target -= 5.0
 		factors.append(["Zu wenige Gates: Flugzeuge warten auf ein Gate", -5])

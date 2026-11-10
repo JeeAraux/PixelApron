@@ -6,6 +6,7 @@ const IsoCamera = preload("res://scripts/iso_camera.gd")
 const GameState = preload("res://scripts/game_state.gd")
 const Builder = preload("res://scripts/builder.gd")
 const Traffic = preload("res://scripts/traffic.gd")
+const Roads = preload("res://scripts/roads.gd")
 const Flights = preload("res://scripts/flights.gd")
 const Hud = preload("res://scripts/hud.gd")
 const Thumbs = preload("res://scripts/thumbs.gd")
@@ -26,6 +27,7 @@ var cam_rig: IsoCamera
 var game: GameState
 var builder: Builder
 var traffic: Traffic
+var roads: Roads
 var flights: Flights
 var terminal: Terminal
 var hud: Hud
@@ -47,10 +49,15 @@ func _ready() -> void:
 	builder.name = "Bauen"
 	add_child(builder)
 	builder.setup(game, world)
+	roads = Roads.new()
+	roads.name = "Strassennetz"
+	world.add_child(roads)
+	roads.setup(game)
+	builder.roads = roads
 	traffic = Traffic.new()
 	traffic.name = "Verkehr"
 	world.add_child(traffic)
-	traffic.setup(game)
+	traffic.setup(game, roads)
 	terminal = Terminal.new()
 	terminal.name = "Terminalbetrieb"
 	world.add_child(terminal)
@@ -60,6 +67,7 @@ func _ready() -> void:
 	world.add_child(flights)
 	flights.setup(game)
 	flights.terminal = terminal
+	flights.traffic = traffic
 	cam_rig = IsoCamera.new()
 	cam_rig.name = "Kamera"
 	world.add_child(cam_rig)
@@ -311,6 +319,14 @@ func _inspect(p: Vector3) -> void:
 	var body := game.details(rec)
 	if rec.get("id", "") == "halle":
 		body = terminal.hall_summary(rec) + "\n" + body
+	if rec.get("id", "") == "parkhaus":
+		var spaces := int(Catalog.ITEMS["parkhaus"]["spaces"])
+		body = ("Zufahrt: verbunden" if traffic.has_access(rec) else "Keine Zufahrt: vor der Einfahrt muss eine Straße liegen") \
+			+ "\nBelegt: %d von %d Plätzen" % [traffic.parked_count(rec), spaces] + "\n" + body
+	if rec.get("type", "") == "line" and Catalog.is_road(String(rec["kind"])):
+		var ni: int = roads.nearest_junction(p, 12.0)
+		if ni >= 0:
+			body = "Kreuzung: %s (ändern mit Werkzeug Kreuzung regeln)\n" % String(Roads.CONTROL_NAMES.get(roads.control_of(ni), "")) + body
 	hud.set_info(game.describe(rec), body, 0)
 
 
@@ -441,6 +457,25 @@ func _demo(args: PackedStringArray) -> void:
 		if mode == "modelle_a320" or mode == "modelle_b737":
 			cam_rig.target = base + Vector3(-22 if mode == "modelle_a320" else 22, 0, 0)
 			cam_rig.zoom_goal = 34.0
+		cam_rig.zoom = cam_rig.zoom_goal
+	elif mode == "parkhaus":
+		game.traffic_demand = 6
+		for i in range(900):
+			traffic.step(0.1)
+		cam_rig.yaw = 225.0
+		cam_rig.yaw_goal = 225.0
+		cam_rig.target = Vector3(-40, 0, 34)
+		cam_rig.zoom_goal = 48.0
+		cam_rig.zoom = 48.0
+	elif mode == "verkehr" or mode == "ampel":
+		if mode == "ampel":
+			roads.cycle_control(Vector3(115, 0, 35))
+			roads.cycle_control(Vector3(115, 0, 35))
+		game.traffic_demand = 6
+		for i in range(700):
+			traffic.step(0.1)
+		cam_rig.target = Vector3(-30, 0, 20) if mode == "verkehr" else Vector3(112, 0, 40)
+		cam_rig.zoom_goal = 70.0 if mode == "verkehr" else 45.0
 		cam_rig.zoom = cam_rig.zoom_goal
 	elif mode == "kreuzung":
 		cam_rig.target = Vector3(-110, 0, 60)

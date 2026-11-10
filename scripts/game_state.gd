@@ -27,6 +27,7 @@ var items: Array = []        # je Objekt: {type, id, pos, rot, rect, node, cost,
 var history: Array = []
 var utility_view := false
 var interior_view := false
+var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0
 var satisfaction_factors: Array = []
 var traffic_demand := 0      # Landungen und Starts in der letzten Spielstunde
@@ -67,6 +68,12 @@ static func fmt_short(v: int) -> String:
 func _spend(amount: int) -> void:
 	money -= amount
 	money_changed.emit(money)
+
+
+## Einnahme ohne Meldung (z. B. viele kleine Parkgebühren)
+func earn_quiet(amount: int) -> void:
+	_spend(-amount)
+	day_income += amount
 
 
 func earn(amount: int, why: String) -> void:
@@ -170,7 +177,7 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	var rec := _make_line(kind, points, samples, cost)
 	_spend(cost)
 	var group := [rec]
-	if kind == "strasse" and not (check["junctions"] as Array).is_empty():
+	if Catalog.is_road(kind) and not (check["junctions"] as Array).is_empty():
 		group = _make_junctions(rec, check["junctions"])
 	history.append(group if group.size() > 1 else rec)
 	if Catalog.utility_of(kind) != "":
@@ -178,6 +185,48 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	else:
 		network_changed.emit()
 	return group[0]
+
+
+## Spuren-Werkzeug: Straßentyp wechseln (2-spurig, 4-spurig, Einbahn, Einbahn umgekehrt).
+func cycle_road(rec: Dictionary) -> String:
+	var kind: String = rec["kind"]
+	var flip := bool(rec.get("flip", false))
+	var order := [["strasse", false], ["strasse4", false], ["einbahn", false], ["einbahn", true]]
+	var idx := 0
+	for i in range(order.size()):
+		if order[i][0] == kind and bool(order[i][1]) == flip:
+			idx = i
+	var nxt: Array = order[(idx + 1) % order.size()]
+	var new_kind: String = nxt[0]
+	var samples: PackedVector3Array = rec["samples"]
+	var old_cost := line_cost(kind, samples)
+	var new_cost := line_cost(new_kind, samples)
+	var extra := maxi(0, new_cost - old_cost)
+	if extra > money:
+		return "Nicht genug Geld"
+	# breitere Straße darf nicht in Gebäude ragen
+	var w: float = Catalog.LINES[new_kind]["width"]
+	for it: Dictionary in items:
+		if Catalog.is_inside(String(it["id"])) or String(it["id"]) in DECOR:
+			continue
+		var r: Rect2 = (it["rect"] as Rect2).grow(w * 0.5 - 0.25)
+		for i in range(0, samples.size(), 2):
+			if r.has_point(Vector2(samples[i].x, samples[i].z)):
+				return "Zu breit: stößt an " + Catalog.label(String(it["id"]))
+	var node: Variant = rec["node"]
+	if is_instance_valid(node):
+		(node as Node).queue_free()
+	var mesh := Factory.make_line(new_kind, samples, float(rec.get("y", 0.06)))
+	line_root.add_child(mesh)
+	rec["node"] = mesh
+	rec["kind"] = new_kind
+	rec["flip"] = bool(nxt[1])
+	rec["bounds"] = Spline.bounds(samples, w * 0.5)
+	rec["cost"] = int(rec["cost"]) + extra
+	_spend(extra)
+	_grid_dirty = true
+	network_changed.emit()
+	return ""
 
 
 ## Legt den Datensatz und das Modell eines Weges an (ohne Geld, ohne Verlauf).
@@ -188,7 +237,8 @@ func _make_line(kind: String, points: Array, samples: PackedVector3Array, cost: 
 	line_root.add_child(node)
 	var w: float = def["width"]
 	var rec := {"type": "line", "kind": kind, "points": points.duplicate(), "samples": samples,
-		"bounds": Spline.bounds(samples, w * 0.5), "node": node, "cost": cost, "raw": raw}
+		"bounds": Spline.bounds(samples, w * 0.5), "node": node, "cost": cost, "raw": raw,
+		"y": base_y + 0.0004 * float(lines.size() % 20)}
 	if Catalog.is_wall(kind):
 		rec["hall"] = hall_at(Spline.sample_at(samples, Spline.length(samples) * 0.5))
 	lines.append(rec)
@@ -201,8 +251,10 @@ func _make_line(kind: String, points: Array, samples: PackedVector3Array, cost: 
 
 ## Welche Wege einander kreuzen dürfen
 const CROSS_OK := {
-	"strasse": ["strasse", "gehweg"],
-	"gehweg": ["strasse", "gehweg"],
+	"strasse": ["strasse", "strasse4", "einbahn", "gehweg"],
+	"strasse4": ["strasse", "strasse4", "einbahn", "gehweg"],
+	"einbahn": ["strasse", "strasse4", "einbahn", "gehweg"],
+	"gehweg": ["strasse", "strasse4", "einbahn", "gehweg"],
 	"rollweg": ["rollweg", "vorfeld", "piste"],
 	"vorfeld": ["rollweg", "vorfeld", "piste"],
 	"piste": ["rollweg", "vorfeld", "piste"],
@@ -289,7 +341,7 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 		if not (k2 in CROSS_OK.get(kind, [])):
 			out["why"] = "Überschneidet " + Catalog.label(k2)
 			return out
-		if kind != "strasse" or k2 != "strasse":
+		if not (Catalog.is_road(kind) and Catalog.is_road(k2)):
 			continue
 		# zusammenhängende Abschnitte: kurz = Kreuzung, lang = liegt auf der Straße
 		var idx: Array = hl.keys()
@@ -943,6 +995,7 @@ func clear_all() -> void:
 	lines.clear()
 	items.clear()
 	history.clear()
+	junction_controls = {}
 	_grid_dirty = true
 	money = START_MONEY
 	satisfaction = 75.0
@@ -956,7 +1009,7 @@ func clear_all() -> void:
 # ---------------------------------------------------------------- Speichern und Laden
 
 func save_game(quiet: bool = false) -> void:
-	var data := {"version": 4, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": []}
+	var data := {"version": 5, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": []}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
 		var pts := []
@@ -966,7 +1019,7 @@ func save_game(quiet: bool = false) -> void:
 			pts = []
 			for p: Vector3 in (l["samples"] as PackedVector3Array):
 				pts.append([snappedf(p.x, 0.01), snappedf(p.z, 0.01)])
-		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"], "raw": bool(l.get("raw", false))})
+		ls.append({"kind": l["kind"], "points": pts, "cost": l["cost"], "raw": bool(l.get("raw", false)), "flip": bool(l.get("flip", false))})
 	var its: Array = data["items"]
 	for it: Dictionary in items:
 		var p: Vector3 = it["pos"]
@@ -1010,12 +1063,14 @@ func load_game() -> bool:
 		var pts := []
 		for p: Array in l["points"]:
 			pts.append(Vector3(float(p[0]), 0.0, float(p[1])))
+		var rec: Dictionary = {}
 		if bool(l.get("raw", false)):
-			_make_line(String(l["kind"]), pts, PackedVector3Array(pts), int(l.get("cost", 0)), true)
-			continue
-		var rec := build_line(String(l["kind"]), pts, true, true)
+			rec = _make_line(String(l["kind"]), pts, PackedVector3Array(pts), int(l.get("cost", 0)), true)
+		else:
+			rec = build_line(String(l["kind"]), pts, true, true)
 		if not rec.is_empty():
 			rec["cost"] = int(l.get("cost", 0))
+			rec["flip"] = bool(l.get("flip", false))
 	for it: Dictionary in data.get("items", []):
 		if not Catalog.ITEMS.has(String(it["id"])) or String(it["id"]) == "halle":
 			continue
@@ -1023,6 +1078,7 @@ func load_game() -> bool:
 		if not rec.is_empty():
 			rec["cost"] = int(it.get("cost", 0))
 	history.clear()
+	junction_controls = data.get("controls", {})
 	network_changed.emit()
 	money = int(data.get("money", START_MONEY))
 	minutes = float(data.get("minutes", 360.0))
@@ -1045,6 +1101,7 @@ func load_starter() -> void:
 		build_line("rollweg", [V.call(x - 70, -170), V.call(x - 10, -150), V.call(x + 30, -95)], true)
 	build_line("strasse", [V.call(430, 60), V.call(260, 60), V.call(170, 40), V.call(60, 30),
 		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true)
+	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true)
 	build_line("gehweg", [V.call(-30, 12), V.call(30, 12)], true)
 	_starter_terminal(V)
 	for x: float in [-105.0, -60.0, -15.0, 30.0]:
@@ -1102,6 +1159,7 @@ func _starter_terminal(V: Callable) -> void:
 	build_line("glaswand", [V.call(-28, -8), V.call(-6, -8)], true)
 	build_line("glaswand", [V.call(6, -8), V.call(12, -8)], true)
 	build_line("glaswand", [V.call(16, -8), V.call(28, -8)], true)
+	put.call("sb_ausgang", 14, -8)
 	put.call("sicherheit", -3, -8)
 	put.call("sicherheit", 3, -8)
 	# Luftseite: Gates am Vorfeld, Toiletten, Gepäcksortierung, Shop

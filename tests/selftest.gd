@@ -151,6 +151,64 @@ func run(main: Node) -> void:
 	for sp: Vector3 in sec_pos:
 		game.build_item("sicherheit", sp, 0, true)
 	check(tb.check() == "", "Kontrolle wieder da")
+	# Sicherheitsbereich: Einbahn-Ausgang und geschlossene Trennwand
+	var sbx: Dictionary = game.items_of("sb_ausgang")[0]
+	var sbx_pos: Vector3 = sbx["pos"]
+	game.remove(sbx, 1.0)
+	check(tb.check().contains("Sicherheitsbereich offen"), "Offene Lücke statt Ausgang erkannt")
+	var plug: Dictionary = game.build_line("glaswand", [Vector3(12, 0, -8), Vector3(16, 0, -8)], true)
+	check(tb.check().contains("Ausgang Sicherheitsbereich"), "Ohne Ausgang kommen Ankommende nicht raus: " + tb.check())
+	game.remove(plug, 1.0)
+	game.build_item("sb_ausgang", sbx_pos, 0, true)
+	check(tb.check() == "", "Ausgang Sicherheitsbereich wieder da")
+	var gw: Dictionary = game.walls_of(term)[0]
+	var gw_pts: Array = gw["points"]
+	game.remove(gw, 1.0)
+	check(tb.check().contains("Sicherheitsbereich offen"), "Lücke in der Trennwand erkannt: " + tb.check())
+	game.build_line("glaswand", gw_pts, true)
+	check(tb.check() == "", "Sicherheitsbereich wieder geschlossen")
+
+	# Straßennetz und Verkehr
+	var rd = main.roads
+	var tr = main.traffic
+	rd.ensure()
+	var jn: int = rd.nearest_junction(Vector3(115, 0, 35))
+	check(jn >= 0 and rd.degree(jn) == 3, "Einmündung im Startnetz erkannt (%s)" % rd.control_of(jn))
+	var c1: String = rd.cycle_control(Vector3(115, 0, 35))
+	var c2: String = rd.cycle_control(Vector3(115, 0, 35))
+	check(c1 != c2 and "ampel" in [c1, c2], "Kreuzung umschalten: %s → %s" % [c1, c2])
+	jn = rd.nearest_junction(Vector3(115, 0, 35))
+	if rd.control_of(jn) != "ampel":
+		rd.cycle_control(Vector3(115, 0, 35))
+	jn = rd.nearest_junction(Vector3(115, 0, 35))
+	check((rd.nodes[jn]["lamps"] as Array).size() == 3, "Ampel mit drei Signalen")
+	var side_road: Dictionary = {}
+	for l: Dictionary in game.lines:
+		if l["kind"] == "strasse" and (l["samples"] as PackedVector3Array)[0].z > 100.0:
+			side_road = l
+	check(game.cycle_road(side_road) == "" and side_road["kind"] == "strasse4", "Spuren ändern: 4-spurig")
+	rd.ensure()
+	check(rd.lanes(side_road, 1) == 2 and rd.lanes(side_road, -1) == 2, "Zwei Spuren je Richtung")
+	game.cycle_road(side_road)
+	rd.ensure()
+	check(side_road["kind"] == "einbahn" and rd.lanes(side_road, -1) == 0, "Einbahnstraße")
+	game.cycle_road(side_road)
+	game.cycle_road(side_road)
+	check(side_road["kind"] == "strasse", "Zurück auf 2-spurig")
+	game.traffic_demand = 6
+	tr.set_process(false)
+	var m_before: int = game.money
+	var max_wait := 0.0
+	var parked_seen := 0
+	for i in range(2500):
+		tr.step(0.1)
+		parked_seen = maxi(parked_seen, tr.parked.size())
+		for mv: Dictionary in tr.movers:
+			max_wait = maxf(max_wait, float(mv["wait"]))
+	check(tr.movers.size() > 10, "Verkehr läuft auf Spuren (%d Autos)" % tr.movers.size())
+	check(parked_seen > 0 and game.money > m_before, "Autos parken im Parkhaus und zahlen (%d geparkt)" % parked_seen)
+	check(max_wait < 90.0, "Niemand steckt fest (längste Wartezeit %.0f s)" % max_wait)
+	tr.set_process(true)
 	b.set_tool("stand")
 	b.on_move(Vector3(400, 0, 400))
 	check(b.reason != "", "Stand neben dem Vorfeld abgelehnt: " + b.reason)

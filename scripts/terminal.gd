@@ -60,14 +60,18 @@ func _analyze() -> void:
 			if id == "anzeige" and not powered:
 				pts = 0
 			decor += pts * int(counts[id])
+		var hid := (h["node"] as Node).get_instance_id()
+		grids[hid] = {"dep": _make_grid(h, "dep"), "arr": _make_grid(h, "arr")}
+		var problems := []
+		if missing.is_empty():
+			problems = _security_problems(h, grids[hid])
 		var info := {
-			"hall": h, "counts": counts, "missing": missing, "powered": powered, "area": area,
-			"complete": powered and missing.is_empty() and int(counts.get("gepaeckanlage", 0)) > 0,
+			"hall": h, "counts": counts, "missing": missing, "powered": powered, "area": area, "problems": problems,
+			"complete": powered and missing.is_empty() and problems.is_empty() and int(counts.get("gepaeckanlage", 0)) > 0,
 			"warm": clampf(heated / maxf(area, 1.0), 0.0, 1.0), "decor": decor,
 			"wc": int(counts.get("wc", 0)) if game.supplied(h, "wasser") else 0,
 		}
 		halls.append(info)
-		grids[(h["node"] as Node).get_instance_id()] = _make_grid(h)
 	# Personen in abgerissenen Hallen verschwinden, die anderen suchen ihren Weg neu
 	for per: Dictionary in people.duplicate():
 		if not grids.has(int(per["hall_id"])):
@@ -104,6 +108,8 @@ func check() -> String:
 		return "Terminalhalle ohne Strom"
 	if not (best["missing"] as Array).is_empty():
 		return "Im Terminal fehlt: " + ", ".join(best["missing"])
+	if not (best["problems"] as Array).is_empty():
+		return String(best["problems"][0])
 	return "Check-in braucht eine Gepäcksortierung"
 
 
@@ -211,8 +217,12 @@ func hall_summary(h: Dictionary) -> String:
 			lines.append("Ohne Strom")
 		elif not (info["missing"] as Array).is_empty():
 			lines.append("Es fehlt: " + ", ".join(info["missing"]))
+		elif not (info["problems"] as Array).is_empty():
+			lines.append(String(info["problems"][0]))
 		else:
 			lines.append("Es fehlt: Gepäcksortierung")
+		if (info["problems"] as Array).is_empty() and (info["missing"] as Array).is_empty():
+			lines.append("Sicherheitsbereich: geschlossen, nur über die Kontrolle erreichbar")
 		lines.append("Check-in %d · Kontrolle %d · Gates %d · Bänder %d · WC %d" % [int(c.get("checkin", 0)),
 			int(c.get("sicherheit", 0)), int(c.get("gate", 0)), int(c.get("gepaeckband", 0)), int(c.get("wc", 0))])
 		lines.append("Abflug %d/h von %d/h möglich, Ankunft %d/h von %d/h" % [roundi(demand_dep), roundi(capacity_dep()),
@@ -392,7 +402,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 		"go":
 			var path: Array = per["path"]
 			if path.is_empty():
-				path = _path(int(per["hall_id"]), per["pos"], st[1])
+				path = _path(int(per["hall_id"]), per["pos"], st[1], bool(per["dep"]))
 				per["path"] = path
 				per["pi"] = 0
 			var pos: Vector3 = per["pos"]
@@ -430,7 +440,78 @@ func _update_person(per: Dictionary, sim: float) -> void:
 
 # ---------------------------------------------------------------- Wegsuche
 
-func _make_grid(h: Dictionary) -> AStarGrid2D:
+## Prüft den Sicherheitsbereich mit einer Flutfüllung auf dem 1-m-Raster:
+## Vom Eingang dürfen die Gates nur durch die Kontrolle erreichbar sein, Ankommende müssen
+## über einen Ausgang Sicherheitsbereich wieder hinauskommen.
+func _security_problems(h: Dictionary, g: Dictionary) -> Array:
+	var out := []
+	var entries := _cells_of(h, "eingang")
+	var gates := _cells_of(h, "gate")
+	if entries.is_empty() or gates.is_empty():
+		return out
+	var arr: AStarGrid2D = g["arr"]
+	var dep: AStarGrid2D = g["dep"]
+	var oneway := {}
+	for c: Vector2i in _cells_of(h, "sb_ausgang"):
+		oneway[c] = true
+	# 1. Ohne durch die Kontrolle (und ohne verkehrt durch den Ausgang) zu den Gates?
+	var free := _flood(arr, entries, oneway)
+	for c: Vector2i in gates:
+		if free.has(c):
+			out.append("Sicherheitsbereich offen: Gates sind ohne Kontrolle erreichbar. Mit Wänden oder Glaswänden abtrennen.")
+			return out
+	# 2. Kommen Abfliegende durch die Kontrolle zu den Gates?
+	var dep_reach := _flood(dep, entries, {})
+	var any_gate := false
+	for c: Vector2i in gates:
+		any_gate = any_gate or dep_reach.has(c)
+	if not any_gate:
+		out.append("Kein Weg vom Eingang durch die Kontrolle zu den Gates")
+		return out
+	# 3. Kommen Ankommende hinaus?
+	var arr_reach := _flood(arr, gates, {})
+	var any_exit := false
+	for c: Vector2i in entries:
+		any_exit = any_exit or arr_reach.has(c)
+	if not any_exit:
+		out.append("Ankommende kommen nicht aus dem Sicherheitsbereich: Ausgang Sicherheitsbereich bauen")
+	return out
+
+
+func _cells_of(h: Dictionary, id: String) -> Array:
+	var out := []
+	for it: Dictionary in game.inside_of(h):
+		if it["id"] != id:
+			continue
+		var ir: Rect2 = (it["rect"] as Rect2).grow(-0.25)
+		for x in range(floori(ir.position.x), ceili(ir.end.x)):
+			for z in range(floori(ir.position.y), ceili(ir.end.y)):
+				out.append(Vector2i(x, z))
+	return out
+
+
+func _flood(g: AStarGrid2D, starts: Array, blocked: Dictionary) -> Dictionary:
+	var seen := {}
+	var queue := []
+	for c: Vector2i in starts:
+		if g.is_in_boundsv(c) and not g.is_point_solid(c) and not blocked.has(c):
+			seen[c] = true
+			queue.append(c)
+	var qi := 0
+	while qi < queue.size():
+		var c: Vector2i = queue[qi]
+		qi += 1
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + d
+			if seen.has(n) or not g.is_in_boundsv(n) or g.is_point_solid(n) or blocked.has(n):
+				continue
+			seen[n] = true
+			queue.append(n)
+	return seen
+
+
+## mode "dep": Ausgang Sicherheitsbereich ist zu (Einbahn), "arr": Kontrolle ist zu.
+func _make_grid(h: Dictionary, mode: String = "dep") -> AStarGrid2D:
 	var r: Rect2 = h["rect"]
 	var g := AStarGrid2D.new()
 	g.region = Rect2i(floori(r.position.x), floori(r.position.y), ceili(r.size.x), ceili(r.size.y))
@@ -440,7 +521,13 @@ func _make_grid(h: Dictionary) -> AStarGrid2D:
 	g.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	g.update()
 	for it: Dictionary in game.inside_of(h):
-		if bool(Catalog.ITEMS[it["id"]].get("walk", false)):
+		var def: Dictionary = Catalog.ITEMS[it["id"]]
+		var walk := bool(def.get("walk", false))
+		if mode == "dep" and bool(def.get("oneway", false)):
+			walk = false
+		if mode == "arr" and it["id"] == "sicherheit":
+			walk = false
+		if walk:
 			continue
 		var ir: Rect2 = (it["rect"] as Rect2).grow(-0.25)
 		for x in range(floori(ir.position.x), ceili(ir.end.x)):
@@ -461,10 +548,10 @@ func _cell(g: AStarGrid2D, p: Vector3) -> Vector2i:
 	return Vector2i(clampi(floori(p.x), r.position.x, r.end.x - 1), clampi(floori(p.z), r.position.y, r.end.y - 1))
 
 
-func _path(hall_id: int, a: Vector3, b: Vector3) -> Array:
-	var g: AStarGrid2D = grids.get(hall_id, null)
-	if g == null:
+func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true) -> Array:
+	if not grids.has(hall_id):
 		return [b]
+	var g: AStarGrid2D = grids[hall_id]["dep" if dep else "arr"]
 	var ca := _cell(g, a)
 	var cb := _cell(g, b)
 	var sa := g.is_point_solid(ca)

@@ -130,6 +130,27 @@ static func sample_at(s: PackedVector3Array, d: float) -> Vector3:
 	return s[i].lerp(s[i + 1], d - float(i))
 
 
+## Teilstück zwischen den Abständen d0 und d1 (in Metern ab dem Anfang).
+static func sub(s: PackedVector3Array, d0: float, d1: float) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var n := s.size()
+	if n < 2:
+		return s
+	d1 = maxf(d1, d0 + 0.1)
+	out.append(sample_at(s, d0))
+	var i := floori(d0) + 1
+	while i < n and float(i) < d1:
+		if s[i].distance_to(out[out.size() - 1]) > 0.05:
+			out.append(s[i])
+		i += 1
+	var last := sample_at(s, d1)
+	if last.distance_to(out[out.size() - 1]) > 0.05:
+		out.append(last)
+	elif out.size() == 1:
+		out.append(last + Vector3(0.05, 0, 0))
+	return out
+
+
 static func dir_at(s: PackedVector3Array, d: float) -> Vector3:
 	var n := s.size()
 	if n < 2:
