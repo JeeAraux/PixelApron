@@ -28,7 +28,7 @@ const BAG_COLS := [Color(0.62, 0.18, 0.16), Color(0.18, 0.28, 0.5), Color(0.14, 
 	Color(0.25, 0.45, 0.3), Color(0.78, 0.75, 0.7), Color(0.85, 0.6, 0.15), Color(0.4, 0.22, 0.45)]
 
 const IDS := ["eingang", "checkin", "gepaeckanlage", "sicherheit", "gate", "busgate", "gepaeckband", "wc", "sb_ausgang",
-	"heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst"]
+	"heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "tuer", "personalraum"]
 
 static var _glass: StandardMaterial3D
 
@@ -79,6 +79,11 @@ static func build(n: Node3D, id: String, opts: Dictionary) -> bool:
 			_board(n, k)
 		"kunst":
 			_art(n, k)
+			anim = true
+		"tuer":
+			_door(n, k, String(opts.get("art", "automatik")))
+		"personalraum":
+			_staff_room(n, k)
 			anim = true
 	if k.count > 0:
 		n.add_child(k.instance("Einrichtung"))
@@ -883,3 +888,181 @@ static func _art(n: Node3D, k: Kit) -> void:
 	sk.sphere(Vector3.ZERO, 0.22, Color(0.92, 0.92, 0.9), 12, 8)
 	var s := _part(n, "DrehRinge", sk, Vector3(0, 2.3, 0))
 	s.set_meta("speed", 0.25)
+
+
+# ---------------------------------------------------------------- Türen
+
+## Tür in einer Innenwand (Öffnung 2,4 m quer zu lokal X, Wand liegt in lokal X).
+## Bewegliche Flügel heißen TuerL/TuerR; terminal.gd öffnet sie, wenn jemand nah ist.
+## Meta "door_kind": automatik (Schiebeflügel aus Glas), fluegel (Drehflügel), personal (Stahltür).
+static func _door(n: Node3D, k: Kit, art: String) -> void:
+	n.set_meta("door_kind", art)
+	var post := STEEL if art != "fluegel" else WALNUT
+	# Zarge und Schwelle
+	for sx: float in [-1.0, 1.0]:
+		k.box(Vector3(sx * 1.2 - 0.06, 0, -0.14), Vector3(sx * 1.2 + 0.06, 2.42, 0.14), post)
+	k.box(Vector3(-1.26, 2.3, -0.14), Vector3(1.26, 2.45, 0.14), post)
+	k.box(Vector3(-1.14, 0, -0.12), Vector3(1.14, 0.015, 0.12), Color(0.55, 0.56, 0.58))
+	match art:
+		"automatik":
+			k.box(Vector3(-1.2, 2.45, -0.16), Vector3(1.2, 2.62, 0.16), Color(0.55, 0.58, 0.6))
+			for sz: float in [-1.0, 1.0]:
+				k.box(Vector3(-0.12, 2.48, sz * 0.165), Vector3(0.12, 2.56, sz * 0.18), DARK)
+				k.box(Vector3(0.05, 2.5, sz * 0.18), Vector3(0.09, 2.54, sz * 0.185), Color(0.2, 1.0, 0.3, 0.3))
+			for e: Array in [["TuerL", -0.56], ["TuerR", 0.56]]:
+				var holder := Node3D.new()
+				holder.name = String(e[0])
+				holder.position = Vector3(float(e[1]), 0, 0)
+				holder.set_meta("base_x", float(e[1]))
+				holder.set_meta("no_bake", true)
+				n.add_child(holder)
+				var fk := Kit.new()
+				fk.box(Vector3(-0.56, 0.0, -0.025), Vector3(0.56, 0.08, 0.025), STEEL)
+				fk.box(Vector3(-0.56, 2.22, -0.025), Vector3(0.56, 2.3, 0.025), STEEL)
+				for fx: float in [-0.53, 0.53]:
+					fk.box(Vector3(fx - 0.03, 0.08, -0.025), Vector3(fx + 0.03, 2.22, 0.025), STEEL)
+				fk.box(Vector3(-0.5, 1.0, -0.03), Vector3(0.5, 1.06, 0.03), Color(0.93, 0.93, 0.9))
+				holder.add_child(fk.instance("Rahmen"))
+				var gk := Kit.new()
+				gk.box(Vector3(-0.5, 0.08, -0.01), Vector3(0.5, 2.22, 0.01), WHITE)
+				var gm := gk.instance("Glas")
+				gm.material_override = glass()
+				gm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				holder.add_child(gm)
+		"fluegel":
+			for e: Array in [["TuerL", -1.15, 1.0], ["TuerR", 1.15, -1.0]]:
+				var holder := Node3D.new()
+				holder.name = String(e[0])
+				holder.position = Vector3(float(e[1]), 0, 0)
+				holder.set_meta("no_bake", true)
+				holder.set_meta("swing", -1.0 if float(e[2]) > 0.0 else 1.0)
+				n.add_child(holder)
+				var dir: float = e[2]
+				var lk := Kit.new()
+				var x0 := 0.02 * dir
+				var x1 := 1.13 * dir
+				lk.box(Vector3(minf(x0, x1), 0.02, -0.03), Vector3(maxf(x0, x1), 2.28, 0.03), OAK)
+				lk.box(Vector3(minf(x0, x1) + 0.05, 0.02, -0.035), Vector3(maxf(x0, x1) - 0.05, 0.3, 0.035), CHROME)
+				var vx := 0.57 * dir
+				lk.box(Vector3(vx - 0.12, 1.3, -0.035), Vector3(vx + 0.12, 1.9, 0.035), Color(0.3, 0.4, 0.45))
+				var hx := 1.0 * dir
+				for sz: float in [-1.0, 1.0]:
+					lk.box(Vector3(hx - 0.02, 1.0, sz * 0.035), Vector3(hx + 0.02, 1.2, sz * 0.05), CHROME)
+					lk.box(Vector3(hx - 0.12 * dir - 0.02, 1.08, sz * 0.05), Vector3(hx + 0.02, 1.12, sz * 0.09), CHROME)
+				holder.add_child(lk.instance("Fluegel"))
+			for sz: float in [-1.0, 1.0]:
+				k.box(Vector3(-0.3, 2.47, sz * 0.141), Vector3(0.3, 2.62, sz * 0.15), Color(0.1, 0.65, 0.3, 0.3))
+		"personal":
+			# feste Seitenwand mit Kartenleser, Stahltür links
+			k.box(Vector3(0.05, 0, -0.1), Vector3(1.14, 2.3, 0.1), Color(0.86, 0.85, 0.8))
+			k.box(Vector3(-0.02, 0, -0.13), Vector3(0.06, 2.3, 0.13), STEEL)
+			for sz: float in [-1.0, 1.0]:
+				var rz := sz * 0.1
+				k.box(Vector3(0.3, 1.05, rz), Vector3(0.48, 1.35, rz + sz * 0.04), DARK)
+				k.box(Vector3(0.34, 1.27, rz + sz * 0.04), Vector3(0.38, 1.31, rz + sz * 0.045), Color(1.0, 0.2, 0.15, 0.3))
+				k.box(Vector3(0.4, 1.27, rz + sz * 0.04), Vector3(0.44, 1.31, rz + sz * 0.045), Color(0.2, 1.0, 0.3, 0.3))
+				k.box(Vector3(-1.1, 2.48, sz * 0.141), Vector3(1.1, 2.75, sz * 0.15), Color(0.85, 0.15, 0.12))
+				PixelFont.draw(k, "NUR PERSONAL", Vector3(0, 2.615, sz * 0.152), Vector3(-sz, 0, 0), Vector3.UP, Vector3(0, 0, sz), 0.028, WHITE)
+			k.box(Vector3(-1.2, 2.45, -0.14), Vector3(1.2, 2.76, 0.14), Color(0.86, 0.85, 0.8))
+			var holder := Node3D.new()
+			holder.name = "TuerL"
+			holder.position = Vector3(-1.15, 0, 0)
+			holder.set_meta("no_bake", true)
+			holder.set_meta("swing", -1.0)
+			n.add_child(holder)
+			var lk := Kit.new()
+			lk.box(Vector3(0.02, 0.02, -0.035), Vector3(1.12, 2.28, 0.035), Color(0.55, 0.58, 0.62))
+			lk.box(Vector3(0.08, 1.5, -0.04), Vector3(0.4, 2.0, 0.04), Color(0.3, 0.4, 0.45))
+			for sz: float in [-1.0, 1.0]:
+				lk.box(Vector3(0.95, 1.05, sz * 0.04), Vector3(1.05, 1.1, sz * 0.09), CHROME)
+				lk.box(Vector3(0.95, 0.02, sz * 0.035), Vector3(1.1, 0.25, sz * 0.04), DARK)
+			holder.add_child(lk.instance("Fluegel"))
+
+
+# ---------------------------------------------------------------- Personalraum
+
+## Personalraum: Spinde, Tisch mit Stühlen, Küchenzeile mit Kaffeemaschine (dampft), Kühlschrank,
+## Sofa, Pinnwand und eine Mitarbeiterin in der Pause.
+static func _staff_room(n: Node3D, k: Kit) -> void:
+	k.box(Vector3(-3.0, 0, -2.0), Vector3(3.0, 0.02, 2.0), Color(0.62, 0.6, 0.56))
+	# Spinde an der Rückwand
+	for i in range(8):
+		var x := -2.9 + float(i) * 0.5
+		var c := Color(0.35, 0.5, 0.62) if i % 2 == 0 else Color(0.32, 0.46, 0.58)
+		k.box(Vector3(x, 0.02, -1.95), Vector3(x + 0.48, 1.9, -1.5), c)
+		k.box(Vector3(x + 0.04, 1.55, -1.5), Vector3(x + 0.44, 1.75, -1.49), c.darkened(0.25))
+		for v in range(4):
+			k.box(Vector3(x + 0.08, 1.58 + float(v) * 0.04, -1.495), Vector3(x + 0.4, 1.6 + float(v) * 0.04, -1.488), c.lightened(0.15))
+		k.box(Vector3(x + 0.38, 0.95, -1.5), Vector3(x + 0.42, 1.1, -1.47), CHROME)
+		k.box(Vector3(x + 0.16, 1.82, -1.5), Vector3(x + 0.32, 1.86, -1.49), WHITE)
+	k.box(Vector3(-2.9, 0.02, -1.4), Vector3(1.1, 0.45, -1.1), OAK)
+	# Tisch mit vier Stühlen
+	k.cyl(Vector3(-0.6, 0.02, 0.3), Vector3(-0.6, 0.72, 0.3), 0.05, 0.05, CHROME, 8)
+	k.cyl(Vector3(-0.6, 0.72, 0.3), Vector3(-0.6, 0.76, 0.3), 0.6, 0.6, WHITE, 18)
+	for i in range(4):
+		var a := float(i) / 4.0 * TAU + 0.4
+		var cp := Vector3(-0.6 + cos(a) * 0.85, 0, 0.3 + sin(a) * 0.85)
+		var inward := Vector3(-cos(a), 0, -sin(a))
+		k.box(cp + Vector3(-0.2, 0.42, -0.2), cp + Vector3(0.2, 0.47, 0.2), Color(0.85, 0.3, 0.2))
+		var back := cp - inward * 0.22
+		k.cyl(back + Vector3(0, 0.47, 0), back + Vector3(0, 0.9, 0), 0.03, 0.03, CHROME, 6)
+		k.sphere(back + Vector3(0, 0.88, 0), 0.16, Color(0.85, 0.3, 0.2), 8, 4, Vector3(1.0, 0.55, 1.0))
+		k.cyl(cp, cp + Vector3(0, 0.42, 0), 0.025, 0.025, CHROME, 6)
+	k.cyl(Vector3(-0.5, 0.76, 0.2), Vector3(-0.5, 0.86, 0.2), 0.045, 0.04, WHITE, 8)
+	k.cyl(Vector3(-0.8, 0.76, 0.45), Vector3(-0.8, 0.86, 0.45), 0.045, 0.04, Color(0.3, 0.45, 0.7), 8)
+	# Küchenzeile rechts
+	k.box(Vector3(1.6, 0.02, -1.95), Vector3(2.95, 0.9, 1.2), WHITE)
+	k.box(Vector3(1.55, 0.9, -1.98), Vector3(2.98, 0.95, 1.22), Color(0.3, 0.3, 0.32))
+	for z: float in [-1.4, -0.6, 0.2]:
+		k.box(Vector3(1.59, 0.1, z), Vector3(1.6, 0.85, z + 0.75), Color(0.85, 0.85, 0.82))
+		k.box(Vector3(1.57, 0.7, z + 0.3), Vector3(1.59, 0.74, z + 0.45), CHROME)
+	k.rounded_box(Vector3(2.2, 0.95, -1.7), Vector3(2.75, 1.45, -1.25), 0.04, DARK, 2)
+	k.box(Vector3(2.19, 1.2, -1.6), Vector3(2.21, 1.38, -1.35), Color(0.3, 0.8, 1.0, 0.3))
+	k.cyl(Vector3(2.1, 0.95, -1.47), Vector3(2.1, 1.05, -1.47), 0.05, 0.045, WHITE, 8)
+	k.cyl(Vector3(2.4, 0.95, 0.6), Vector3(2.4, 1.1, 0.6), 0.12, 0.1, CHROME, 10)
+	k.rounded_box(Vector3(2.3, 0.02, 1.3), Vector3(2.95, 1.85, 1.95), 0.04, Color(0.88, 0.88, 0.86), 2)
+	k.box(Vector3(2.29, 0.9, 1.35), Vector3(2.3, 0.95, 1.9), Color(0.6, 0.6, 0.6))
+	var steam := Kit.new()
+	for i in range(3):
+		steam.sphere(Vector3(0, float(i) * 0.12, 0), 0.05 + float(i) * 0.02, Color(0.95, 0.95, 0.95, 0.6), 6, 4)
+	var st := _part(n, "HubDampf", steam, Vector3(2.1, 1.12, -1.47))
+	st.set_meta("speed", 2.0)
+	# Sofa links, Pinnwand
+	k.rounded_box(Vector3(-2.95, 0.02, 0.4), Vector3(-2.2, 0.45, 1.9), 0.06, Color(0.42, 0.5, 0.36), 2)
+	k.rounded_box(Vector3(-2.95, 0.45, 0.4), Vector3(-2.75, 0.9, 1.9), 0.06, Color(0.38, 0.46, 0.33), 2)
+	for z: float in [0.42, 1.88]:
+		k.rounded_box(Vector3(-2.95, 0.45, z - 0.1), Vector3(-2.2, 0.65, z + 0.1), 0.04, Color(0.38, 0.46, 0.33), 2)
+	k.box(Vector3(-0.8, 1.2, -1.99), Vector3(0.6, 1.9, -1.96), Color(0.7, 0.55, 0.35))
+	for i in range(6):
+		var px := -0.7 + float(i % 3) * 0.42
+		var py := 1.3 + float(i / 3) * 0.3
+		k.box(Vector3(px, py, -1.96), Vector3(px + 0.3, py + 0.22, -1.955), [WHITE, Color(1.0, 0.95, 0.5), Color(0.6, 0.85, 1.0)][i % 3] as Color)
+	_plant_small(k, Vector3(-2.6, 0.02, -0.6))
+	_staff(n, Color(0.2, 0.32, 0.55), Vector3(-2.5, 0.0, 1.1), 1, Vector3(1, 0, 0))
+
+
+static func _plant_small(k: Kit, at: Vector3) -> void:
+	k.cyl(at, at + Vector3(0, 0.35, 0), 0.18, 0.22, Color(0.75, 0.72, 0.68), 10)
+	for i in range(6):
+		var a := float(i) / 6.0 * TAU
+		k.sphere(at + Vector3(cos(a) * 0.12, 0.55 + float(i % 2) * 0.12, sin(a) * 0.12), 0.16, LEAF if i % 2 == 0 else LEAF2, 6, 4)
+
+
+## Reinigungswagen (für die Reinigungskraft, die durchs Terminal läuft): Front +Z.
+static func cleaning_cart_mesh() -> ArrayMesh:
+	var k := Kit.new()
+	k.box(Vector3(-0.3, 0.1, -0.45), Vector3(0.3, 0.14, 0.45), Color(0.25, 0.4, 0.75))
+	k.box(Vector3(-0.28, 0.14, -0.4), Vector3(0.28, 0.6, -0.05), Color(0.85, 0.85, 0.82))
+	k.cyl(Vector3(0.0, 0.14, 0.2), Vector3(0.0, 0.5, 0.2), 0.2, 0.18, Color(0.95, 0.8, 0.15), 12)
+	k.box(Vector3(-0.3, 0.6, -0.45), Vector3(0.3, 0.64, -0.0), Color(0.25, 0.4, 0.75))
+	k.cyl(Vector3(-0.25, 0.64, -0.45), Vector3(-0.25, 1.0, -0.45), 0.015, 0.015, CHROME, 6)
+	k.cyl(Vector3(0.25, 0.64, -0.45), Vector3(0.25, 1.0, -0.45), 0.015, 0.015, CHROME, 6)
+	k.cyl(Vector3(-0.25, 1.0, -0.45), Vector3(0.25, 1.0, -0.45), 0.02, 0.02, CHROME, 6)
+	for i in range(3):
+		k.cyl(Vector3(-0.15 + float(i) * 0.15, 0.64, -0.25), Vector3(-0.15 + float(i) * 0.15, 0.82, -0.25), 0.05, 0.05,
+			[Color(0.2, 0.6, 0.9), Color(0.9, 0.3, 0.5), Color(0.3, 0.8, 0.4)][i] as Color, 8)
+	k.cyl(Vector3(0.15, 0.5, 0.2), Vector3(0.05, 1.2, 0.35), 0.015, 0.015, Color(0.6, 0.4, 0.2), 5)
+	for w: Vector2 in [Vector2(-0.25, -0.38), Vector2(0.25, -0.38), Vector2(-0.25, 0.38), Vector2(0.25, 0.38)]:
+		k.cyl(Vector3(w.x - 0.02, 0.06, w.y), Vector3(w.x + 0.02, 0.06, w.y), 0.06, 0.06, DARK, 8)
+	k.box(Vector3(-0.12, 0.0, 0.5), Vector3(0.12, 0.6, 0.52), Color(0.95, 0.8, 0.15))
+	return k.commit()

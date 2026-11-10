@@ -26,6 +26,9 @@ const LINES := {
 	"vorfeld": {"name": "Vorfeld", "width": 60.0, "cost_m": 2600, "min_r": 25.0, "min_len": 10.0,
 		"color": Color(0.47, 0.46, 0.42), "mark": 5, "y": 0.03, "straight": false, "utility": "",
 		"desc": "Betonfläche für Stände und Abfertigung, 60 m breit."},
+	"betriebsstrasse": {"name": "Betriebsstraße", "width": 7.0, "cost_m": 300, "min_r": 8.0, "min_len": 5.0,
+		"color": Color(0.26, 0.255, 0.24), "mark": 10, "y": 0.035, "straight": false, "utility": "",
+		"desc": "Fahrweg für Bodenfahrzeuge auf der Luftseite: verbindet Gerätehalle, Tanklager, Busgarage, Catering und Feuerwache mit dem Vorfeld. Ohne Anschluss erscheinen die Fahrzeuge erst am Stand und die Abfertigung dauert länger."},
 	"piste": {"name": "Piste", "width": 45.0, "cost_m": 3800, "min_r": 0.0, "min_len": 400.0,
 		"color": Color(0.18, 0.18, 0.17), "mark": 3, "y": 0.09, "straight": true, "utility": "",
 		"desc": "Gerade, 45 m breit. ATR 72 ab 1.200 m, Airbus A320 ab 1.800 m Länge."},
@@ -61,7 +64,7 @@ const LINES := {
 const ITEMS := {
 	# Terminalhalle: Rechteck mit zwei Klicks aufziehen, Preis je Quadratmeter
 	"halle": {"name": "Terminalhalle", "size": Vector2(24, 16), "h": 9.6, "cost": 0, "cost_m2": 1400, "grid": 2.0,
-		"rect_tool": true, "min": Vector2(16, 12), "max": Vector2(240, 120),
+		"rect_tool": true, "min": Vector2(16, 12), "max": Vector2(400, 200),
 		"desc": "Hülle des Terminals: zwei Ecken klicken. Innen baust du Eingang, Check-in, Kontrolle, Gates und mehr. Braucht Strom, für Heizkörper Wärme, für WCs Wasser."},
 	"stand": {"name": "Stand mit Brücke", "short": "Kontaktstand", "size": Vector2(40, 46), "h": 0.2, "cost": 60000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Abstellposition am Terminal: Die Fluggastbrücke des nächsten Gates dockt an (Reichweite 36 m). Nase zeigt zum Terminal. Muss auf dem Vorfeld liegen."},
@@ -76,13 +79,27 @@ const ITEMS := {
 		"desc": "25 m hoher Mast mit vier Scheinwerfern. Leuchtet nachts das Vorfeld aus."},
 	"bushalt": {"name": "Vorfeld-Haltestelle", "short": "Bushaltestelle", "size": Vector2(28, 7), "h": 3.4, "cost": 35000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Haltebucht mit Dach für die Vorfeldbusse, nah am Bus-Gate. Hier steigen die Passagiere der Außenpositionen ein und aus."},
-	"vorfelddepot": {"name": "Vorfelddepot", "size": Vector2(26, 16), "h": 7.0, "cost": 380000, "grid": 2.0,
-		"needs": {"strom": 30}, "desc": "Tankwagen, Gepäckschlepper und Catering. Ohne Depot mit Strom dauert jede Abfertigung anderthalbmal so lang."},
+	"vorfelddepot": {"name": "Gerätehalle", "size": Vector2(26, 16), "h": 7.0, "cost": 380000, "grid": 2.0,
+		"needs": {"strom": 30}, "garage": ["gpu", "bandlader", "zug", "schlepper", "treppe"],
+		"doors": [[Vector3(-9, 0, 8), 4.6, 4.4, 4.5], [Vector3(-3, 0, 8), 4.6, 4.4, 4.5], [Vector3(3, 0, 8), 4.6, 4.4, 4.5], [Vector3(9, 0, 8), 4.6, 4.4, 4.5]], "desc": "Tankwagen, Gepäckschlepper und Catering. Ohne Depot mit Strom dauert jede Abfertigung anderthalbmal so lang."},
+	"tanklager": {"name": "Tanklager", "size": Vector2(44, 32), "h": 14.0, "cost": 2200000, "grid": 2.0,
+		"needs": {"strom": 30}, "garage": ["tank"], "doors": [[Vector3(-7, 0, 16), 5.0, 4.6, 6.0], [Vector3(7, 0, 16), 5.0, 4.6, 6.0]],
+		"desc": "Drei Kerosintanks in einer Auffangwanne, Pumpenhaus, Füllstation und Wagenhalle mit zwei Rolltoren. Die Tankwagen fahren hier los und kommen zum Nachfüllen zurück. Ohne Tanklager wird nicht betankt und es gibt keine Einnahmen aus dem Kerosinverkauf."},
+	"busgarage": {"name": "Busgarage", "size": Vector2(36, 22), "h": 7.5, "cost": 650000, "grid": 2.0,
+		"needs": {"strom": 25}, "garage": ["bus"], "doors": [[Vector3(-11, 0, 11), 5.0, 4.6, 8.0], [Vector3(0, 0, 11), 5.0, 4.6, 8.0], [Vector3(11, 0, 11), 5.0, 4.6, 8.0]],
+		"desc": "Halle für die Vorfeldbusse mit drei Rolltoren und Waschplatz. Die Busse zu den Außenpositionen starten hier; ohne Busgarage dauert das Einsteigen dort länger."},
+	"catering": {"name": "Cateringbetrieb", "size": Vector2(30, 20), "h": 8.0, "cost": 900000, "grid": 2.0,
+		"needs": {"strom": 60, "wasser": 4}, "garage": ["catering"], "doors": [[Vector3(-7, 0, 10), 4.0, 4.2, 5.0], [Vector3(2, 0, 10), 4.0, 4.2, 5.0]],
+		"desc": "Großküche mit Laderampe. Die Hubwagen holen hier das Bordessen und fahren zu Tür R2. Bringt 2 € je abfliegendem Fluggast; ohne Catering gibt es nichts an Bord."},
+	"personalgebaeude": {"name": "Personalgebäude", "size": Vector2(28, 16), "h": 11.5, "cost": 1100000, "grid": 2.0,
+		"needs": {"strom": 40, "wasser": 3}, "staff": 160,
+		"desc": "Umkleiden, Kantine und Büros für 160 Mitarbeiter. Zum Schichtwechsel laufen sie zum Terminal und zurück. Fehlt Personal, dauert jede Abfertigung länger."},
 	"tower": {"name": "Tower", "size": Vector2(12, 12), "h": 39.0, "cost": 900000, "grid": 2.0,
 		"needs": {"strom": 60}, "desc": "Ohne Tower mit Strom finden keine Flüge statt."},
 	"hangar": {"name": "Hangar", "size": Vector2(44, 36), "h": 14.0, "cost": 650000, "grid": 2.0,
 		"needs": {"strom": 120}, "desc": "Wartungshalle für Flugzeuge."},
 	"feuerwache": {"name": "Feuerwache", "size": Vector2(30, 20), "h": 13.0, "cost": 700000, "grid": 2.0,
+		"doors": [[Vector3(-11.5, 0, 4), 5.4, 5.4, 5.6], [Vector3(-4.5, 0, 4), 5.4, 5.4, 5.6], [Vector3(2.5, 0, 4), 5.4, 5.4, 5.6]],
 		"needs": {"strom": 50, "wasser": 6}, "desc": "Flughafenfeuerwehr."},
 	"parkhaus": {"name": "Parkhaus", "size": Vector2(32, 44), "h": 14.5, "cost": 1500000, "grid": 2.0,
 		"needs": {"strom": 80}, "access": {"ein": Vector2(-6, -24), "aus": Vector2(6, -24)}, "spaces": 300,
@@ -150,6 +167,20 @@ const ITEMS := {
 	"zoll": {"name": "Zoll", "size": Vector2(6, 5), "h": 2.6, "cost": 70000, "grid": 1.0, "inside": true, "walk": true,
 		"needs": {"strom": 2},
 		"desc": "Grüner und roter Kanal. Ankommende aus Non-Schengen-Ländern gehen nach dem Gepäckband hindurch."},
+	"tuer": {"name": "Tür", "size": Vector2(2.4, 0.6), "h": 2.4, "cost": 4000, "grid": 0.5, "inside": true, "walk": true, "door": true,
+		"desc": "Auf eine Innenwand setzen: Die Wand bekommt eine Öffnung. Automatiktür und Flügeltür gehen auf, wenn jemand kommt. Durch die Personaltür (mit Kartenleser) kommen nur Mitarbeiter."},
+	"bereich_oeffentlich": {"name": "Öffentlicher Bereich", "short": "Öffentlich", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 3,
+		"grid": 1.0, "inside": true, "rect_tool": true, "zone": "oeffentlich",
+		"desc": "Bodenfläche für alle: Eingang, Check-in, Gepäckband und Ankunft. Rechteck mit zwei Klicks aufziehen."},
+	"bereich_sicherheit": {"name": "Sicherheitsbereich", "short": "Sicherheit", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 6,
+		"grid": 1.0, "inside": true, "rect_tool": true, "zone": "sicherheit",
+		"desc": "Bereich hinter der Kontrolle. Alle Gates müssen darin liegen, und vom Eingang darf man nur durch die Sicherheitskontrolle hineinkommen. Läden und Cafés verdienen hier die Hälfte mehr."},
+	"bereich_personal": {"name": "Personalbereich", "short": "Personal", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 5,
+		"grid": 1.0, "inside": true, "rect_tool": true, "zone": "personal",
+		"desc": "Nur für Mitarbeiter: Gepäcksortierung, Personalräume, Technik. Fluggäste kommen hier nicht hinein, Mitarbeiter nur durch Personaltüren."},
+	"personalraum": {"name": "Personalraum", "size": Vector2(6, 4), "h": 2.6, "cost": 25000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 2, "wasser": 0.5},
+		"desc": "Spinde, Tisch, Kaffeemaschine und Sofa für die Pause. In den Personalbereich stellen. Von hier gehen die Mitarbeiter an ihre Schalter."},
 	"sb_ausgang": {"name": "Ausgang Sicherheitsbereich", "short": "SB-Ausgang", "size": Vector2(4, 1), "h": 2.9, "cost": 30000,
 		"grid": 1.0, "inside": true, "walk": true, "oneway": true, "needs": {"strom": 1},
 		"desc": "Einbahn-Tür in einer Lücke der Trennwand: Ankommende verlassen den Sicherheitsbereich, hinein kommt niemand. Vorderseite (Pfeil) zeigt nach draußen."},
@@ -160,8 +191,8 @@ const ITEMS := {
 		"needs": {"strom": 2, "wasser": 3}, "cap": 250,
 		"desc": "Damen, Herren, barrierefrei. 250 Passagiere pro Stunde. Braucht Wasser in der Halle."},
 	"heizkoerper": {"name": "Heizkörper", "size": Vector2(2, 0.5), "h": 0.9, "cost": 1500, "grid": 0.5,
-		"inside": true, "needs": {"waerme": 30}, "heats": 250,
-		"desc": "Heizt 250 m² Halle. Braucht Wärme von der Heizzentrale über ein Heizrohr."},
+		"inside": true, "needs": {"waerme": 30}, "heats": 400,
+		"desc": "Heizt 400 m² Halle. Braucht Wärme von der Heizzentrale über ein Heizrohr."},
 	"cafe": {"name": "Café", "size": Vector2(8, 6), "h": 2.8, "cost": 80000, "grid": 1.0, "inside": true,
 		"needs": {"strom": 15, "wasser": 1}, "retail": 3, "decor": 4,
 		"desc": "Bringt 3 € je abfliegendem Passagier und hebt die Stimmung."},
@@ -230,8 +261,8 @@ const ITEMS := {
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
 	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "piste"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "tower", "vorfelddepot", "gepaeckumschlag", "foerderband", "hangar", "feuerwache"]],
-	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "rolltreppe", "aufzug", "treppe"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "tower", "betriebsstrasse", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude"]],
+	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "rolltreppe", "aufzug", "treppe", "personalraum"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
 		"ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium", "palme", "baumbeet", "gruenwand",
@@ -310,6 +341,24 @@ static func is_road(kind: String) -> bool:
 
 static func is_inside(id: String) -> bool:
 	return ITEMS.has(id) and bool(ITEMS[id].get("inside", false))
+
+
+## Bodenbereich im Terminal (öffentlich, Sicherheitsbereich, Personal)?
+static func is_zone(id: String) -> bool:
+	return ITEMS.has(id) and ITEMS[id].has("zone")
+
+
+static func is_door(id: String) -> bool:
+	return ITEMS.has(id) and bool(ITEMS[id].get("door", false))
+
+
+## Garage für diese Fahrzeugart (Kind wie in ground_ops): Gebäude-IDs
+static func garages_for(vehicle: String) -> Array:
+	var out := []
+	for id: String in ITEMS:
+		if vehicle in (ITEMS[id].get("garage", []) as Array):
+			out.append(id)
+	return out
 
 
 static func is_wall(kind: String) -> bool:

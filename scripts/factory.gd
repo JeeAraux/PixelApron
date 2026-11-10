@@ -293,34 +293,135 @@ static func runway_numbers(s: PackedVector3Array) -> Array:
 # ---------------------------------------------------------------- Gebäude und Deko
 
 ## Wand im Terminal: hohe Fassung ("Hoch") und niedrige für die Innenansicht ("Tief").
-static func make_wall(kind: String, a: Vector3, b: Vector3) -> Node3D:
+static func make_wall(kind: String, a: Vector3, b: Vector3, cuts: Array = []) -> Node3D:
 	var root := Node3D.new()
 	root.name = kind
 	var d := Vector3(b.x - a.x, 0.0, b.z - a.z)
 	var length := d.length()
 	var mid := (a + b) * 0.5
 	var basis := Basis.looking_at(d.normalized(), Vector3.UP) if length > 0.01 else Basis.IDENTITY
+	var hl := length * 0.5 + 0.1
+	# Türöffnungen: t ab dem Anfang a (lokal z = +L/2) → lokales z
+	var holes := []
+	for c: Array in cuts:
+		holes.append([length * 0.5 - float(c[1]), length * 0.5 - float(c[0])])
+	holes.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) < float(y[0]))
+	var segs := []
+	var z := -hl
+	for hz: Array in holes:
+		if float(hz[0]) > z + 0.02:
+			segs.append([z, float(hz[0])])
+		z = maxf(z, float(hz[1]))
+	if z < hl - 0.02:
+		segs.append([z, hl])
+	var glass := kind == "glaswand"
+	var wall_c := Color(0.9, 0.88, 0.83)
+	var skirt := Color(0.4, 0.38, 0.35)
+	var cap := Color(0.78, 0.77, 0.74)
+	var rail := Color(0.62, 0.47, 0.3)
+	var steel := Color(0.36, 0.39, 0.42)
 	for part: Array in [["Hoch", 3.6], ["Tief", 1.2]]:
 		var holder := Node3D.new()
 		holder.name = String(part[0])
 		holder.transform = Transform3D(basis, Vector3(mid.x, 0.0, mid.z))
 		root.add_child(holder)
 		var h: float = part[1]
-		var hl := length * 0.5 + 0.15
-		if kind == "glaswand":
-			blk(holder, Vector3(-0.15, 0, -hl), Vector3(0.15, 0.3, hl), STEEL)
-			var g := blk(holder, Vector3(-0.06, 0.3, -hl), Vector3(0.06, h - 0.12, hl), WHITE)
-			g.material_override = glass_mat()
-			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			blk(holder, Vector3(-0.12, h - 0.12, -hl), Vector3(0.12, h, hl), STEEL)
-			var z := -hl
-			while z < hl:
-				blk(holder, Vector3(-0.08, 0.3, z), Vector3(0.08, h - 0.12, z + 0.1), STEEL)
-				z += 2.0
-		else:
-			blk(holder, Vector3(-0.15, 0, -hl), Vector3(0.15, h, hl), Color(0.88, 0.86, 0.80))
-			blk(holder, Vector3(-0.16, 0, -hl), Vector3(0.16, 0.12, hl), Color(0.55, 0.53, 0.49))
+		var k := Kit.new()
+		var gk := Kit.new()
+		for sg: Array in segs:
+			var z0: float = sg[0]
+			var z1: float = sg[1]
+			if glass:
+				k.box(Vector3(-0.08, 0, z0), Vector3(0.08, 0.12, z1), steel.darkened(0.2))
+				k.box(Vector3(-0.07, h - 0.08, z0), Vector3(0.07, h, z1), steel)
+				gk.box(Vector3(-0.02, 0.12, z0), Vector3(0.02, h - 0.08, z1), WHITE)
+				for pz: float in [z0 + 0.03, z1 - 0.03]:
+					k.box(Vector3(-0.05, 0.12, pz - 0.03), Vector3(0.05, h - 0.08, pz + 0.03), steel)
+				var mz := z0 + 1.5
+				while mz < z1 - 0.3:
+					k.box(Vector3(-0.045, 0.12, mz - 0.025), Vector3(0.045, h - 0.08, mz + 0.025), steel)
+					mz += 1.5
+				if h > 1.6:
+					# Sicherheitsmarkierung auf Augenhöhe (Pflicht bei Glaswänden)
+					for my: float in [1.0, 1.55]:
+						var dz := z0 + 0.15
+						while dz < z1 - 0.15:
+							k.box(Vector3(-0.025, my, dz), Vector3(0.025, my + 0.06, minf(dz + 0.18, z1 - 0.1)), Color(0.93, 0.93, 0.9))
+							dz += 0.3
+			else:
+				k.box(Vector3(-0.1, 0, z0), Vector3(0.1, h, z1), wall_c)
+				k.box(Vector3(-0.115, 0, z0), Vector3(0.115, 0.1, z1), skirt)
+				k.box(Vector3(-0.11, h - 0.03, z0), Vector3(0.11, h, z1), cap)
+				if h > 2.0:
+					k.box(Vector3(-0.112, 0.95, z0), Vector3(0.112, 1.03, z1), rail)
+					var jz := z0 + 1.25
+					while jz < z1 - 0.3:
+						k.box(Vector3(-0.102, 0.1, jz - 0.005), Vector3(0.102, h - 0.03, jz + 0.005), wall_c.darkened(0.06))
+						jz += 1.25
+		# Sturz über den Türen (nur in voller Höhe)
+		if h > 2.5:
+			for hz: Array in holes:
+				var z0: float = hz[0]
+				var z1: float = hz[1]
+				if glass:
+					k.box(Vector3(-0.07, 2.4, z0), Vector3(0.07, 2.5, z1), steel)
+					gk.box(Vector3(-0.02, 2.5, z0), Vector3(0.02, h - 0.08, z1), WHITE)
+					k.box(Vector3(-0.07, h - 0.08, z0), Vector3(0.07, h, z1), steel)
+				else:
+					k.box(Vector3(-0.1, 2.4, z0), Vector3(0.1, h, z1), wall_c)
+					k.box(Vector3(-0.11, h - 0.03, z0), Vector3(0.11, h, z1), cap)
+		if k.count > 0:
+			holder.add_child(k.instance("Wand"))
+		if gk.count > 0:
+			var gm := gk.instance("Glas")
+			gm.material_override = glass_mat()
+			gm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			holder.add_child(gm)
 	return root
+
+
+## Bodenbereich im Terminal: getönte Fläche mit gestricheltem Rand und Beschriftung.
+static func make_zone(id: String, w: float, d: float) -> Node3D:
+	var n := Node3D.new()
+	n.name = id
+	var zone := String(Catalog.ITEMS[id].get("zone", ""))
+	var col: Color = {"oeffentlich": Color(0.35, 0.65, 0.95), "sicherheit": Color(0.98, 0.55, 0.15), "personal": Color(0.62, 0.42, 0.9)}.get(zone, Color.WHITE)
+	var k := Kit.new()
+	var hw := w * 0.5
+	var hd := d * 0.5
+	var y := 0.125
+	k.quad(Vector3(-hw, y, -hd), Vector3(hw, y, -hd), Vector3(hw, y, hd), Vector3(-hw, y, hd), Color(col.r, col.g, col.b, 0.3), Vector3(0, -1, 0))
+	# gestrichelter Rand
+	var e := 0.22
+	for side: Array in [[Vector3(-hw, 0, -hd), Vector3(hw, 0, -hd)], [Vector3(hw, 0, -hd), Vector3(hw, 0, hd)], [Vector3(hw, 0, hd), Vector3(-hw, 0, hd)], [Vector3(-hw, 0, hd), Vector3(-hw, 0, -hd)]]:
+		var p0: Vector3 = side[0]
+		var p1: Vector3 = side[1]
+		var dir := (p1 - p0).normalized()
+		var inward := Vector3(-dir.z, 0, dir.x)
+		var length := p0.distance_to(p1)
+		var t := 0.0
+		while t < length:
+			var t1 := minf(t + 0.8, length)
+			var a := p0 + dir * t + Vector3(0, y + 0.004, 0)
+			var b := p0 + dir * t1 + Vector3(0, y + 0.004, 0)
+			k.quad(a, b, b + inward * e, a + inward * e, Color(col.r, col.g, col.b, 0.85), Vector3(0, -1, 0))
+			t += 1.3
+	var label: String = {"oeffentlich": "OEFFENTLICH", "sicherheit": "SICHERHEITSBEREICH", "personal": "NUR PERSONAL"}.get(zone, "")
+	var px := minf(0.22, (w * 0.8) / maxf(float(PixelFont.width(label)), 1.0))
+	if px > 0.04 and d > 1.5:
+		PixelFont.draw_ground(k, label, Vector3(0, y + 0.006, 0), Vector3(0, 0, -1), px, Color(col.r, col.g, col.b, 0.7))
+	var mi := k.instance("Flaeche")
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.vertex_color_is_srgb = true
+	m.render_priority = 1
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(mi)
+	return n
 
 
 ## Terminalhalle w × d mit Bauformen (opts): Ebenen 1–3, Keller, Fassade (Glas, Beton, Holz),
@@ -384,6 +485,11 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}) -> Node3D:
 		if facade == "glas":
 			_wall_ring(hk, ring, y0, y1, GLASS, 0.24)
 			_mullions(hk, ring, y0, y1, 2.0, Color(0.34, 0.38, 0.4))
+			# Riegel der Pfosten-Riegel-Fassade
+			var ty := y0 + 1.15
+			while ty < y1 - 0.3:
+				_wall_ring(hk, ring, ty, ty + 0.08, Color(0.36, 0.4, 0.42), 0.27)
+				ty += 1.25
 		else:
 			_wall_ring(hk, ring, y0, y1, wall_col, 0.3)
 			_wall_ring(hk, ring, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), GLASS, 0.34)
@@ -391,9 +497,16 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}) -> Node3D:
 			if facade == "holz":
 				_mullions(hk, ring, y1 - 0.9, y1, 0.5, band)
 		_wall_ring(hk, ring, y1, y1 + 1.4 if f < levels - 1 else top, band, 0.3)
-	high.add_child(hk.instance("Fassade"))
+	# Attika mit Abdeckblech, Schriftzug in feinen Pixeln
+	_wall_ring(hk, ring, top - 0.08, top + 0.02, Color(0.72, 0.73, 0.74), 0.36)
 	if w >= 30.0:
-		_letters(high, "TERMINAL", Vector3(0, top - 1.2, hd + 0.18), 0.27 + 0.05 * float(levels - 1), Color(0.16, 0.25, 0.45))
+		var px := clampf(w / 260.0, 0.12, 0.34) + 0.03 * float(levels - 1)
+		PixelFont.draw(hk, "TERMINAL", Vector3(0, top - 0.75, hd + 0.31), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), px, Color(0.14, 0.24, 0.45))
+		if w >= 120.0:
+			PixelFont.draw(hk, "GATES", Vector3(0, top - 0.75, -hd - 0.31), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), px * 0.8, Color(0.14, 0.24, 0.45))
+	high.add_child(hk.instance("Fassade"))
+	if bool(opts.get("vordach", false)) and radius < 0.1:
+		_canopy(n, hw, hd)
 	# niedrige Brüstung für die Innenansicht
 	var low := Node3D.new()
 	low.name = "Tief"
@@ -453,6 +566,36 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}) -> Node3D:
 	roof.add_child(rk.instance("Dachflaeche"))
 	bake(n)
 	return n
+
+
+## Vordach über der Vorfahrt (Landseite +Z): schlanke Platte mit Stirnblech, Stützen, Downlights,
+## Glaskante und Regenrinne. Bleibt auch in der Innenansicht stehen.
+static func _canopy(n: Node3D, hw: float, hd: float) -> void:
+	var k := Kit.new()
+	var x0 := -hw + 3.0
+	var x1 := hw - 3.0
+	var z0 := hd
+	var z1 := hd + 8.0
+	var y := 4.6
+	k.box(Vector3(x0, y, z0), Vector3(x1, y + 0.35, z1), Color(0.86, 0.87, 0.87))
+	k.box(Vector3(x0 - 0.05, y + 0.05, z1 - 0.05), Vector3(x1 + 0.05, y + 0.55, z1 + 0.05), Color(0.18, 0.28, 0.45))
+	k.box(Vector3(x0, y - 0.02, z0 + 0.3), Vector3(x1, y, z1 - 0.3), Color(0.8, 0.8, 0.79))
+	var cx := x0 + 2.0
+	while cx < x1 - 1.0:
+		k.cyl(Vector3(cx, 0, z1 - 0.8), Vector3(cx, y, z1 - 0.8), 0.16, 0.14, Color(0.7, 0.72, 0.74), 12)
+		k.cyl(Vector3(cx, 0, z1 - 0.8), Vector3(cx, 0.25, z1 - 0.8), 0.24, 0.24, Color(0.4, 0.42, 0.44), 12)
+		cx += 12.0
+	var lx := x0 + 1.0
+	while lx < x1:
+		for lz: float in [z0 + 2.5, z0 + 5.5]:
+			k.cyl(Vector3(lx, y - 0.04, lz), Vector3(lx, y - 0.01, lz), 0.18, 0.18, Color(1.0, 0.93, 0.74, 0.3), 10)
+		lx += 4.0
+	k.box(Vector3(x0, y + 0.35, z1 - 0.5), Vector3(x1, y + 0.75, z1 - 0.35), Color(0.6, 0.78, 0.86, 0.6))
+	for sx: float in [x0, x1]:
+		k.cyl(Vector3(sx, y + 0.3, z1 - 0.3), Vector3(sx, 0.05, z1 - 0.3), 0.06, 0.06, Color(0.5, 0.52, 0.54), 8)
+	var mi := k.instance("Vordach")
+	mi.set_meta("no_bake", true)
+	n.add_child(mi)
 
 
 ## Umriss eines Rechtecks mit gerundeten Ecken (gegen den Uhrzeigersinn), radius 0 = eckig.
@@ -595,6 +738,8 @@ static func _bake_mesh(kit: Kit, mesh: Mesh, xf: Transform3D, col: Color) -> voi
 static func make_item(id: String, opts: Dictionary = {}) -> Node3D:
 	if id == "halle":
 		return make_hall(24.0, 16.0, opts)
+	if Catalog.is_zone(id):
+		return make_zone(id, 4.0, 4.0)
 	var n := _make_item_raw(id, opts)
 	bake(n)
 	return n

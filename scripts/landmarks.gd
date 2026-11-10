@@ -190,6 +190,49 @@ static func _planter(k: Kit, a: Vector3, b: Vector3, out: Vector3, rng: RandomNu
 		s += rng.randf_range(0.5, 0.75)
 
 
+## Rolltor: Führungsschienen, Wickelkasten und Vorhang mit Lamellen und Fensterreihe. Der Vorhang
+## ist ein eigener Knoten "Rolltor<i>" mit Drehpunkt an der Oberkante (ground_ops.gd rollt ihn auf),
+## darüber die Warnleuchte "Warnlicht<i>", die blinkt, solange sich das Tor bewegt.
+## c = Mitte der Torunterkante (Vorhang liegt in der Ebene z = c.z), Außenseite +Z.
+static func roll_door(n: Node3D, k: Kit, idx: int, c: Vector3, w: float, h: float, col: Color, windows: int = 3) -> void:
+	var hw := w * 0.5
+	for sx: float in [-1.0, 1.0]:
+		k.box(c + Vector3(sx * hw - 0.1, 0, -0.12), c + Vector3(sx * hw + 0.1, h, 0.12), STEEL)
+		k.box(c + Vector3(sx * hw - 0.13, 0, 0.12), c + Vector3(sx * hw + 0.13, 0.9, 0.16), YELLOW)
+	k.box(c + Vector3(-hw - 0.2, h, -0.2), c + Vector3(hw + 0.2, h + 0.55, 0.32), Color(0.56, 0.58, 0.6))
+	k.box(c + Vector3(-hw - 0.2, h + 0.5, -0.2), c + Vector3(hw + 0.2, h + 0.55, 0.34), Color(0.46, 0.48, 0.5))
+	var vk := Kit.new()
+	var slat := 0.22
+	var y := -h
+	while y < -0.03:
+		var top := minf(y + slat, 0.0)
+		vk.box(Vector3(-hw + 0.08, y, -0.03), Vector3(hw - 0.08, top - 0.03, 0.03), col)
+		vk.box(Vector3(-hw + 0.08, top - 0.03, -0.022), Vector3(hw - 0.08, top, 0.022), col.darkened(0.3))
+		y += slat
+	if windows > 0:
+		var wy := -h * 0.36
+		var span := (w - 0.6) / float(windows)
+		for i in range(windows):
+			var x0 := -hw + 0.3 + float(i) * span
+			vk.box(Vector3(x0 + 0.06, wy - 0.32, 0.028), Vector3(x0 + span - 0.06, wy + 0.32, 0.04), WIN)
+	vk.box(Vector3(-hw + 0.08, -h, -0.05), Vector3(hw - 0.08, -h + 0.1, 0.05), DARK)
+	vk.box(Vector3(-0.25, -h + 0.75, 0.03), Vector3(0.25, -h + 0.82, 0.07), STEEL)
+	var holder := Node3D.new()
+	holder.name = "Rolltor%d" % idx
+	holder.position = c + Vector3(0, h, 0)
+	holder.set_meta("no_bake", true)
+	n.add_child(holder)
+	holder.add_child(vk.instance("Vorhang"))
+	var lk := Kit.new()
+	lk.sphere(Vector3.ZERO, 0.13, Color(1.0, 0.6, 0.1, 0.3), 8, 4)
+	var lamp := lk.instance("Warnlicht%d" % idx)
+	lamp.position = c + Vector3(hw - 0.35, h + 0.72, 0.28)
+	lamp.visible = false
+	lamp.set_meta("no_bake", true)
+	n.add_child(lamp)
+	k.cyl(c + Vector3(hw - 0.35, h + 0.55, 0.28), c + Vector3(hw - 0.35, h + 0.62, 0.28), 0.1, 0.1, DARK, 8)
+
+
 # ================================================================== Hangar
 
 const H_X := 22.0
@@ -754,7 +797,6 @@ static func _fire_station(n: Node3D, k: Kit) -> void:
 	# Tore
 	for b: Array in bays:
 		var cx: float = b[0]
-		var open: bool = b[1]
 		k.box(Vector3(cx - 3.0, 5.4, 4.0), Vector3(cx + 3.0, 5.75, 4.14), CONCRETE.lightened(0.08))
 		k.box(Vector3(cx - 2.78, 0, 3.72), Vector3(cx - 2.66, 5.4, 4.06), FRAME)
 		k.box(Vector3(cx + 2.66, 0, 3.72), Vector3(cx + 2.78, 5.4, 4.06), FRAME)
@@ -763,18 +805,15 @@ static func _fire_station(n: Node3D, k: Kit) -> void:
 			k.cyl(bp, bp + Vector3(0, 1.0, 0), 0.13, 0.13, YELLOW, 10)
 			for j in range(2):
 				k.cyl(bp + Vector3(0, 0.25 + float(j) * 0.4, 0), bp + Vector3(0, 0.45 + float(j) * 0.4, 0), 0.135, 0.135, DARK, 10)
-		if open:
-			k.box(Vector3(cx - 2.7, 5.12, -0.6), Vector3(cx + 2.7, 5.26, 3.7), FIRE_RED.darkened(0.15))
-			for sx: float in [-1.0, 1.0]:
-				k.box(Vector3(cx + sx * 2.72 - 0.05, 4.9, -0.8), Vector3(cx + sx * 2.72 + 0.05, 5.3, 3.7), FRAME)
-		else:
-			k.box(Vector3(cx - 2.7, 0, 3.78), Vector3(cx + 2.7, 5.4, 3.88), FIRE_RED)
-			for s in range(1, 5):
-				k.box(Vector3(cx - 2.7, float(s) * 1.08 - 0.02, 3.88), Vector3(cx + 2.7, float(s) * 1.08 + 0.02, 3.91), FIRE_RED.darkened(0.3))
-			for i in range(4):
-				var wx := cx - 2.2 + float(i) * 1.15
-				k.box(Vector3(wx, 3.45, 3.88), Vector3(wx + 0.95, 4.1, 3.92), WIN)
-			k.box(Vector3(cx - 0.3, 0.9, 3.88), Vector3(cx + 0.3, 0.98, 3.95), STEEL)
+		# Rolltor (geht auf, bevor ein Fahrzeug ausrückt) und Löschfahrzeug dahinter
+		roll_door(n, k, bays.find(b), Vector3(cx, 0, 3.86), 5.4, 5.3, FIRE_RED, 4)
+		var lf := MeshInstance3D.new()
+		lf.name = "LF%d" % bays.find(b)
+		lf.mesh = fire_truck_mesh()
+		lf.position = Vector3(cx, 0.08, -1.6)
+		lf.rotation.y = PI
+		lf.set_meta("no_bake", true)
+		n.add_child(lf)
 		# Innen: Spinde mit Schutzkleidung und Helmen, Abgasschlauch, Leuchten
 		k.box(Vector3(cx - 2.5, 0.08, -9.7), Vector3(cx + 2.5, 2.3, -9.25), STEEL)
 		for i in range(8):
@@ -896,10 +935,7 @@ static func _fire_station(n: Node3D, k: Kit) -> void:
 	k.cyl(hy, hy + Vector3(0, 0.8, 0), 0.14, 0.14, FIRE_RED, 10)
 	k.sphere(hy + Vector3(0, 0.8, 0), 0.14, FIRE_RED, 10, 5)
 	k.cyl(hy + Vector3(-0.25, 0.5, 0), hy + Vector3(0.25, 0.5, 0), 0.06, 0.06, Color(0.85, 0.85, 0.82), 8)
-	# Löschfahrzeuge (in den Bauteil-Mesh gerechnet)
-	var truck := fire_truck_mesh()
-	k.add_mesh(truck, Transform3D(Basis(Vector3.UP, PI), Vector3(-11.5, 0.08, -1.6)), true)
-	k.add_mesh(truck, Transform3D(Basis(Vector3.UP, PI), Vector3(2.5, 0.06, 4.1)), true)
+	# Kommandowagen auf dem Hof
 	k.add_mesh(Models.car_mesh("suv", FIRE_RED), Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(9.0, 0.06, 7.8)), true)
 	k.box(Vector3(8.45, 1.72, 7.5), Vector3(9.55, 1.82, 8.1), DARK)
 	k.box(Vector3(8.4, 1.74, 7.55), Vector3(8.7, 1.86, 8.05), BLUE_LAMP)

@@ -107,7 +107,8 @@ func _ready() -> void:
 	if FileAccess.file_exists(RESUME_FLAG):
 		DirAccess.remove_absolute(RESUME_FLAG)
 		flights.clear()
-		game.load_game()
+		if game.load_game():
+			_after_load()
 	builder.set_tool("")
 	var args := OS.get_cmdline_user_args()
 	for a in args:
@@ -271,7 +272,22 @@ func _new_map() -> void:
 
 func _load() -> void:
 	flights.clear()
-	game.load_game()
+	if game.load_game():
+		_after_load()
+
+
+## Wert eines Kommandozeilen-Arguments (--name=wert) oder der Vorgabewert.
+func _arg(args: PackedStringArray, prefix: String, fallback: String) -> String:
+	for a in args:
+		if a.begins_with(prefix):
+			return a.substr(prefix.length())
+	return fallback
+
+
+## Ältere Spielstände: Bereiche im Terminal aus Wänden und Kontrolle ableiten.
+func _after_load() -> void:
+	for h: Dictionary in game.items_of("halle"):
+		terminal.auto_zones(h)
 
 
 func _set_speed(i: int) -> void:
@@ -714,6 +730,49 @@ func _demo(args: PackedStringArray) -> void:
 		cam_rig.zoom_goal = 90.0
 		cam_rig.zoom = 90.0
 		hud.set_build_open(false)
+	elif mode == "blick":
+		# freier Blick: Flugbetrieb vorspulen, Kamera nach --at, --zoom, --yaw, optional --innen
+		for i in range(int(_arg(args, "--schritte=", "1500"))):
+			flights.step(0.05)
+		var xz := _arg(args, "--at=", "-15,-15").split(",")
+		cam_rig.target = Vector3(float(xz[0]), 0, float(xz[1]))
+		cam_rig.zoom_goal = float(_arg(args, "--zoom=", "300"))
+		cam_rig.zoom = cam_rig.zoom_goal
+		var yb := _arg(args, "--yaw=", "")
+		if yb != "":
+			cam_rig.yaw = float(yb)
+			cam_rig.yaw_goal = cam_rig.yaw
+		if "--innen" in args:
+			game.set_interior_view(true)
+	elif mode == "tor" or mode == "feuer":
+		# Rolltor geht auf: Gerätehalle (Fahrzeug fährt zum Stand) oder Feuerwache (Löschfahrzeug rückt aus)
+		var want := float(_arg(args, "--f=", "0.6"))
+		var focus: Vector3 = Vector3(-160, 0, -20)
+		ops.fire_t = 9999.0
+		if mode == "feuer":
+			ops._fire_mission("kontrolle", null, 0.0)
+		for i in range(20000):
+			flights.step(0.05)
+			var hit := false
+			for key: String in ops.door_open:
+				var o := float(ops.door_open[key])
+				if o >= want and o < want + 0.08 and ops.door_rec.has(key):
+					var e: Array = ops.door_rec[key]
+					if (mode == "feuer") != (String((e[0] as Dictionary)["id"]) == "feuerwache"):
+						continue
+					focus = (e[0] as Dictionary)["pos"]
+					hit = true
+			if hit and i > 40:
+				break
+		for i in range(int(_arg(args, "--nach=", "0"))):
+			flights.step(0.05)
+		cam_rig.target = focus + Vector3(0, 0, 6)
+		cam_rig.zoom_goal = float(_arg(args, "--zoom=", "42"))
+		cam_rig.zoom = cam_rig.zoom_goal
+		var yw := _arg(args, "--yaw=", "")
+		if yw != "":
+			cam_rig.yaw = float(yw)
+			cam_rig.yaw_goal = cam_rig.yaw
 	elif mode == "dienste":
 		# Abfertigung am Stand: Fahrzeuge bei einem bestimmten Anteil der Abfertigungszeit
 		var want_f := 0.28

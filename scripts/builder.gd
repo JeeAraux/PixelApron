@@ -125,6 +125,8 @@ func is_drawing() -> bool:
 
 
 func set_tool(id: String) -> void:
+	if Catalog.is_door(tool) and not Catalog.is_door(id):
+		rot = 0   # Türen drehen sich selbst nach der Wand
 	points.clear()
 	_clear_highlight()
 	if ghost != null:
@@ -177,6 +179,16 @@ func on_click(p: Vector3) -> void:
 	if is_rect_tool():
 		if points.is_empty():
 			points.append(hover)
+			_refresh()
+			return
+		if Catalog.is_zone(tool):
+			var zr := GameState.zone_rect(points[0], hover)
+			var zwhy := game.can_place_zone(tool, zr)
+			if zwhy == "":
+				game.build_zone(tool, zr)
+				points.clear()
+			else:
+				game.toast.emit(zwhy)
 			_refresh()
 			return
 		var r := GameState.hall_rect(points[0], hover)
@@ -417,6 +429,10 @@ func _snap(p: Vector3) -> Vector3:
 		return Vector3(snappedf(p.x, g), 0.0, snappedf(p.z, g))
 	if is_line_tool():
 		return _snap_line(p)
+	if is_item_tool() and Catalog.is_door(tool):
+		var dp := _snap_door(p)
+		if dp != Vector3.INF:
+			return dp
 	if is_item_tool():
 		var g: float = Catalog.ITEMS[tool]["grid"]
 		var s: Vector2 = Catalog.ITEMS[tool]["size"]
@@ -426,6 +442,36 @@ func _snap(p: Vector3) -> Vector3:
 		var oz := fmod(s.y * 0.5, g)
 		return Vector3(snappedf(p.x - ox, g) + ox, 0.0, snappedf(p.z - oz, g) + oz)
 	return Vector3(p.x, 0.0, p.z)
+
+
+## Tür: auf die nächste Innenwand der gezeigten Ebene (bis 3 m), quer dazu gedreht, im 0,5-m-Raster.
+func _snap_door(p: Vector3) -> Vector3:
+	var hall := game.hall_at(p)
+	if hall.is_empty():
+		return Vector3.INF
+	var best := Vector3.INF
+	var bd := 3.0
+	for l: Dictionary in game.walls_of(hall):
+		if GameState.floor_of(l) != game.view_floor:
+			continue
+		var smp: PackedVector3Array = l["samples"]
+		var a := Vector3(smp[0].x, 0, smp[0].z)
+		var b := Vector3(smp[smp.size() - 1].x, 0, smp[smp.size() - 1].z)
+		var d := b - a
+		var length := d.length()
+		if length < 3.0:
+			continue
+		var dn := d / length
+		if absf(dn.x) < 0.98 and absf(dn.z) < 0.98:
+			continue
+		var t := clampf(snappedf((p - a).dot(dn), 0.5), 1.3, length - 1.3)
+		var q := a + dn * t
+		var dist := Vector2(q.x - p.x, q.z - p.z).length()
+		if dist < bd:
+			bd = dist
+			best = q
+			rot = 0 if absf(dn.x) > 0.5 else 1
+	return best
 
 
 ## Wege rasten an Wegenden ein, dann irgendwo auf passenden Wegen, sonst an 15-Grad-Schritten
@@ -736,6 +782,9 @@ func _tint(n: Node, m: Material) -> void:
 
 func _refresh_rect() -> void:
 	var def: Dictionary = Catalog.ITEMS[tool]
+	if Catalog.is_zone(tool):
+		_refresh_zone(def)
+		return
 	var title := String(def["name"]) + " bauen"
 	var per := "%s pro m²" % GameState.fmt_money(int(def["cost_m2"]))
 	if has_hover:
@@ -756,6 +805,28 @@ func _refresh_rect() -> void:
 		GameState.fmt_money(int(r.get_area())).trim_suffix(" €"), GameState.fmt_money(game.hall_cost(r))]
 	body += "\nBraucht Strom (Licht und Lüftung %d kW) plus die Einrichtung" % roundi(r.get_area() * Catalog.HALL_POWER_M2)
 	body += "\n" + (why if why != "" else "Klicke die gegenüberliegende Ecke")
+	info.emit(title, body, 1 if why == "" else 2)
+
+
+func _refresh_zone(def: Dictionary) -> void:
+	var title := String(def["name"]) + " anlegen"
+	if has_hover:
+		_marker(hover + Vector3(0, float(game.view_floor) * Catalog.FLOOR_H, 0), 1.0)
+	for p: Vector3 in points:
+		_marker(p + Vector3(0, float(game.view_floor) * Catalog.FLOOR_H, 0), 1.4)
+	var per := "%s pro m²" % GameState.fmt_money(int(def.get("cost_m2", 0)))
+	if points.is_empty() or not has_hover:
+		info.emit(title, String(def.get("desc", "")) + "\nKlicke die erste Ecke (" + game.floor_name(game.view_floor) + ").\n" + per, 0)
+		return
+	var r := GameState.zone_rect(points[0], hover)
+	var why := game.can_place_zone(tool, r)
+	var bm := BoxMesh.new()
+	bm.size = Vector3(r.size.x, 0.25, r.size.y)
+	preview.mesh = bm
+	preview.position = Vector3(r.get_center().x, float(game.view_floor) * Catalog.FLOOR_H + 0.2, r.get_center().y)
+	preview.material_override = mat_ok if why == "" else mat_bad
+	var body := "%d × %d m · %s" % [int(r.size.x), int(r.size.y), GameState.fmt_money(game.zone_cost(tool, r))]
+	body += "\n" + (why if why != "" else "Klicke die gegenüberliegende Ecke. Spätere Bereiche liegen über früheren.")
 	info.emit(title, body, 1 if why == "" else 2)
 
 

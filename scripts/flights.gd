@@ -254,6 +254,14 @@ func _try_spawn() -> void:
 	runway_owner = counter
 	planes.append(p)
 	reason = ""
+	if ops != null:
+		var sfwd := (stand["node"] as Node3D).global_transform.basis.z
+		sfwd.y = 0.0
+		ops.prestage(p, _park_pos(p), sfwd.normalized())
+		# selten: Notfall an Bord, die Feuerwehr fährt in Bereitschaft an die Piste
+		if randf() < 0.05 and ops.fire_alarm(p):
+			p["notfall"] = true
+			game.toast.emit("%s meldet ein technisches Problem: Feuerwehr in Bereitschaft" % p["code"])
 
 
 ## Ziel passend zur Reichweite des Flugzeugs: [Name, Schengen?]
@@ -462,6 +470,8 @@ func _update(p: Dictionary, sim: float) -> void:
 			p["pos"] = (p["pos"] as Vector3) + dir * v * sim
 			p["pitch"] = move_toward(float(p["pitch"]), 0.0, deg_to_rad(2.0) * sim)
 			if v <= V_EXIT + 0.01 and float(p["pitch"]) < 0.01:
+				if ops != null and bool(p.get("notfall", false)):
+					ops.fire_clear(p)
 				p["state"] = "rollt_ein"
 				p["path"] = []
 				p.erase("route")
@@ -913,6 +923,15 @@ func _drive(p: Dictionary, sim: float) -> String:
 			var nj: int = nodes[j]
 			if node_s[j] > limit + 6.0 and int(reserved.get(nj, -1)) == id:
 				reserved.erase(nj)
+	# Letzte Sicherung: steht oder kommt direkt voraus ein Flugzeug entgegen, rechtzeitig anhalten
+	if not ghost:
+		var gd := _guard_ahead(p)
+		if float(gd[0]) >= 0.0:
+			var stop_s := rs + maxf(float(gd[0]) - 52.0, 0.0)
+			if stop_s < limit:
+				limit = stop_s
+				why = "belegt"
+				p["blocked_by"] = int(gd[1])
 	# Tempo: Bremskurve der Linie und Halt vor dem Hindernis
 	var ri: int = p["ri"]
 	var want := cap[ri]
@@ -987,6 +1006,35 @@ func _drive(p: Dictionary, sim: float) -> String:
 		p["speed"] = 0.0
 		return "ziel"
 	return "fahrt"
+
+
+## Flugzeug direkt voraus (Mitte bis 95 m, seitlich bis 12 m), das entgegenkommt oder steht:
+## [Abstand der Mitten, id] oder [-1, -1]. Gleichgerichteten Verkehr regeln die Reservierungen.
+func _guard_ahead(p: Dictionary) -> Array:
+	var pos: Vector3 = p["pos"]
+	var h: Vector3 = p["heading"]
+	h.y = 0.0
+	if h.length_squared() < 0.01:
+		return [-1.0, -1]
+	h = h.normalized()
+	var side := h.cross(Vector3.UP)
+	var best := -1.0
+	var who := -1
+	for q: Dictionary in planes:
+		if is_same(q, p) or not (q["state"] in ["rollt_ein", "rollt_aus", "wartet", "pushback"]) or float(q["ghost"]) > 0.0:
+			continue
+		var d: Vector3 = (q["pos"] as Vector3) - pos
+		d.y = 0.0
+		var ahead := d.dot(h)
+		if ahead < 8.0 or ahead > 95.0 or absf(d.dot(side)) > 12.0:
+			continue
+		var qh: Vector3 = q["heading"]
+		if qh.dot(h) > -0.3 and float(q["speed"]) > 1.0:
+			continue
+		if best < 0.0 or ahead < best:
+			best = ahead
+			who = int(q["id"])
+	return [best, who]
 
 
 ## Verbleibende Routen aller rollenden Flugzeuge als Knotenmengen (einmal pro Schritt).
@@ -1309,9 +1357,12 @@ func _park(p: Dictionary) -> void:
 	if terminal != null:
 		gate = terminal.assign_gate(p)
 		slow *= float(terminal.slowdown())
+		slow *= float(terminal.staff_slowdown())
 		if gate.is_empty():
 			slow *= 1.25
 			gate_short = 60.0
+	if ops != null and bool(p.get("bus", false)) and not ops.has_garage("bus"):
+		slow *= 1.15
 	p["gate"] = gate
 	# Gepäckförderband vom Terminal zum Gepäckumschlag: Koffer sind schneller am Flugzeug
 	var hall: Dictionary = gate.get("hall", {}) if not gate.is_empty() else {}
@@ -1328,6 +1379,12 @@ func _park(p: Dictionary) -> void:
 		var door: Array = terminal.gate_door(gate)
 		ops.remote_arrive(p, terminal.bus_stop(gate), door[1], true)
 	game.earn(int(plane["fee"]) + int(plane["pax"]) * Catalog.TICKET_FEE, "Landung %s aus %s" % [p["code"], p["city"]])
+	# Kerosin und Bordessen verkauft der Flughafen selbst, wenn er Tanklager und Catering hat
+	if ops != null:
+		if ops.has_garage("tank"):
+			game.earn_quiet(int(plane["pax"]) * 4)
+		if ops.has_garage("catering"):
+			game.earn_quiet(int(plane["pax"]) * 2)
 
 
 # ---------------------------------------------------------------- Bodenfahrzeuge
@@ -1508,8 +1565,25 @@ func _satisfaction(sim: float) -> void:
 	hint = ""
 	if not depot_ok():
 		target -= 6.0
-		factors.append(["Kein Vorfelddepot mit Strom: Abfertigung dauert länger", -6])
-		hint = "Ohne Vorfelddepot dauert jede Abfertigung länger"
+		factors.append(["Keine Gerätehalle mit Strom: Abfertigung dauert länger", -6])
+		hint = "Ohne Gerätehalle dauert jede Abfertigung länger"
+	if ops != null:
+		if not ops.has_garage("tank"):
+			target -= 3.0
+			factors.append(["Kein Tanklager: Flugzeuge werden nicht betankt", -3])
+			if hint == "":
+				hint = "Tanklager bauen: Tankwagen betanken die Flugzeuge, der Kerosinverkauf bringt Geld"
+		if not ops.has_garage("catering"):
+			target -= 2.0
+			factors.append(["Kein Cateringbetrieb: nichts zu essen an Bord", -2])
+		if not ops.has_fire_station():
+			target -= 5.0
+			factors.append(["Keine Feuerwache mit Strom", -5])
+		if not ops.unconnected.is_empty():
+			target -= 2.0
+			factors.append(["%d Garage(n) ohne Betriebsstraße zum Vorfeld" % ops.unconnected.size(), -2])
+			if hint == "":
+				hint = "%s mit einer Betriebsstraße ans Vorfeld anschließen" % Catalog.label(String((ops.unconnected[0] as Dictionary)["id"]))
 	var parking := false
 	var any_parking := false
 	for ph: Dictionary in game.items_of("parkhaus"):

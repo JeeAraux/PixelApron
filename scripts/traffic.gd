@@ -523,6 +523,7 @@ func step(dt: float) -> void:
 	for m: Dictionary in movers.duplicate():
 		_drive(m, dt)
 	_animate_barriers(dt)
+	_staff_shift(dt)
 	_step_peds(dt)
 
 
@@ -1101,10 +1102,15 @@ func _ped_to_entrance(from: Vector3, action: String, delay: float = 0.0) -> void
 		pd["delay"] = delay
 
 
-func _ped(pts: PackedVector3Array, action: String) -> Dictionary:
+func _ped(pts: PackedVector3Array, action: String, staff: bool = false) -> Dictionary:
 	if peds.size() >= PED_MAX:
 		return {}
-	var node := Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
+	var node: Node3D
+	if staff:
+		var vest := randf() < 0.45
+		node = Factory.make_staff(Color(0.2, 0.3, 0.52) if not vest else Color(0.28, 0.3, 0.33), Color(0.12, 0.13, 0.18), randi() % 4, vest)
+	else:
+		node = Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
 	add_child(node)
 	node.position = pts[0]
 	# jeder geht etwas versetzt (weicht den anderen aus) und in eigenem Tempo
@@ -1181,3 +1187,41 @@ func _step_peds(dt: float) -> void:
 			else:
 				node.queue_free()
 				peds.erase(pd)
+
+
+# ---------------------------------------------------------------- Schichtwechsel
+
+var _shift_t := 0.0
+
+
+## Zum Schichtwechsel (5:30, 13:30, 21:30) laufen Mitarbeiter vom Personalgebäude zum Terminal
+## und die abgelösten zurück.
+func _staff_shift(dt: float) -> void:
+	_shift_t -= dt
+	if _shift_t > 0.0:
+		return
+	_shift_t = randf_range(1.5, 4.0)
+	var m := fmod(game.minutes, 1440.0)
+	var on := false
+	for t: float in [330.0, 810.0, 1290.0]:
+		if m >= t - 20.0 and m < t + 20.0:
+			on = true
+	if not on or entrances.is_empty():
+		return
+	var blds: Array = game.items_of("personalgebaeude")
+	if blds.is_empty():
+		return
+	var bld: Dictionary = blds[randi() % blds.size()]
+	var b := Basis(Vector3.UP, float(bld["rot"]) * PI * 0.5)
+	var door: Vector3 = (bld["pos"] as Vector3) + b * Vector3(randf_range(-1.0, 1.0), 0, 6.4)
+	var front: Vector3 = (bld["pos"] as Vector3) + b * Vector3(randf_range(-2.0, 2.0), 0, 10.0)
+	var e: Array = entrances[0]
+	for en: Array in entrances:
+		if (en[0] as Vector3).distance_to(front) < (e[0] as Vector3).distance_to(front):
+			e = en
+	var goal: Vector3 = (e[0] as Vector3) + Vector3(randf_range(-1.5, 1.5), 0, 0)
+	var inside: Vector3 = goal - (e[1] as Vector3) * 3.5
+	if randf() < 0.5:
+		_ped(PackedVector3Array([door, front, front.lerp(goal, 0.5), goal, inside]), "rein", true)
+	else:
+		_ped(PackedVector3Array([inside, goal, goal.lerp(front, 0.5), front, door]), "weg", true)

@@ -10,11 +10,11 @@ const MAX_ZOOM := 5200.0   # reicht für das ganze Spielfeld
 const BOUND := 3000.0
 
 var cam: Camera3D
-var target := Vector3(20, 0, -10)
+var target := Vector3(-15, 0, -15)
 var yaw := 45.0
 var yaw_goal := 45.0
-var zoom := 190.0
-var zoom_goal := 190.0
+var zoom := 300.0
+var zoom_goal := 300.0
 var dragging := false
 var pan_speed := 1.0       # Einstellung Kamera-Tempo
 var invert_zoom := false   # Einstellung Mausrad umkehren

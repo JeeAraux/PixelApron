@@ -29,10 +29,33 @@ func run(main: Node) -> void:
 	var hangar0: Dictionary = game.items_of("hangar")[0]
 	var tb = main.terminal
 	check(game.supplied(term, "strom") and game.supplied(term, "wasser") and game.supplied(term, "waerme"), "Terminalhalle hat Strom, Wasser und Wärme")
-	check(game.inside_of(term).size() > 20 and game.walls_of(term).size() == 3, "Terminal eingerichtet (%d Teile, %d Wände)" % [game.inside_of(term).size(), game.walls_of(term).size()])
+	check(game.inside_of(term).size() > 20 and game.walls_of(term).size() == 5, "Terminal eingerichtet (%d Teile, %d Wände)" % [game.inside_of(term).size(), game.walls_of(term).size()])
 	check(tb.check() == "", "Terminal betriebsbereit " + tb.check())
 	check(String(hangar0["supply"].get("strom", "")) == "fehlt", "Hangar ohne Kabel hat keinen Strom")
 	check(main.flights.check_operation() == "", "Flugbetrieb startklar")
+	# 0.9: Bereiche, Türen, Personal, Garagen und Betriebsstraße im Startflughafen
+	check(game.zones_of(term).size() == 3, "Bereiche angelegt (öffentlich, Sicherheit, Personal)")
+	check(game.zone_at(term, Vector2(-67, -20), 0) == "sicherheit" and game.zone_at(term, Vector2(-34, 2.5), 0) == "oeffentlich"
+		and game.zone_at(term, Vector2(96, -20), 0) == "personal", "Gates im Sicherheitsbereich, Check-in öffentlich, Gepäck im Personalbereich")
+	var doors: Array = game.items_of("tuer")
+	check(doors.size() == 2, "Zwei Personaltüren gesetzt")
+	var cut_walls := 0
+	for l: Dictionary in game.walls_of(term):
+		cut_walls += game.wall_cuts(l).size()
+	check(cut_walls == 2, "Die Türen öffnen ihre Wände (%d Öffnungen)" % cut_walls)
+	var tgrids: Dictionary = tb.grids[(term["node"] as Node).get_instance_id()]
+	var dcell := Vector2i(88, -8)
+	check((tgrids[0]["dep"] as AStarGrid2D).is_point_solid(dcell) and not (tgrids[0]["staff"] as AStarGrid2D).is_point_solid(dcell),
+		"Personaltür: Fluggäste kommen nicht durch, Mitarbeiter schon")
+	check((tgrids[0]["dep"] as AStarGrid2D).is_point_solid(Vector2i(100, -15)), "Personalbereich ist für Fluggäste gesperrt")
+	check(tb.staff_available() >= tb.staff_needed() and is_equal_approx(tb.staff_slowdown(), 1.0),
+		"Genug Personal (%d von %d)" % [tb.staff_available(), tb.staff_needed()])
+	main.ops._rebuild_net()
+	check(main.ops.unconnected.is_empty() and main.ops.net.pos.size() > 50, "Garagen über die Betriebsstraße ans Vorfeld angeschlossen")
+	for vk: String in ["gpu", "tank", "catering", "bus"]:
+		var gg: Array = main.ops._garage(vk, Vector3(-40, 0, -40))
+		check(not gg.is_empty() and main.ops.net.route(gg[2], Vector3(-17, 0, -38)).size() > 3, "Fahrweg von der Garage zum Stand: " + vk)
+	check(main.ops.has_garage("tank") and main.ops.has_garage("catering") and main.ops.has_fire_station(), "Tanklager, Catering und Feuerwache versorgt")
 	var fl = main.flights
 	var m0: int = game.money
 	var seen_states := {}
@@ -53,9 +76,20 @@ func run(main: Node) -> void:
 	var stand_rects := []
 	for st: Dictionary in game.stands():
 		stand_rects.append([st, (st["rect"] as Rect2).grow(-3.0)])
+	var door_seen := false
+	var home_seen := false
+	var staff_seen := false
+	var leaf_open := false
 	for i in range(12000):
 		fl.step(0.1)
 		outdoor_pax = maxi(outdoor_pax, main.ops.walkers.size())
+		for dk: String in main.ops.door_open:
+			door_seen = door_seen or float(main.ops.door_open[dk]) > 0.9
+		home_seen = home_seen or not main.ops.returning.is_empty()
+		for per: Dictionary in tb.people:
+			staff_seen = staff_seen or bool(per.get("staff", false))
+		for d: Array in tb.doors:
+			leaf_open = leaf_open or float(d[1]) > 0.9
 		for j: Dictionary in main.ops.jobs.values():
 			tug_seen = tug_seen or j.has("tug")
 			stairs_seen = stairs_seen or j.has("stairs")
@@ -98,6 +132,9 @@ func run(main: Node) -> void:
 	print("      Zustände: ", seen_states.keys(), "  abgeflogen: ", fl.done, "  kleinster Abstand am Boden: ", min_gap)
 	var m1: int = game.money
 	check(min_gap > 20.0, "Rollende Flugzeuge halten Abstand (Reservierung)")
+	check(door_seen, "Rolltore gehen auf, wenn ein Fahrzeug aus der Garage fährt")
+	check(home_seen, "Fahrzeuge fahren nach der Abfertigung zurück in die Garage")
+	check(staff_seen and leaf_open, "Mitarbeiter gehen durchs Terminal, Personaltüren öffnen sich")
 	check(crossed == "", "Kein Flugzeug rollt über fremde Stände " + crossed)
 	check(push_seen and tug_seen, "Pushback mit Schlepper")
 	check(hold_min < INF and hold_min > 85.0, "Abflüge warten am Rollhalteort (%.0f m vor der Pistenmitte)" % hold_min)
@@ -116,15 +153,20 @@ func run(main: Node) -> void:
 	check(main.traffic.compute_target() > base_target, "Mehr Flüge bringen mehr Autos (%d → %d)" % [base_target, main.traffic.compute_target()])
 	game.traffic_demand = demand_before
 	# Abfertigung mit und ohne Vorfelddepot
-	check(not fl.depot_ok(), "Ohne Depot langsamere Abfertigung")
-	var dep: Dictionary = game.build_item("vorfelddepot", Vector3(-150, 0, 10), 0)
+	var old_dep: Dictionary = game.items_of("vorfelddepot")[0]
+	var dep_pos: Vector3 = old_dep["pos"]
+	var dep_rot: int = old_dep["rot"]
+	game.remove(old_dep, 1.0)
+	check(not fl.depot_ok(), "Ohne Gerätehalle langsamere Abfertigung")
+	var dep: Dictionary = game.build_item("vorfelddepot", dep_pos, dep_rot)
 	var dep_ok := not dep.is_empty()
-	var dep_cable: Dictionary = game.build_line("stromkabel", [Vector3(-23, 0, 52), Vector3(-150, 0, 18)])
-	check(dep_ok and fl.depot_ok(), "Vorfelddepot gebaut und versorgt")
+	check(dep_ok and fl.depot_ok(), "Gerätehalle gebaut und über das Kabel versorgt")
 	var test_plane := {"id": 999, "kind": "a320", "stand": game.stands()[0], "code": "TEST 1", "city": "Test", "gse": [], "pos": Vector3.ZERO}
 	var slow_t: float = tb.slowdown()
 	fl._park(test_plane)
-	var expect: float = float(Catalog.PLANES["a320"]["turn"]) * slow_t * (1.0 if not (test_plane["gate"] as Dictionary).is_empty() else 1.25)
+	var expect: float = float(Catalog.PLANES["a320"]["turn"]) * slow_t * tb.staff_slowdown() * (1.0 if not (test_plane["gate"] as Dictionary).is_empty() else 1.25)
+	if bool(test_plane.get("bus", false)) and not main.ops.has_garage("bus"):
+		expect *= 1.15
 	if not (test_plane["gate"] as Dictionary).is_empty() and not game.baggage_link(test_plane["gate"]["hall"]).is_empty():
 		expect *= 0.9   # Gepäckförderband zum Umschlag
 	check(is_equal_approx(float(test_plane["turn"]), expect), "Mit Depot normale Abfertigungszeit (%.0f Min)" % float(test_plane["turn"]))
@@ -135,8 +177,6 @@ func run(main: Node) -> void:
 	for per: Dictionary in tb.people.duplicate():
 		if int(per["flight"]) == 999:
 			tb._drop(per)
-	game.remove(dep, 1.0)
-	game.remove(dep_cable, 1.0)
 	# Unterhalt um Mitternacht
 	var before_mid: int = game.money
 	var upkeep: int = game.upkeep_per_day()
@@ -146,13 +186,13 @@ func run(main: Node) -> void:
 	check(upkeep > 0 and game.money == before_mid - upkeep, "Unterhalt um Mitternacht abgezogen (%s)" % game.fmt_money(upkeep))
 	# Info-Werkzeug
 	check(game.describe(game.pick(Vector3(20, 0, 5))) == "Terminalhalle" and game.details(term).contains("Unterhalt"), "Info zeigt Gebäudedetails")
-	check(game.describe(game.pick(Vector3(-15, 0, 0.5))) == "Check-in", "Info zeigt Einrichtung")
+	check(game.describe(game.pick(Vector3(-34, 0, 2.5))) == "Check-in", "Info zeigt Einrichtung")
 	check(seen_states.has("abfertigung"), "Flugzeug ist am Stand angekommen")
 	check(fl.done >= 2, "Flugzeuge sind wieder gestartet (%d)" % fl.done)
 	check(m1 > m0, "Einnahmen aus Flügen (%d €)" % (m1 - m0))
 	var cable: Dictionary = {}
 	for l: Dictionary in game.lines:
-		if l["kind"] == "stromkabel" and (l["points"][1] as Vector3).distance_to(Vector3(22, 0, 2)) < 1.0:
+		if l["kind"] == "stromkabel" and (l["points"][1] as Vector3).distance_to(Vector3(58, 0, 15)) < 1.0:
 			cable = l
 			break
 	var pts: Array = cable["points"]
@@ -195,7 +235,7 @@ func run(main: Node) -> void:
 	var sbx_pos: Vector3 = sbx["pos"]
 	game.remove(sbx, 1.0)
 	check(tb.check().contains("Sicherheitsbereich offen"), "Offene Lücke statt Ausgang erkannt")
-	var plug: Dictionary = game.build_line("glaswand", [Vector3(12, 0, -8), Vector3(16, 0, -8)], true)
+	var plug: Dictionary = game.build_line("glaswand", [Vector3(28, 0, -8), Vector3(32, 0, -8)], true)
 	check(tb.check().contains("Ausgang Sicherheitsbereich"), "Ohne Ausgang kommen Ankommende nicht raus: " + tb.check())
 	game.remove(plug, 1.0)
 	game.build_item("sb_ausgang", sbx_pos, 0, true)
@@ -206,6 +246,40 @@ func run(main: Node) -> void:
 	check(tb.check().contains("Sicherheitsbereich offen"), "Lücke in der Trennwand erkannt: " + tb.check())
 	game.build_line("glaswand", gw_pts, true)
 	check(tb.check() == "", "Sicherheitsbereich wieder geschlossen")
+	# Bereiche: ohne Sicherheitsbereich kein Betrieb, alte Spielstände bekommen sie automatisch
+	var sz: Dictionary = {}
+	for z: Dictionary in game.zones_of(term):
+		if z["id"] == "bereich_sicherheit":
+			sz = z
+	var sz_rect: Rect2 = sz["rect"]
+	game.remove(sz, 1.0)
+	check(tb.check().contains("Sicherheitsbereich"), "Gates ohne Sicherheitsbereich erkannt: " + tb.check())
+	game.build_zone("bereich_sicherheit", sz_rect, true, 0)
+	check(tb.check() == "", "Sicherheitsbereich wieder angelegt")
+	for z: Dictionary in game.zones_of(term):
+		game.remove(z, 1.0)
+	check(tb.check() != "", "Ohne Bereiche kein Betrieb: " + tb.check())
+	tb.auto_zones(term)
+	check(game.zones_of(term).size() >= 2 and tb.check() == "", "Bereiche aus Wänden und Kontrolle abgeleitet (%d Flächen) " % game.zones_of(term).size() + tb.check())
+	# Personal
+	var staff_b: Dictionary = game.items_of("personalgebaeude")[0]
+	var sb_pos: Vector3 = staff_b["pos"]
+	game.remove(staff_b, 1.0)
+	check(tb.staff_slowdown() > 1.2, "Ohne Personalgebäude dauert die Abfertigung länger (×%.2f)" % tb.staff_slowdown())
+	game.build_item("personalgebaeude", sb_pos, 0, true)
+	check(is_equal_approx(tb.staff_slowdown(), 1.0), "Personalgebäude wieder da")
+	# Feuerwehr rückt aus: Tor geht auf, Fahrzeug fährt hinaus
+	main.ops.fire_t = 9999.0
+	check(main.ops._fire_mission("kontrolle", null, 0.0), "Kontrollfahrt der Feuerwehr gestartet")
+	var fm: Dictionary = main.ops.missions[main.ops.missions.size() - 1]
+	var fv: Dictionary = fm["v"]
+	var fstart: Vector3 = fv["pos"]
+	var opened := false
+	for i in range(900):
+		main.ops.step(0.1)
+		var fk: String = main.ops._door_key(fm["station"], int(fm["idx"]))
+		opened = opened or float(main.ops.door_open.get(fk, 0.0)) > 0.95
+	check(opened and (fv["pos"] as Vector3).distance_to(fstart) > 30.0, "Rolltor auf, Löschfahrzeug ausgerückt (%.0f m)" % (fv["pos"] as Vector3).distance_to(fstart))
 
 	# Straßennetz und Verkehr
 	var rd = main.roads
@@ -343,6 +417,25 @@ func run(main: Node) -> void:
 	b.on_click(Vector3(880, 0, 801))
 	b.on_click(Vector3(880, 0, 823))
 	check(game.lines.size() == l_before + 1, "Wand außerhalb einer Halle abgelehnt")
+	# Tür auf die neue Wand: rastet ein, Wand bekommt eine Öffnung
+	var inner_wall: Dictionary = game.lines[game.lines.size() - 1]
+	b.set_tool("tuer")
+	b.on_move(Vector3(815, 0, 812))
+	check(b.reason.contains("Innenwand"), "Tür ohne Wand abgelehnt: " + b.reason)
+	b.on_move(Vector3(806.6, 0, 816.2))
+	check(b.reason == "" and absf(b.hover.x - 806.0) < 0.01 and b.rot == 1, "Tür rastet quer auf die Wand ein " + b.reason)
+	var n_items: int = game.items.size()
+	b.on_click(Vector3(806.6, 0, 816.2))
+	check(game.items.size() == n_items + 1 and game.wall_cuts(inner_wall).size() == 1, "Tür gesetzt, Wand geöffnet")
+	game.remove(game.items[game.items.size() - 1], 1.0)
+	check(game.wall_cuts(inner_wall).is_empty(), "Tür abgerissen, Wand wieder zu")
+	# Bereich aufziehen
+	b.set_tool("bereich_sicherheit")
+	b.on_click(Vector3(808, 0, 814))
+	b.on_click(Vector3(838, 0, 823))
+	check(game.zones_of(hall).size() == 1 and game.zone_at(hall, Vector2(830, 820), 0) == "sicherheit", "Sicherheitsbereich aufgezogen")
+	game.remove(game.zones_of(hall)[0], 1.0)
+	b.set_tool("")
 	b.set_tool("pflanze")
 	b.on_move(Vector3(806, 0, 812))
 	check(b.reason != "", "Pflanze auf der Wand abgelehnt: " + b.reason)
@@ -445,7 +538,8 @@ func run(main: Node) -> void:
 	game.load_game()
 	check(game.lines.size() == nl and game.items.size() == ni and game.money == nm, "Spielstand wieder geladen")
 	var term2: Dictionary = game.items_of("halle")[0]
-	check(game.walls_of(term2).size() == 3 and game.inside_of(term2).size() > 20 and tb.check() == "", "Terminal mit Wänden und Einrichtung geladen")
+	check(game.walls_of(term2).size() == 5 and game.inside_of(term2).size() > 20 and tb.check() == "", "Terminal mit Wänden und Einrichtung geladen " + tb.check())
+	check(game.zones_of(term2).size() >= 2 and game.items_of("tuer").size() == 2, "Bereiche und Türen geladen")
 	await get_tree().process_frame
 	check(main.traffic.movers.size() > 5, "Verkehr nach dem Laden wieder unterwegs")
 

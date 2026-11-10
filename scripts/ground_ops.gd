@@ -18,6 +18,9 @@ const WALK := 1.5
 const PAX_PER_FIGURE := 8
 const GSE_V := 6.0            # Bodenfahrzeuge auf dem Stand (m/s)
 const BeltAnim = preload("res://scripts/belt_anim.gd")
+const ServiceNet = preload("res://scripts/servicenet.gd")
+const Landmarks = preload("res://scripts/landmarks.gd")
+const FIRE_V := 11.0           # Löschfahrzeuge
 
 var game: GameState
 var terminal: Variant = null
@@ -26,10 +29,23 @@ var walkers: Array = []       # Passagiere unter freiem Himmel
 var vehicles: Array = []      # alle Bodenfahrzeuge, damit sie einander ausweichen
 var flights_ref: Variant = null   # flights.gd: rollende Flugzeuge, vor denen Fahrzeuge warten
 var linked_baggage := false   # Gepäckförderband zum Umschlag vorhanden: Abfertigung schneller
+var net := ServiceNet.new()      # Betriebsstraßen und Vorfelder
+var fire_net := ServiceNet.new() # dazu Rollwege (Feuerwehr)
+var net_dirty := true
+var clock := 0.0
+var door_want: Dictionary = {}   # "Gebäude:Tor" -> Uhrzeit, bis zu der das Tor offen sein soll
+var door_open: Dictionary = {}   # "Gebäude:Tor" -> 0 (zu) … 1 (offen)
+var door_rec: Dictionary = {}    # "Gebäude:Tor" -> [Gebäude, Torindex]
+var returning: Array = []        # Fahrzeuge auf dem Weg zurück in ihre Garage
+var missions: Array = []         # Einsätze der Feuerwehr
+var fire_t := 120.0              # bis zur nächsten Kontrollfahrt (Simulationssekunden)
+var unconnected: Array = []      # Garagen ohne Anschluss an das Vorfeld (für Hinweise)
 
 
 func setup(g: GameState) -> void:
 	game = g
+	game.network_changed.connect(func() -> void: net_dirty = true)
+	game.items_changed.connect(func() -> void: net_dirty = true)
 
 
 # ---------------------------------------------------------------- Fahrzeuge
@@ -56,7 +72,7 @@ func _vehicle(kind: String, at: Vector3, heading: Vector3, h: float = 0.0) -> Di
 	node.add_child(mi)
 	add_child(node)
 	var v := {"node": node, "pts": PackedVector3Array(), "i": 0, "v": 0.0, "vmax": BUS_V, "rev": false,
-		"pos": at, "heading": heading.normalized(), "moving": false, "len": _length_of(kind), "wait": 0.0}
+		"pos": at, "heading": heading.normalized(), "moving": false, "len": _length_of(kind), "wait": 0.0, "kind": kind}
 	vehicles.append(v)
 	_put(v)
 	return v
@@ -467,8 +483,12 @@ func release(p: Dictionary) -> void:
 	for v: Variant in j.get("stairs", []) + j.get("leaving", []):
 		_free(v)
 	for sv: Dictionary in j.get("svc", []):
-		_free(sv.get("v"))
 		_undock(sv)
+		var sv_v: Variant = sv.get("v")
+		if sv_v is Dictionary and is_instance_valid((sv_v as Dictionary).get("node")):
+			_send_home(sv_v, String(sv["kind"]))
+		else:
+			_free(sv_v)
 		for c: Variant in sv.get("extra", []):
 			if is_instance_valid(c):
 				(c as Node).queue_free()
@@ -487,6 +507,16 @@ func clear() -> void:
 	for wk: Dictionary in walkers.duplicate():
 		_drop_walker(wk)
 	jobs.clear()
+	for v: Dictionary in returning:
+		_free(v)
+	returning.clear()
+	for m: Dictionary in missions:
+		_free(m.get("v"))
+		var parked: Variant = m.get("parked")
+		if is_instance_valid(parked):
+			(parked as Node3D).visible = true
+	missions.clear()
+	door_want.clear()
 
 
 # ---------------------------------------------------------------- Passagiere draußen
@@ -566,6 +596,12 @@ func _bus_door(bus: Dictionary, ref: Vector3) -> Vector3:
 
 
 func step(sim: float) -> void:
+	clock += sim
+	if net_dirty:
+		_rebuild_net()
+	_step_returning(sim)
+	_fire_tick(sim)
+	_animate_doors(sim)
 	for id: int in jobs.keys():
 		var j: Dictionary = jobs[id]
 		_step_job(j, sim)
@@ -591,6 +627,18 @@ func step(sim: float) -> void:
 
 func _step_job(j: Dictionary, sim: float) -> void:
 	var p: Dictionary = j["flight"]
+	for sv: Dictionary in j.get("svc", []):
+		if String(sv["phase"]) != "anreise":
+			continue
+		var v: Variant = sv.get("v")
+		if not (v is Dictionary):
+			sv["phase"] = "warten"
+			continue
+		var vd: Dictionary = v
+		if _door_step(vd):
+			_move(vd, sim)
+		if not vd.has("await_door") and not bool(vd["moving"]):
+			sv["phase"] = "bereit"
 	if bool(j.get("turn_over", false)):
 		for sv: Dictionary in j.get("svc", []):
 			if String(sv["phase"]) == "ab":
@@ -612,8 +660,8 @@ func _step_job(j: Dictionary, sim: float) -> void:
 			else:
 				gone.append(v)
 	for v: Dictionary in gone:
-		_free(v)
 		(j["leaving"] as Array).erase(v)
+		_send_home(v, String(v.get("kind", "")))
 	var tg: Variant = j.get("tug_gone")
 	if tg is Dictionary:
 		var td: Dictionary = tg
@@ -623,8 +671,8 @@ func _step_job(j: Dictionary, sim: float) -> void:
 				_go(td, td["then"], TUG_V)
 				td.erase("then")
 			else:
-				_free(td)
 				j.erase("tug_gone")
+				_send_home(td, "schlepper")
 	var wg: Variant = j.get("walker_gone")
 	if wg is Dictionary:
 		var wd: Dictionary = wg
@@ -756,6 +804,14 @@ func turn_start(p: Dictionary) -> void:
 	var j := _job(p)
 	var plan := service_plan(String(p["kind"]))
 	j["plan"] = plan
+	if not j.has("svc"):
+		j["svc"] = _make_svc(plan)
+	_props(p, j, plan)
+	j["crew"] = []
+
+
+## Dienste am Stand nach Plan; Tank und Catering nur, wenn es Tanklager und Cateringbetrieb gibt.
+func _make_svc(plan: Dictionary) -> Array:
 	var hf := Vector3(float(plan["span"]) * 0.5 + 5.0, 0, -float(plan["nose"]) - 2.0)   # vorn rechts
 	var hr := Vector3(float(plan["span"]) * 0.5 + 5.0, 0, float(plan["tail"]) - 2.0)     # hinten rechts
 	var lane: float = plan["lane"]
@@ -800,10 +856,17 @@ func turn_start(p: Dictionary) -> void:
 	svc.append({"kind": "tank", "in": 0.15, "out": 0.62, "home": hr, "spot": tspot, "face": tface,
 		"way": [Vector3(float(plan["span"]) * 0.5 + 5.0, 0, le - 4.0), tspot + tface * 9.0], "reverse_in": true,
 		"exit": [hf], "coupling": Vector3(tx - 0.6, float(plan["wing_y"]) - 0.3, le + 1.2)})
+	var out := []
 	for sv: Dictionary in svc:
 		sv["phase"] = "warten"
-	j["svc"] = svc
-	# Pylonen an Flügelspitzen, Triebwerken und Heck; Keile am Bugrad
+		if (sv["kind"] == "tank" or sv["kind"] == "catering") and not has_garage(String(sv["kind"])):
+			continue
+		out.append(sv)
+	return out
+
+
+## Pylonen an Flügelspitzen, Triebwerken und Heck; Keile am Bugrad.
+func _props(p: Dictionary, j: Dictionary, plan: Dictionary) -> void:
 	var props := []
 	var span2: float = float(plan["span"]) * 0.5 + 0.8
 	var tip_z: float = float(plan["tip_z"]) + 1.0
@@ -813,7 +876,6 @@ func turn_start(p: Dictionary) -> void:
 		props.append([_prop("pylon", plane_point(p, c), plane_dir(p, Vector3(0, 0, -1))), 0.03, 0.92])
 	props.append([_prop("keil", plane_point(p, Vector3(0, 0, float(plan["nose_gear"]))), plane_dir(p, Vector3(1, 0, 0))), 0.01, 0.95])
 	j["props"] = props
-	j["crew"] = []
 
 
 func _prop(kind: String, at: Vector3, face: Vector3) -> Node3D:
@@ -881,9 +943,13 @@ func service_count() -> int:
 func _service(p: Dictionary, sv: Dictionary, f: float, sim: float) -> void:
 	var phase: String = sv["phase"]
 	match phase:
-		"warten":
+		"warten", "bereit":
 			if f >= float(sv["in"]) and f < float(sv["out"]) - 0.05:
 				_arrive(p, sv)
+			elif f >= float(sv["out"]) and sv.get("v") is Dictionary:
+				_send_home(sv["v"], String(sv["kind"]))
+				sv["v"] = null
+				sv["phase"] = "weg"
 		"anfahrt":
 			var v: Dictionary = sv["v"]
 			_move(v, sim)
@@ -910,7 +976,8 @@ func _service(p: Dictionary, sv: Dictionary, f: float, sim: float) -> void:
 					_go(v, v["then"], GSE_V, false)
 					v.erase("then")
 				else:
-					_free(v)
+					_send_home(v, String(sv["kind"]))
+					sv["v"] = null
 					for c: Variant in sv.get("extra", []):
 						if is_instance_valid(c):
 							(c as Node).queue_free()
@@ -936,15 +1003,14 @@ func _arrive(p: Dictionary, sv: Dictionary) -> void:
 	var h0: Vector3 = (way[1] as Vector3) - home
 	h0.y = 0.0
 	h0 = h0.normalized() if h0.length() > 0.1 else face
-	match kind:
-		"bandlader":
-			v = _vehicle_from(_belt_loader(), kind, home, h0)
-		"catering":
-			v = _vehicle_from(_catering_truck(), kind, home, h0)
-		"zug":
-			v = _train(home, h0, bool(sv["full"]))
-		_:
-			v = _vehicle(kind, home, h0)
+	if sv.get("v") is Dictionary and is_instance_valid((sv["v"] as Dictionary).get("node")):
+		# kommt aus der Garage und wartet schon am Rand des Stands
+		v = sv["v"]
+		way[0] = v["pos"]
+		h0 = v["heading"]
+		v.erase("door_key")
+	else:
+		v = _spawn_kind(sv, home, h0)
 	v["flight"] = int(p["id"])
 	v["vmax"] = GSE_V
 	sv["v"] = v
@@ -955,6 +1021,20 @@ func _arrive(p: Dictionary, sv: Dictionary) -> void:
 		v["then"] = PackedVector3Array([pre, pre.lerp(spot, 0.5), spot])
 		v["then_rev"] = true
 	sv["phase"] = "anfahrt"
+
+
+func _spawn_kind(sv: Dictionary, at: Vector3, h0: Vector3) -> Dictionary:
+	var kind: String = sv["kind"]
+	match kind:
+		"bandlader":
+			return _vehicle_from(_belt_loader(), kind, at, h0)
+		"catering":
+			return _vehicle_from(_catering_truck(), kind, at, h0)
+		"zug":
+			return _train(at, h0, bool(sv["full"]))
+	var v := _vehicle(kind, at, h0)
+	v["kind"] = kind
+	return v
 
 
 ## Weiche Fahrt durch Wegpunkte: Richtung an jedem Zwischenpunkt zeigt vom vorigen zum nächsten.
@@ -1273,3 +1353,414 @@ func _hose(a: Vector3, b: Vector3, r: float, col: Color) -> Node3D:
 	mi.position = a
 	add_child(mi)
 	return mi
+
+
+# ---------------------------------------------------------------- Garagen, Tore und Fahrwege
+
+func _rebuild_net() -> void:
+	net_dirty = false
+	net.build(game.lines, false)
+	fire_net.build(game.lines, true)
+	unconnected = []
+	for id: String in ["vorfelddepot", "tanklager", "busgarage", "catering", "feuerwache"]:
+		for rec: Dictionary in game.items_of(id):
+			var spots: Array = _spots(rec)
+			if spots.is_empty():
+				continue
+			var outside: Vector3 = spots[0][1]
+			var nn := (fire_net if id == "feuerwache" else net).nearest(outside, 60.0)
+			if nn < 0:
+				unconnected.append(rec)
+
+
+## Tore oder Stellplätze eines Gebäudes: je [innen, außen, Tor?, Index] in Weltkoordinaten.
+func _spots(rec: Dictionary) -> Array:
+	var def: Dictionary = Catalog.ITEMS.get(String(rec["id"]), {})
+	var list: Array = def.get("doors", def.get("bays", []))
+	var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
+	var p: Vector3 = rec["pos"]
+	var out := []
+	for i in range(list.size()):
+		var e: Array = list[i]
+		var local: Vector3 = e[0]
+		var depth := float(e[3]) if e.size() > 3 else 3.5
+		out.append([p + b * (local + Vector3(0, 0, -depth)), p + b * (local + Vector3(0, 0, 7.0)), def.has("doors"), i])
+	return out
+
+
+## Gibt es eine versorgte Garage für diese Fahrzeugart?
+func has_garage(kind: String) -> bool:
+	for gid: String in Catalog.garages_for(kind):
+		for rec: Dictionary in game.items_of(gid):
+			if game.supplied(rec, "strom"):
+				return true
+	return false
+
+
+## Nächste versorgte Garage: [Gebäude, innen, außen, Tor?, Index] oder leer.
+func _garage(kind: String, near: Vector3) -> Array:
+	var best: Array = []
+	var bd := INF
+	for gid: String in Catalog.garages_for(kind):
+		for rec: Dictionary in game.items_of(gid):
+			if not game.supplied(rec, "strom") or not is_instance_valid(rec.get("node")):
+				continue
+			for sp: Array in _spots(rec):
+				var d := (sp[1] as Vector3).distance_to(near) + randf() * 6.0
+				if d < bd:
+					bd = d
+					best = [rec, sp[0], sp[1], sp[2], sp[3]]
+	return best
+
+
+func _door_key(rec: Dictionary, idx: int) -> String:
+	return "%d:%d" % [(rec["node"] as Node).get_instance_id(), idx]
+
+
+## Tor offen halten, solange das Fahrzeug in der Nähe ist. false = muss noch warten.
+func _door_step(v: Dictionary) -> bool:
+	if not v.has("door_key"):
+		return true
+	var key: String = v["door_key"]
+	var dp: Vector3 = v["door_pt"]
+	var d := (v["pos"] as Vector3).distance_to(dp)
+	if d < 16.0 or v.has("await_door"):
+		door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.2)
+	if v.has("await_door"):
+		if float(door_open.get(key, 0.0)) >= 0.97:
+			v.erase("await_door")
+			if v.has("route"):
+				_go(v, v["route"], float(v.get("vmax", GSE_V)))
+				v.erase("route")
+		return false
+	return true
+
+
+## Vorab: Ein Flug ist im Anflug, die Fahrzeuge fahren aus ihren Garagen zum Stand und warten am Rand.
+func prestage(p: Dictionary, park_pos: Vector3, fwd: Vector3) -> void:
+	var j := _job(p)
+	if j.has("svc"):
+		return
+	if net_dirty:
+		_rebuild_net()
+	var ghost := {"pos": park_pos, "heading": fwd, "kind": p["kind"], "id": p["id"]}
+	var plan := service_plan(String(p["kind"]))
+	j["svc"] = _make_svc(plan)
+	for sv: Dictionary in j["svc"]:
+		_dispatch(ghost, sv)
+
+
+func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
+	var kind: String = sv["kind"]
+	var home := plane_point(pp, sv["home"])
+	var g := _garage(kind, home)
+	if g.is_empty():
+		return
+	var road := net.route(g[2], home, 60.0)
+	if road.size() < 2:
+		return
+	var way := [g[1]]
+	for q: Vector3 in road:
+		way.append(q)
+	var h0: Vector3 = (g[2] as Vector3) - (g[1] as Vector3)
+	h0.y = 0.0
+	h0 = h0.normalized()
+	var last: Vector3 = way[way.size() - 1]
+	var prev: Vector3 = way[way.size() - 2]
+	var hend := last - prev
+	hend.y = 0.0
+	var v := _spawn_kind(sv, g[1], h0)
+	v["flight"] = int(pp["id"])
+	v["vmax"] = GSE_V * 1.4
+	sv["v"] = v
+	sv["phase"] = "anreise"
+	var pts := _route(way, h0, hend.normalized() if hend.length() > 0.1 else h0)
+	_leave_garage(v, g, pts)
+
+
+## Fahrzeug steht in der Garage: Tor auf, dann losfahren (ohne Tor sofort).
+func _leave_garage(v: Dictionary, g: Array, pts: PackedVector3Array) -> void:
+	if bool(g[3]):
+		var key := _door_key(g[0], int(g[4]))
+		door_rec[key] = [g[0], int(g[4])]
+		v["door_key"] = key
+		v["door_pt"] = g[2]
+		v["await_door"] = true
+		v["route"] = pts
+		door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 2.0)
+	else:
+		_go(v, pts, float(v.get("vmax", GSE_V)))
+
+
+## Fertig am Stand: zurück in die Garage (Tor geht vorher auf), sonst verschwindet es am Rand.
+func _send_home(v: Dictionary, kind: String) -> void:
+	if not is_instance_valid(v.get("node")):
+		_free(v)
+		return
+	var g := _garage(kind, v["pos"])
+	if g.is_empty():
+		_free(v)
+		return
+	var road := net.route(v["pos"], g[2], 60.0)
+	if road.size() < 2:
+		_free(v)
+		return
+	var way := []
+	for q: Vector3 in road:
+		way.append(q)
+	way.append(g[1])
+	var hin: Vector3 = (g[1] as Vector3) - (g[2] as Vector3)
+	hin.y = 0.0
+	v["rev"] = false
+	v["vmax"] = GSE_V * 1.4
+	v.erase("then")
+	_go(v, _route(way, v["heading"], hin.normalized()), GSE_V * 1.4)
+	if bool(g[3]):
+		var key := _door_key(g[0], int(g[4]))
+		door_rec[key] = [g[0], int(g[4])]
+		v["door_key"] = key
+		v["door_pt"] = g[2]
+	if not returning.has(v):
+		returning.append(v)
+
+
+func _step_returning(sim: float) -> void:
+	for v: Dictionary in returning.duplicate():
+		if not is_instance_valid(v.get("node")):
+			returning.erase(v)
+			vehicles.erase(v)
+			continue
+		var wait := false
+		if v.has("door_key"):
+			var key: String = v["door_key"]
+			var d := (v["pos"] as Vector3).distance_to(v["door_pt"])
+			if d < 22.0:
+				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.2)
+			if d < 9.0 and float(door_open.get(key, 0.0)) < 0.9:
+				wait = true
+				v["v"] = 0.0
+		if not wait:
+			_move(v, sim)
+		if not bool(v["moving"]):
+			returning.erase(v)
+			_free(v)
+
+
+## Rolltore: Vorhang wickelt sich nach oben auf (Knoten "Rolltor<i>" mit Drehpunkt an der Oberkante).
+func _animate_doors(sim: float) -> void:
+	for key: String in door_rec.keys():
+		var e: Array = door_rec[key]
+		var rec: Dictionary = e[0]
+		if not is_instance_valid(rec.get("node")):
+			door_rec.erase(key)
+			continue
+		var target := 1.0 if clock < float(door_want.get(key, 0.0)) else 0.0
+		var o := move_toward(float(door_open.get(key, 0.0)), target, sim * 0.6)
+		door_open[key] = o
+		var curtain := (rec["node"] as Node3D).get_node_or_null("Rolltor%d" % int(e[1])) as Node3D
+		if curtain != null:
+			curtain.scale.y = maxf(0.05, 1.0 - o)
+		var lamp := (rec["node"] as Node3D).get_node_or_null("Warnlicht%d" % int(e[1])) as Node3D
+		if lamp != null:
+			lamp.visible = o > 0.0 and o < 1.0 and fmod(clock * 2.5, 1.0) < 0.5
+
+
+# ---------------------------------------------------------------- Feuerwehr
+
+func has_fire_station() -> bool:
+	for rec: Dictionary in game.items_of("feuerwache"):
+		if game.supplied(rec, "strom"):
+			return true
+	return false
+
+
+## Kontrollfahrten in regelmäßigen Abständen.
+func _fire_tick(sim: float) -> void:
+	fire_t -= sim
+	if fire_t <= 0.0:
+		fire_t = randf_range(260.0, 520.0)
+		if missions.size() < 2:
+			_fire_mission("kontrolle", null, 0.0)
+	for m: Dictionary in missions.duplicate():
+		_step_mission(m, sim)
+
+
+## Notfall gemeldet: zwei Löschfahrzeuge in Bereitschaft an die Piste.
+func fire_alarm(p: Dictionary) -> bool:
+	if not has_fire_station():
+		return false
+	var ok := false
+	for k in range(2):
+		ok = _fire_mission("bereitschaft", p, 0.32 + 0.3 * float(k)) or ok
+	return ok
+
+
+## Das Flugzeug ist sicher gelandet: die Bereitschaft fährt zurück.
+func fire_clear(p: Dictionary) -> void:
+	for m: Dictionary in missions:
+		if m.get("flight") is Dictionary and int((m["flight"] as Dictionary)["id"]) == int(p["id"]) and String(m["phase"]) in ["raus", "warten"]:
+			m["phase"] = "warten"
+			m["t"] = minf(float(m.get("t", 0.0)), 12.0)
+			m.erase("flight")
+
+
+func _fire_mission(kind: String, p: Variant, along: float) -> bool:
+	var station: Dictionary = {}
+	for rec: Dictionary in game.items_of("feuerwache"):
+		if game.supplied(rec, "strom") and is_instance_valid(rec.get("node")):
+			station = rec
+			break
+	if station.is_empty() or flights_ref == null:
+		return false
+	if net_dirty:
+		_rebuild_net()
+	var busy := {}
+	for m: Dictionary in missions:
+		busy[int(m["idx"])] = true
+	var spots := _spots(station)
+	var pick := -1
+	for i in range(spots.size()):
+		if not busy.has(i):
+			pick = i
+			break
+	if pick < 0:
+		return false
+	var sp: Array = spots[pick]
+	var target := Vector3.INF
+	if bool(flights_ref.dirty):
+		flights_ref._rebuild()
+	if kind == "kontrolle":
+		var best := INF
+		for hd: Dictionary in flights_ref.graph.holds:
+			var hp: Vector3 = hd["pos"]
+			var dirv: Vector3 = hd["dir"]
+			var side := dirv.cross(Vector3.UP).normalized()
+			var cand := hp - dirv * 6.0 + side * 17.0
+			var d := cand.distance_to(sp[1])
+			if d < best:
+				best = d
+				target = cand
+	else:
+		var rwy: Dictionary = flights_ref._runway()
+		if rwy.is_empty():
+			return false
+		var s: PackedVector3Array = rwy["samples"]
+		var a := s[0]
+		var b := s[s.size() - 1]
+		var q := a.lerp(b, along)
+		var n := (b - a).cross(Vector3.UP).normalized()
+		if (sp[1] as Vector3 - q).dot(n) < 0.0:
+			n = -n
+		target = q + n * 92.0
+	if target == Vector3.INF:
+		return false
+	var road := fire_net.route(sp[1], target, 160.0)
+	if road.size() < 2:
+		return false
+	var way := [sp[0]]
+	for w: Vector3 in road:
+		way.append(w)
+	var h0: Vector3 = (sp[1] as Vector3) - (sp[0] as Vector3)
+	h0.y = 0.0
+	h0 = h0.normalized()
+	var last: Vector3 = way[way.size() - 1]
+	var prev: Vector3 = way[way.size() - 2]
+	var hend := (last - prev)
+	hend.y = 0.0
+	var parked := (station["node"] as Node3D).get_node_or_null("LF%d" % pick) as Node3D
+	if parked != null:
+		parked.visible = false
+	var node := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = Landmarks.fire_truck_mesh()
+	node.add_child(mi)
+	var lights := Node3D.new()
+	lights.name = "Blaulicht"
+	node.add_child(lights)
+	for e: Array in [[Vector3(-0.8, 3.4, -5.1), 0.0], [Vector3(0.8, 3.4, -5.1), 0.25], [Vector3(-1.2, 3.45, 5.45), 0.12], [Vector3(1.2, 3.45, 5.45), 0.37]]:
+		var lm := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.2
+		sm.height = 0.3
+		lm.mesh = sm
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.3, 0.5, 1.0)
+		mat.emission_enabled = true
+		mat.emission = Color(0.3, 0.5, 1.0)
+		mat.emission_energy_multiplier = 4.0
+		lm.material_override = mat
+		lm.position = e[0]
+		lm.set_meta("phase", e[1])
+		lights.add_child(lm)
+	var v := _vehicle_from(node, "feuer", sp[0], h0)
+	v["len"] = 11.0
+	v["vmax"] = FIRE_V
+	v["blue"] = kind == "bereitschaft"
+	lights.visible = false
+	var m := {"kind": kind, "station": station, "idx": pick, "v": v, "phase": "raus", "t": 25.0 if kind == "kontrolle" else 90.0,
+		"parked": parked, "home": sp}
+	if p is Dictionary:
+		m["flight"] = p
+	missions.append(m)
+	_leave_garage(v, [station, sp[0], sp[1], true, pick], _route(way, h0, hend.normalized() if hend.length() > 0.1 else h0))
+	return true
+
+
+func _step_mission(m: Dictionary, sim: float) -> void:
+	var v: Dictionary = m["v"]
+	if not is_instance_valid(v.get("node")):
+		missions.erase(m)
+		return
+	var lights := (v["node"] as Node3D).get_node_or_null("Blaulicht") as Node3D
+	if lights != null:
+		var on := bool(v.get("blue", false)) and String(m["phase"]) != "rein"
+		lights.visible = on
+		if on:
+			for c in lights.get_children():
+				(c as Node3D).visible = fmod(clock * 2.2 + float((c as Node3D).get_meta("phase", 0.0)), 0.5) < 0.22
+	match String(m["phase"]):
+		"raus":
+			if _door_step(v):
+				_move(v, sim)
+			if not v.has("await_door") and not bool(v["moving"]):
+				m["phase"] = "warten"
+		"warten":
+			if not (m.get("flight") is Dictionary):
+				m["t"] = float(m["t"]) - sim
+			else:
+				var fp: Dictionary = m["flight"]
+				if not (fp.get("state", "") in ["anflug", "landung"]) or not flights_ref.planes.has(fp):
+					m["t"] = float(m["t"]) - sim
+			if float(m["t"]) <= 0.0:
+				var sp: Array = m["home"]
+				var road := fire_net.route(v["pos"], sp[1], 160.0)
+				if road.size() < 2:
+					road = PackedVector3Array([v["pos"], sp[1]])
+				var way := []
+				for w: Vector3 in road:
+					way.append(w)
+				way.append(sp[0])
+				var hin: Vector3 = (sp[0] as Vector3) - (sp[1] as Vector3)
+				hin.y = 0.0
+				_go(v, _route(way, v["heading"], hin.normalized()), FIRE_V)
+				var key := _door_key(m["station"], int(m["idx"]))
+				door_rec[key] = [m["station"], int(m["idx"])]
+				v["door_key"] = key
+				v["door_pt"] = sp[1]
+				v.erase("await_door")
+				m["phase"] = "rein"
+		"rein":
+			var key: String = v["door_key"]
+			var d := (v["pos"] as Vector3).distance_to(v["door_pt"])
+			if d < 26.0:
+				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
+			if d < 12.0 and float(door_open.get(key, 0.0)) < 0.9:
+				v["v"] = 0.0
+			else:
+				_move(v, sim)
+			if not bool(v["moving"]):
+				var parked: Variant = m.get("parked")
+				if is_instance_valid(parked):
+					(parked as Node3D).visible = true
+				_free(v)
+				missions.erase(m)

@@ -38,7 +38,7 @@ var view_floor := 0          # Ebene, die in der Innenansicht gezeigt und bebaut
 ## Einstellbare Bauformen je Gebäude: [Schlüssel, Anzeigename, Werte]
 const OPTIONS := {
 	"halle": [["etagen", "Ebenen", [1, 2, 3]], ["keller", "Keller", [false, true]], ["fassade", "Fassade", ["glas", "beton", "holz"]],
-		["form", "Ecken", ["eckig", "abgerundet", "rund"]], ["dach", "Dach", ["flach", "gewoelbt", "shed"]]],
+		["form", "Ecken", ["eckig", "abgerundet", "rund"]], ["dach", "Dach", ["flach", "gewoelbt", "shed"]], ["vordach", "Vordach (+Z)", [false, true]]],
 	"parkhaus": [["etagen", "Etagen", [2, 3, 4, 5, 6]], ["farbe", "Fassade", ["grau", "rot", "blau", "holz"]]],
 	"gate": [["bereich", "Bereich", ["schengen", "non_schengen"]]],
 	"busgate": [["bereich", "Bereich", ["schengen", "non_schengen"]]],
@@ -48,6 +48,7 @@ const OPTIONS := {
 	"shop": [["stil", "Laden", ["kiosk", "dutyfree", "buecher", "elektronik", "apotheke", "mode"]]],
 	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]]],
 	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
+	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
 }
 const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
@@ -55,6 +56,7 @@ const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig":
 	"grau": "Grau", "rot": "Rot", "blau": "Blau", "weiss": "Weiß", "klassisch": "klassisch", "modern": "modern",
 	"cafe": "Café", "baeckerei": "Bäckerei", "bar": "Bar", "restaurant": "Restaurant", "kiosk": "Kiosk", "dutyfree": "Duty Free",
 	"buecher": "Bücher", "elektronik": "Elektronik", "apotheke": "Apotheke", "mode": "Mode", "oval": "Oval", "karussell": "Karussell", "schiebe": "Schiebetür", "dreh": "Drehtür",
+	"automatik": "Automatik (Glas)", "fluegel": "Flügeltür", "personal": "Personaltür",
 	"laub": "Laubbaum", "nadel": "Nadelbaum", "birke": "Birke", "pappel": "Pappel", "obst": "Obstbaum"}
 var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0
@@ -225,6 +227,8 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	if Catalog.is_wall(kind):
 		rec["floor"] = view_floor
 		(rec["node"] as Node3D).position.y = float(view_floor) * Catalog.FLOOR_H
+		if not wall_cuts(rec).is_empty() and not (rec.get("hall", {}) as Dictionary).is_empty():
+			refresh_walls(rec["hall"], view_floor)
 		_apply_visibility(rec)
 	_spend(cost)
 	var group := [rec]
@@ -318,9 +322,10 @@ const CROSS_OK := {
 	"einbahn": ["strasse", "strasse4", "einbahn", "gehweg", "tunnel"],
 	"tunnel": ["strasse", "strasse4", "einbahn", "tunnel"],
 	"gehweg": ["strasse", "strasse4", "einbahn", "gehweg"],
-	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
-	"rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
-	"vorfeld": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
+	"rollweg": ["rollweg", "rollweg_breit", "vorfeld", "piste", "betriebsstrasse"],
+	"rollweg_breit": ["rollweg", "rollweg_breit", "vorfeld", "piste", "betriebsstrasse"],
+	"vorfeld": ["rollweg", "rollweg_breit", "vorfeld", "piste", "betriebsstrasse"],
+	"betriebsstrasse": ["rollweg", "rollweg_breit", "vorfeld", "betriebsstrasse"],
 	"piste": ["rollweg", "rollweg_breit", "vorfeld", "piste"],
 }
 ## Kleine Deko, die ein neuer Weg einfach wegräumt
@@ -546,13 +551,13 @@ func set_interior_view(on: bool) -> void:
 	for l: Dictionary in lines:
 		_apply_visibility(l)
 		if Catalog.is_wall(String(l["kind"])):
-			_apply_interior(l["node"])
+			_apply_interior(l["node"], true)
 	interior_changed.emit(on)
 	floor_changed.emit(view_floor)
 
 
 ## Halle oder Wand für die Innenansicht: Dach und hohe Fassade weg, niedrige Fassade auf der gezeigten Ebene.
-func _apply_interior(n: Node3D) -> void:
+func _apply_interior(n: Node3D, wall: bool = false) -> void:
 	for part: String in ["Dach", "Hoch"]:
 		var c := n.get_node_or_null(part) as Node3D
 		if c != null:
@@ -560,7 +565,8 @@ func _apply_interior(n: Node3D) -> void:
 	var low := n.get_node_or_null("Tief") as Node3D
 	if low != null:
 		low.visible = interior_view and view_floor >= 0
-		low.position.y = float(maxi(view_floor, 0)) * Catalog.FLOOR_H
+		if not wall:
+			low.position.y = float(maxi(view_floor, 0)) * Catalog.FLOOR_H
 	for f in range(-1, 4):
 		var slab := n.get_node_or_null("Ebene%d" % f) as Node3D
 		if slab != null:
@@ -615,6 +621,8 @@ func _apply_floor(it: Dictionary) -> void:
 		return
 	if it["id"] == "halle":
 		_apply_interior(node)
+	elif Catalog.is_zone(String(it["id"])):
+		node.visible = interior_view and floor_of(it) == view_floor
 	elif Catalog.is_inside(String(it["id"])):
 		var f := floor_of(it)
 		node.visible = (f == view_floor) if interior_view else f >= 0
@@ -861,7 +869,13 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 			return "Eingänge nur im Erdgeschoss"
 		if bool(def.get("wall", false)) and f >= 0 and not touches_wall(r, hall["rect"]):
 			return "Muss an der Außenwand der Halle stehen"
+		if Catalog.is_door(id):
+			var why_door := _door_wall_why(hall, f, r, rot)
+			if why_door != "":
+				return why_door
 		for it: Dictionary in inside_of(hall):
+			if Catalog.is_zone(String(it["id"])):
+				continue
 			var itf := floor_of(it)
 			var covers := itf == f or (bool(Catalog.ITEMS[it["id"]].get("connector", false)) and itf + 1 == f) \
 				or (bool(def.get("connector", false)) and itf == f + 1)
@@ -869,7 +883,7 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 				return "Hier steht schon etwas"
 		var probe := r.grow(-0.1)
 		for l: Dictionary in walls_of(hall):
-			if floor_of(l) != f:
+			if floor_of(l) != f or Catalog.is_door(id):
 				continue
 			for v: Vector3 in wall_probe(l):
 				if probe.has_point(Vector2(v.x, v.z)):
@@ -911,7 +925,7 @@ func can_place_wall(a: Vector3, b: Vector3) -> String:
 	var tmp := {"samples": PackedVector3Array([a, b])}
 	for v: Vector3 in wall_probe(tmp):
 		for it: Dictionary in inside_of(hall):
-			if floor_of(it) != view_floor:
+			if floor_of(it) != view_floor or Catalog.is_zone(String(it["id"])) or Catalog.is_door(String(it["id"])):
 				continue
 			if (it["rect"] as Rect2).grow(-0.1).has_point(Vector2(v.x, v.z)):
 				return "Wand geht durch: " + Catalog.label(String(it["id"]))
@@ -986,8 +1000,146 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 		_apply_floor(rec)
 	items.append(rec)
 	history.append(rec)
+	if Catalog.is_door(id) and not (rec["hall"] as Dictionary).is_empty():
+		refresh_walls(rec["hall"], f)
 	_spend(cost)
 	evaluate_supply()
+	items_changed.emit()
+	return rec
+
+
+# ---------------------------------------------------------------- Türen und Bereiche
+
+## Tür muss quer auf einer Innenwand derselben Ebene sitzen (Wand parallel zur Türbreite).
+func _door_wall_why(hall: Dictionary, f: int, r: Rect2, rot: int) -> String:
+	var c := r.get_center()
+	var along := Vector2(1, 0) if rot % 2 == 0 else Vector2(0, 1)
+	for l: Dictionary in walls_of(hall):
+		if floor_of(l) != f:
+			continue
+		var s: PackedVector3Array = l["samples"]
+		var a := Vector2(s[0].x, s[0].z)
+		var b := Vector2(s[s.size() - 1].x, s[s.size() - 1].z)
+		var d := b - a
+		if d.length() < 0.5:
+			continue
+		var dn := d.normalized()
+		if absf(dn.dot(along)) < 0.98:
+			continue
+		var t := (c - a).dot(dn)
+		var half := maxf(r.size.x, r.size.y) * 0.5
+		if t < half - 0.05 or t > d.length() - half + 0.05:
+			continue
+		if (a + dn * t).distance_to(c) < 0.35:
+			return ""
+	return "Tür auf eine Innenwand setzen (quer zur Wand, nicht an deren Ende)"
+
+
+## Türen, die auf dieser Wand sitzen: Abschnitte [von, bis] in Metern ab dem Wandanfang.
+func wall_cuts(l: Dictionary) -> Array:
+	var out := []
+	var hall: Dictionary = l.get("hall", {})
+	if hall.is_empty():
+		return out
+	var s: PackedVector3Array = l["samples"]
+	var a := Vector2(s[0].x, s[0].z)
+	var b := Vector2(s[s.size() - 1].x, s[s.size() - 1].z)
+	var d := b - a
+	if d.length() < 0.5:
+		return out
+	var dn := d.normalized()
+	for it: Dictionary in inside_of(hall):
+		if not Catalog.is_door(String(it["id"])) or floor_of(it) != floor_of(l):
+			continue
+		var r: Rect2 = it["rect"]
+		var c := r.get_center()
+		var t := (c - a).dot(dn)
+		var half := maxf(r.size.x, r.size.y) * 0.5
+		var along := Vector2(1, 0) if r.size.x >= r.size.y else Vector2(0, 1)
+		if (a + dn * t).distance_to(c) > 0.4 or t < half - 0.1 or t > d.length() - half + 0.1 or absf(dn.dot(along)) < 0.98:
+			continue
+		out.append([t - half, t + half])
+	return out
+
+
+## Wände einer Ebene neu bauen (nach dem Setzen oder Abreißen einer Tür).
+func refresh_walls(hall: Dictionary, f: int) -> void:
+	for l: Dictionary in walls_of(hall):
+		if floor_of(l) != f:
+			continue
+		var old: Variant = l["node"]
+		var s: PackedVector3Array = l["samples"]
+		var node := Factory.make_wall(String(l["kind"]), s[0], s[s.size() - 1], wall_cuts(l))
+		node.position.y = float(f) * Catalog.FLOOR_H
+		line_root.add_child(node)
+		l["node"] = node
+		if is_instance_valid(old):
+			(old as Node).queue_free()
+		_apply_visibility(l)
+		_apply_interior(node, true)
+
+
+func zones_of(hall: Dictionary) -> Array:
+	var out := []
+	for it: Dictionary in inside_of(hall):
+		if Catalog.is_zone(String(it["id"])):
+			out.append(it)
+	return out
+
+
+## Bereich an einem Bodenpunkt einer Halle und Ebene: "oeffentlich", "sicherheit", "personal" oder "".
+## Später gebaute Bereiche liegen über früheren.
+func zone_at(hall: Dictionary, p: Vector2, f: int) -> String:
+	var zs := zones_of(hall)
+	for i in range(zs.size() - 1, -1, -1):
+		var z: Dictionary = zs[i]
+		if floor_of(z) == f and (z["rect"] as Rect2).has_point(p):
+			return String(Catalog.ITEMS[z["id"]]["zone"])
+	return ""
+
+
+static func zone_rect(a: Vector3, b: Vector3) -> Rect2:
+	var x0 := floorf(minf(a.x, b.x))
+	var z0 := floorf(minf(a.z, b.z))
+	var x1 := ceilf(maxf(a.x, b.x))
+	var z1 := ceilf(maxf(a.z, b.z))
+	return Rect2(x0, z0, maxf(x1 - x0, 1.0), maxf(z1 - z0, 1.0))
+
+
+func zone_cost(id: String, r: Rect2) -> int:
+	return roundi(r.get_area() * float(Catalog.ITEMS[id].get("cost_m2", 0)) / 10.0) * 10
+
+
+func can_place_zone(id: String, r: Rect2, f: int = -99) -> String:
+	var fl := view_floor if f == -99 else f
+	var hall := hall_for_rect(r)
+	if hall.is_empty():
+		return "Bereiche nur innerhalb einer Terminalhalle"
+	if fl >= hall_levels(hall) or (fl < 0 and not hall_basement(hall)):
+		return "Diese Halle hat keine " + floor_name(fl)
+	if r.size.x < 1.0 or r.size.y < 1.0:
+		return "Zu klein"
+	if zone_cost(id, r) > money:
+		return "Nicht genug Geld"
+	return ""
+
+
+func build_zone(id: String, r: Rect2, free: bool = false, f: int = -99) -> Dictionary:
+	var fl := view_floor if f == -99 else f
+	var cost := 0 if free else zone_cost(id, r)
+	if cost > money:
+		toast.emit("Nicht genug Geld")
+		return {}
+	var node := Factory.make_zone(id, r.size.x, r.size.y)
+	var c := r.get_center()
+	node.position = Vector3(c.x, float(fl) * Catalog.FLOOR_H, c.y)
+	item_root.add_child(node)
+	var rec := {"type": "item", "id": id, "pos": node.position, "rot": 0, "rect": r, "node": node, "cost": cost,
+		"supply": {}, "opts": {}, "hall": hall_for_rect(r), "floor": fl}
+	items.append(rec)
+	history.append(rec)
+	_apply_floor(rec)
+	_spend(cost)
 	items_changed.emit()
 	return rec
 
@@ -1230,7 +1382,7 @@ func _update_status_labels() -> void:
 func pick(p: Vector3) -> Dictionary:
 	var q := Vector2(p.x, p.z)
 	for it: Dictionary in items:
-		if Catalog.is_inside(String(it["id"])) and (it["rect"] as Rect2).grow(0.2).has_point(q):
+		if Catalog.is_inside(String(it["id"])) and not Catalog.is_zone(String(it["id"])) and (it["rect"] as Rect2).grow(0.2).has_point(q):
 			if not interior_view or floor_of(it) == view_floor:
 				return it
 	for l: Dictionary in lines:
@@ -1238,9 +1390,16 @@ func pick(p: Vector3) -> Dictionary:
 			for v: Vector3 in wall_probe(l):
 				if Vector2(v.x - p.x, v.z - p.z).length() < 0.7:
 					return l
+	if interior_view:
+		for i in range(items.size() - 1, -1, -1):
+			var it: Dictionary = items[i]
+			if Catalog.is_zone(String(it["id"])) and floor_of(it) == view_floor and (it["rect"] as Rect2).has_point(q):
+				return it
 	for i in range(items.size() - 1, -1, -1):
 		var it: Dictionary = items[i]
 		var r: Rect2 = it["rect"]
+		if Catalog.is_zone(String(it["id"])):
+			continue
 		if r.has_point(q):
 			return it
 	var best: Dictionary = {}
@@ -1272,9 +1431,11 @@ func details(rec: Dictionary) -> String:
 		out.append("Unterhalt %s pro Tag" % fmt_money(roundi(float(cost) * Catalog.UPKEEP_LINES)))
 		return "\n".join(out)
 	var def: Dictionary = Catalog.ITEMS[rec["id"]]
-	if rec["id"] == "halle":
+	if rec["id"] == "halle" or Catalog.is_zone(String(rec["id"])):
 		var r: Rect2 = rec["rect"]
 		out.append("%d × %d m, %s m²" % [int(r.size.x), int(r.size.y), fmt_money(int(r.get_area())).trim_suffix(" €")])
+		if Catalog.is_zone(String(rec["id"])):
+			out.append(String(def.get("desc", "")))
 	else:
 		out.append(String(def.get("desc", "")))
 	var needs := needs_of(rec)
@@ -1308,6 +1469,8 @@ func remove(rec: Dictionary, refund: float = 0.5) -> void:
 		for inner: Dictionary in inside_of(rec) + walls:
 			_remove_one(inner, refund)
 	_remove_one(rec, refund)
+	if Catalog.is_door(String(rec.get("id", ""))) and not (rec.get("hall", {}) as Dictionary).is_empty():
+		refresh_walls(rec["hall"], floor_of(rec))
 	evaluate_supply()
 	if any_line:
 		network_changed.emit()
@@ -1394,7 +1557,7 @@ func save_game(quiet: bool = false) -> void:
 		var p: Vector3 = it["pos"]
 		var e := {"id": it["id"], "x": snappedf(p.x, 0.01), "z": snappedf(p.z, 0.01), "rot": it["rot"], "cost": it["cost"],
 			"opts": it.get("opts", {}), "floor": floor_of(it)}
-		if it["id"] == "halle":
+		if it["id"] == "halle" or Catalog.is_zone(String(it["id"])):
 			var r: Rect2 = it["rect"]
 			e["w"] = r.size.x
 			e["d"] = r.size.y
@@ -1445,6 +1608,13 @@ func load_game() -> bool:
 	for it: Dictionary in data.get("items", []):
 		if not Catalog.ITEMS.has(String(it["id"])) or String(it["id"]) == "halle":
 			continue
+		if Catalog.is_zone(String(it["id"])):
+			var zw := float(it.get("w", 4.0))
+			var zd := float(it.get("d", 4.0))
+			var zr := build_zone(String(it["id"]), Rect2(float(it["x"]) - zw * 0.5, float(it["z"]) - zd * 0.5, zw, zd), true, int(it.get("floor", 0)))
+			if not zr.is_empty():
+				zr["cost"] = int(it.get("cost", 0))
+			continue
 		var rec := build_item(String(it["id"]), Vector3(float(it["x"]), 0.0, float(it["z"])), int(it["rot"]), true,
 			it.get("opts", {}), int(it.get("floor", 0)))
 		if not rec.is_empty():
@@ -1486,60 +1656,84 @@ func load_starter() -> void:
 	for x: float in [-160.0, -520.0]:
 		build_line("rollweg", [V.call(x, -272), V.call(x - 70, -260), V.call(x - 125, -238), V.call(x - 160, -205),
 			V.call(x - 178, -165), V.call(x - 184, -130), V.call(x - 185, -104)], true)
+	# Betriebsstraße vor den Ständen (unter den Brücken durch), um den Großraum-Stand herum zu den Garagen
+	build_line("betriebsstrasse", [V.call(-176, -32), V.call(110, -32), V.call(121, -25), V.call(128, -12), V.call(140, -7),
+		V.call(204, -7), V.call(216, -12), V.call(223, -26), V.call(234, -32), V.call(372, -32)], true)
 	build_line("strasse", [V.call(430, 60), V.call(260, 60), V.call(170, 40), V.call(60, 30),
 		V.call(-60, 30), V.call(-150, 45), V.call(-215, 110)], true)
 	build_line("strasse", [V.call(115, 210), V.call(115, 35)], true)
-	build_line("gehweg", [V.call(-30, 12), V.call(30, 12)], true)
+	build_line("gehweg", [V.call(-36, 20), V.call(36, 20)], true)
 	_starter_terminal(V)
-	# Kontaktstände mit Brücke vor den Gates, Außenpositionen mit Bus und Treppe daneben
-	for x: float in [-40.0, 5.0]:
+	# Kontaktstände mit Brücke vor den Gates, Außenpositionen mit Bus und Treppe an den Enden
+	for x: float in [-85.0, -40.0, 5.0, 50.0]:
 		build_item("stand", V.call(x, -55), 0, true)
-	for x: float in [-130.0, -85.0, 50.0, 95.0]:
+	for x: float in [-130.0, 95.0]:
 		build_item("stand_aussen", V.call(x, -55), 0, true)
-	build_item("bushalt", V.call(-5, -27.5), 0, true)
-	for x: float in [-22.0, 11.0]:
+	for x: float in [-67.0, -22.0, 11.0, 56.0]:
 		build_item("fluggastbruecke", V.call(x, -26.5), 0, true)
 	build_item("stand_gross", V.call(165, -50), 0, true)
-	for x: float in [-107.5, -62.5, 27.5, 72.5, 128.0]:
-		build_item("flutlicht", V.call(x, -29.5), 0, true)
+	build_item("bushalt", V.call(123.5, -45), 1, true)
+	for x: float in [-107.5, -62.5, -17.5, 27.5, 72.5, 129.5]:
+		build_item("flutlicht", V.call(x, -48), 0, true)
 	build_item("tower", V.call(262, 22), 0, true)
 	build_item("hangar", V.call(-200, -48), 0, true)
 	build_item("parkhaus", V.call(-40, 62), 0, true)
 	build_item("trafo", V.call(60, 50), 0, true)
-	build_item("wasseranschluss", V.call(40, 18), 0, true)
+	build_item("trafo", V.call(205, 14), 0, true)
+	build_item("trafo", V.call(-70, 55), 0, true)
+	build_item("wasseranschluss", V.call(40, 22), 0, true)
+	build_item("wasseranschluss", V.call(219, -5), 0, true)
 	build_item("heizzentrale", V.call(92, 60), 0, true)
-	build_item("feuerwache", V.call(330, -60), 0, true)
 	build_item("haltestelle", V.call(-48, 22), 2, true)
-	# Sicherheitszaun zwischen Landseite und Vorfeld, Grünanlagen am Terminal
-	build_line("zaun", [V.call(-29, -14), V.call(-170, -14)], true)
-	build_line("zaun", [V.call(29, -14), V.call(124, -14)], true)
-	for x: float in [-15.0, 15.0]:
-		build_item("blumenbeet", V.call(x, 19.5), 0, true)
-	for p: Vector2 in [Vector2(-34, 12), Vector2(34, 12), Vector2(-36, 3), Vector2(36, 3), Vector2(20, 88), Vector2(44, 90)]:
+	# Luftseite: Gerätehalle im Westen, Catering, Tanklager, Busgarage und Feuerwache im Osten
+	build_item("vorfelddepot", V.call(-160, -10), 2, true)
+	build_item("catering", V.call(240, -12), 2, true)
+	build_item("tanklager", V.call(250, -55), 0, true)
+	build_item("busgarage", V.call(298, -52), 0, true)
+	build_item("feuerwache", V.call(345, -52), 0, true)
+	build_item("gepaeckumschlag", V.call(295, -10), 0, true)
+	build_item("personalgebaeude", V.call(150, 14), 0, true)
+	# Sicherheitszaun zwischen Landseite und Luftseite, Grünanlagen am Terminal
+	build_line("zaun", [V.call(-142, 4), V.call(-232, 4)], true)
+	build_line("zaun", [V.call(108, 4), V.call(322, 4)], true)
+	for x: float in [-44.0, 44.0]:
+		build_item("blumenbeet", V.call(x, 23.5), 0, true)
+	for p: Vector2 in [Vector2(-70, 22), Vector2(70, 22), Vector2(-84, 23), Vector2(84, 23), Vector2(20, 88), Vector2(44, 90)]:
 		build_item("busch", V.call(p.x, p.y), 0, true)
 	build_item("teich", V.call(30, 100), 0, true)
 	build_item("picknick", V.call(46, 102), 0, true)
 	build_item("felsen", V.call(16, 104), 0, true)
-	build_item("gepaeckumschlag", V.call(265, -10), 0, true)
-	build_line("foerderband", [V.call(26, -4), V.call(140, -9), V.call(251, -8)], true)
-	build_line("stromkabel", [V.call(258, 16), V.call(262, 0)], true)
-	build_line("stromkabel", [V.call(57, 46), V.call(22, 2)], true)
-	build_line("stromkabel", [V.call(64, 46), V.call(160, 44), V.call(257, 22)], true)
+	build_line("foerderband", [V.call(96, -19), V.call(150, -14), V.call(281, -8)], true)
+	# Strom: Trafo 1 fürs Terminal und die Heizzentrale, Trafo 2 für die Luftseite und den Tower,
+	# Trafo 3 für Parkhaus und Gerätehalle
+	build_line("stromkabel", [V.call(58, 46), V.call(58, 15)], true)
 	build_line("stromkabel", [V.call(65, 52), V.call(81, 56)], true)
-	build_line("stromkabel", [V.call(55, 51), V.call(-23, 52)], true)
-	build_line("wasserrohr", [V.call(40, 16), V.call(20, 4)], true)
-	build_line("wasserrohr", [V.call(42, 20), V.call(82, 57)], true)
-	build_line("heizrohr", [V.call(84, 52), V.call(40, 30), V.call(26, 6)], true)
-	for x: float in [-24.0, -12.0, 0.0, 12.0, 24.0]:
-		build_item("kuebel", V.call(x, 16), 0, true)
+	build_line("stromkabel", [V.call(204, 18), V.call(164, 18)], true)
+	build_line("stromkabel", [V.call(209, 11), V.call(229, -4)], true)
+	build_line("stromkabel", [V.call(240, -21), V.call(240, -40)], true)
+	build_line("stromkabel", [V.call(271, -55), V.call(281, -55)], true)
+	build_line("stromkabel", [V.call(315, -50), V.call(331, -50)], true)
+	build_line("stromkabel", [V.call(209, 17), V.call(257, 20)], true)
+	build_line("stromkabel", [V.call(267, 16), V.call(283, -3)], true)
+	build_line("stromkabel", [V.call(-66, 55), V.call(-57, 55)], true)
+	build_line("stromkabel", [V.call(-74, 51), V.call(-120, 34), V.call(-160, 12), V.call(-160, -1)], true)
+	# Wasser: Anschluss 1 fürs Terminal und die Heizzentrale, Anschluss 2 für Catering, Feuerwache, Personal
+	build_line("wasserrohr", [V.call(40, 20), V.call(40, 15)], true)
+	build_line("wasserrohr", [V.call(42, 23), V.call(82, 57)], true)
+	build_line("wasserrohr", [V.call(220, -4), V.call(226, -4)], true)
+	build_line("wasserrohr", [V.call(254, -20), V.call(258, -26), V.call(338, -26), V.call(338, -43)], true)
+	build_line("wasserrohr", [V.call(219, -3), V.call(200, 6), V.call(163, 10)], true)
+	build_line("heizrohr", [V.call(84, 52), V.call(84, 30), V.call(84, 15)], true)
+	for x: float in [-24.0, -12.0, 12.0, 24.0]:
+		build_item("kuebel", V.call(x, 23.2), 0, true)
 	for x: float in [-6.0, 6.0]:
-		build_item("bank", V.call(x, 16), 0, true)
-	for x in range(-30, 170, 30):
-		build_item("laterne", V.call(float(x), 22), 0, true)
+		build_item("bank", V.call(x, 23.2), 0, true)
+	for x in range(-30, 140, 30):
+		build_item("laterne", V.call(float(x), 25.0), 0, true)
 	for x in range(130, 420, 24):
 		build_item("baum", V.call(float(x), 76 + float(x % 7)), 0, true)
-	for p: Vector2 in [Vector2(-110, 90), Vector2(-90, 110), Vector2(20, 80), Vector2(250, -20), Vector2(280, 10),
-			Vector2(-260, 20), Vector2(-240, 60), Vector2(150, 110), Vector2(-120, 140)]:
+	for p: Vector2 in [Vector2(-110, 90), Vector2(-90, 110), Vector2(20, 80), Vector2(-260, 20), Vector2(-240, 60),
+			Vector2(150, 110), Vector2(-120, 140)]:
 		build_item("baum", V.call(p.x, p.y), 0, true)
 	history.clear()
 	money = START_MONEY
@@ -1547,51 +1741,82 @@ func load_starter() -> void:
 	money_changed.emit(money)
 
 
-## Terminal des Startflughafens: Halle 56 × 32 m, Landseite oben (+z), Vorfeld unten (-z).
+## Terminal des Startflughafens: Halle 250 × 40 m, Landseite oben (+z), Vorfeld unten (-z).
+## Öffentlicher Bereich vorn mit Eingängen, Check-in und Gepäckbändern; Glaswand mit drei
+## Kontrollspuren und dem Ausgang; dahinter der Sicherheitsbereich mit Gates, Läden und Cafés;
+## im Osten der Personalbereich mit Gepäcksortierung und Personalraum hinter Personaltüren.
 func _starter_terminal(V: Callable) -> void:
-	build_hall(Rect2(-28, -24, 56, 32), true)
-	var put := func(id: String, x: float, z: float, r: int = 0) -> void:
-		build_item(id, V.call(x, z), r, true)
-	# Landseite: Eingänge, Check-in, Gepäckband, Café
-	put.call("eingang", -14, 7)
-	put.call("eingang", 14, 7)
-	put.call("anzeige", 0, 6.5)
-	for x: float in [-15.0, -9.0, -3.0, 3.0]:
-		put.call("checkin", x, 0.5)
-	put.call("gepaeckband", 18, -2.5)
-	put.call("cafe", -23, -2)
-	put.call("wc", 25.5, 3.5, 3)
-	put.call("sitzreihe", -6, 5)
-	put.call("sitzreihe", 6, 5)
-	for x: float in [-27.0, -10.0, 10.0]:
-		put.call("pflanze", x, 7)
-	# Trennung mit Kontrolle und Ankunftsdurchgang
-	build_line("glaswand", [V.call(-28, -8), V.call(-6, -8)], true)
-	build_line("glaswand", [V.call(6, -8), V.call(12, -8)], true)
-	build_line("glaswand", [V.call(16, -8), V.call(28, -8)], true)
-	put.call("sb_ausgang", 14, -8)
-	put.call("sicherheit", -3, -8)
-	put.call("sicherheit", 3, -8)
-	# Luftseite: Gates am Vorfeld, Toiletten, Gepäcksortierung, Shop
-	put.call("gate", -22, -20)
-	put.call("busgate", -11, -20)
-	put.call("busgate", 0, -20)
-	put.call("gate", 11, -20)
-	put.call("wc", 22, -21.5)
-	put.call("gepaeckanlage", 22, -13)
-	put.call("shop", -22, -11)
-	put.call("kunst", 11.5, -11.5)
-	put.call("anzeige", -10, -9.5)
-	for x: float in [-5.5, 5.5, 17.5]:
-		put.call("pflanze", x, -15)
-	# Ausstattung: Bahnhofsuhr, Automat, Werbestele, Ladesäule
-	put.call("uhr", 9, 3)
-	put.call("snackautomat", -26.2, 4.5, 1)
-	put.call("werbebildschirm", -14, -9.5, 2)
-	put.call("ladestation", 17.5, -17)
-	# Heizkörper an den Wänden
-	for x: float in [-22.0, -4.0, 4.0, 22.0]:
-		put.call("heizkoerper", x, 7.75)
-	for z: float in [-14.0, -2.0]:
-		put.call("heizkoerper", -27.75, z, 1)
-		put.call("heizkoerper", 27.75, z, 1)
+	build_hall(Rect2(-142, -24, 250, 40), true, {"vordach": true})
+	var put := func(id: String, x: float, z: float, r: int = 0, o: Dictionary = {}) -> void:
+		build_item(id, V.call(x, z), r, true, o)
+	# Bereiche
+	build_zone("bereich_oeffentlich", Rect2(-142, -8, 250, 24), true, 0)
+	build_zone("bereich_sicherheit", Rect2(-142, -24, 222, 16), true, 0)
+	build_zone("bereich_personal", Rect2(80, -24, 28, 16), true, 0)
+	# Wände: Glaswand mit Lücken für Kontrolle und Ausgang, Personalbereich mit Innenwänden
+	build_line("glaswand", [V.call(-142, -8), V.call(-18, -8)], true)
+	build_line("glaswand", [V.call(0, -8), V.call(28, -8)], true)
+	build_line("glaswand", [V.call(32, -8), V.call(80, -8)], true)
+	build_line("innenwand", [V.call(80, -8), V.call(108, -8)], true)
+	build_line("innenwand", [V.call(80, -24), V.call(80, -8)], true)
+	put.call("tuer", 88, -8, 0, {"art": "personal"})
+	put.call("tuer", 80, -14, 1, {"art": "personal"})
+	put.call("sb_ausgang", 30, -8)
+	for x: float in [-15.0, -9.0, -3.0]:
+		put.call("sicherheit", x, -8)
+	# Landseite: Eingänge, Check-in, Gepäckbänder, Info, Café, Kiosk, WC
+	for x: float in [-110.0, -48.0, 0.0, 48.0]:
+		put.call("eingang", x, 15)
+	for x: float in [-100.0, -94.0, -88.0, -40.0, -34.0, -28.0]:
+		put.call("checkin", x, 2.5)
+	put.call("gepaeckband", 45, -1.5)
+	put.call("gepaeckband", 60, -1.5, 0, {"stil": "karussell"})
+	put.call("infoschalter", 15, 6)
+	put.call("cafe", -125, 8, 0, {"stil": "baeckerei"})
+	put.call("kiosk", 95, 10)
+	put.call("wc", 75, 12)
+	put.call("wc", -134, -1.5, 1)
+	for x: float in [-70.0, 24.0]:
+		put.call("anzeige", x, 14.5)
+	put.call("anzeige", -64, -5.5)
+	for p: Vector2 in [Vector2(-66, 7), Vector2(-60, 7), Vector2(26, 7), Vector2(32, 7)]:
+		put.call("sitzreihe", p.x, p.y)
+	for x: float in [-118.0, -78.0, -56.0, -20.0, 30.0, 66.0]:
+		put.call("pflanze", x, 14.5)
+	put.call("uhr", 8, 10)
+	put.call("snackautomat", -140.5, 10, 1)
+	put.call("getraenkeautomat", -140.5, 8, 1)
+	put.call("geldautomat", -20, 12.5)
+	put.call("werbebildschirm", -6, 4, 0)
+	put.call("ladestation", 36, 10)
+	put.call("kofferwagen", -78, 10)
+	put.call("trinkbrunnen", 70, 5)
+	# Sicherheitsbereich: Gates an der Vorfeldseite, dazwischen Läden, Cafés, WCs
+	for x: float in [-67.0, -22.0, 11.0, 56.0]:
+		put.call("gate", x, -20)
+	put.call("busgate", -120, -20)
+	put.call("busgate", 70, -20)
+	put.call("shop", -95, -20, 0, {"stil": "dutyfree"})
+	put.call("shop", -35, -20, 0, {"stil": "buecher"})
+	put.call("cafe", -45, -20, 0, {"stil": "bar"})
+	put.call("cafe", 25, -20, 0, {"stil": "cafe"})
+	put.call("wc", -82, -21.5)
+	put.call("wc", 40, -21.5)
+	put.call("kunst", -6, -20)
+	put.call("anzeige", -10, -14.5)
+	put.call("anzeige", 40, -15)
+	put.call("lounge", -130, -12)
+	put.call("spielecke", -105, -11.5)
+	put.call("aquarium", 0, -14.8)
+	for x: float in [-140.0, -86.0, -52.0, 18.0, 46.0, 64.0]:
+		put.call("pflanze", x, -9.2)
+	# Personalbereich: Gepäcksortierung und Personalraum
+	put.call("gepaeckanlage", 96, -20)
+	put.call("personalraum", 101, -11)
+	# Heizkörper an den Außenwänden
+	for x: float in [-136.0, -125.0, -95.0, -82.0, -70.0, -60.0, -35.0, -20.0, -10.0, 10.0, 20.0, 34.0, 60.0, 72.0, 86.0, 100.0]:
+		put.call("heizkoerper", x, 15.75)
+	for x: float in [-136.0, -103.0, -88.0, -58.0, -30.0, 2.0, 32.0, 47.0, 85.0]:
+		put.call("heizkoerper", x, -23.75)
+	for z: float in [-18.0, 6.0]:
+		put.call("heizkoerper", 107.75, z, 1)

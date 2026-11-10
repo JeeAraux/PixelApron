@@ -28,6 +28,15 @@ const Models = preload("res://scripts/models.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
 const BRIDGE_REACH := 38.0
 var bus_cb: Callable            # ground_ops.pax_at_door(Flug-ID): ein Abfliegender ist an der Bus-Tür
+var doors: Array = []           # [Tür-Datensatz, Öffnung 0..1]
+var staff_t := 0.0               # Takt für Mitarbeiter, die zu ihren Plätzen gehen
+## Mitarbeiter je Einrichtung (Schichtstärke) für die Personalrechnung
+const STAFF_NEED := {"checkin": 4, "sicherheit": 8, "gate": 2, "busgate": 2, "passkontrolle": 6, "zoll": 3,
+	"gepaeckanlage": 6, "gepaeckband": 1, "cafe": 4, "shop": 2, "infoschalter": 2, "kiosk": 1, "wc": 1}
+const STAFF_PER_STAND := 6
+## Arbeitsplätze, zu denen Mitarbeiter aus dem Personalraum gehen
+const WORKPLACES := ["checkin", "sicherheit", "gate", "busgate", "passkontrolle", "zoll", "gepaeckanlage", "infoschalter",
+	"cafe", "shop", "gepaeckband", "kiosk"]
 
 
 func setup(g: GameState) -> void:
@@ -50,6 +59,8 @@ func _analyze() -> void:
 	for h: Dictionary in game.items_of("halle"):
 		var counts := {}
 		for it: Dictionary in game.inside_of(h):
+			if Catalog.is_zone(String(it["id"])):
+				continue
 			counts[it["id"]] = int(counts.get(it["id"], 0)) + 1
 		var missing := []
 		for e: Array in ESSENTIAL:
@@ -81,6 +92,13 @@ func _analyze() -> void:
 		}
 		halls.append(info)
 	_rebuild_bridges()
+	var old_open := {}
+	for d: Array in doors:
+		old_open[(d[0] as Dictionary).get("node")] = d[1]
+	doors = []
+	for it: Dictionary in game.items:
+		if Catalog.is_door(String(it["id"])):
+			doors.append([it, float(old_open.get(it.get("node"), 0.0))])
 	# Personen in abgerissenen Hallen verschwinden, die anderen suchen ihren Weg neu
 	for per: Dictionary in people.duplicate():
 		if not grids.has(int(per["hall_id"])):
@@ -157,7 +175,49 @@ func retail_per_pax() -> int:
 		var n := _sum(id)
 		if n > 0:
 			total += int(Catalog.ITEMS[id]["retail"]) + mini(n - 1, 2)
+	# Läden hinter der Kontrolle verdienen die Hälfte mehr (dort warten die Reisenden)
+	var airside := 0
+	var all := 0
+	for info: Dictionary in _complete():
+		var h: Dictionary = info["hall"]
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] == "cafe" or it["id"] == "shop":
+				all += 1
+				if game.zone_at(h, (it["rect"] as Rect2).get_center(), GameState.floor_of(it)) == "sicherheit":
+					airside += 1
+	if all > 0:
+		total = roundi(float(total) * (1.0 + 0.5 * float(airside) / float(all)))
 	return total
+
+
+## Personal: gebraucht (Schalter, Kontrolle, Gates, Stände …) und vorhanden (Personalgebäude mit Strom).
+func staff_needed() -> int:
+	var n := 0
+	for info: Dictionary in halls:
+		var counts: Dictionary = info["counts"]
+		for id: String in STAFF_NEED:
+			n += int(counts.get(id, 0)) * int(STAFF_NEED[id])
+	n += game.stands().size() * STAFF_PER_STAND
+	return n
+
+
+func staff_available() -> int:
+	var n := 0
+	for b: Dictionary in game.items_of("personalgebaeude"):
+		if game.supplied(b, "strom"):
+			n += int(Catalog.ITEMS["personalgebaeude"]["staff"])
+	return n
+
+
+## Faktor für die Abfertigungszeit bei Personalmangel (1 = genug Personal, bis 1,5).
+func staff_slowdown() -> float:
+	if dirty:
+		_analyze()
+	var need := staff_needed()
+	if need <= 0:
+		return 1.0
+	var short := clampf(1.0 - float(staff_available()) / float(need), 0.0, 1.0)
+	return 1.0 + 0.5 * short
 
 
 ## Einflüsse auf die Zufriedenheit: [Text, Punkte]
@@ -199,6 +259,23 @@ func factors() -> Array:
 	var bonus := mini(10, roundi(float(decor) / maxf(area / 100.0, 1.0) * 4.0))
 	if bonus > 0:
 		out.append(["Ausstattung im Terminal (Pflanzen, Sitze, Café, Kunst)", bonus])
+	var need := staff_needed()
+	var have := staff_available()
+	if have < need:
+		out.append(["Zu wenig Personal: %d von %d Mitarbeitern" % [have, need], -mini(12, 4 + roundi(8.0 * (1.0 - float(have) / maxf(float(need), 1.0))))])
+		if hint == "":
+			hint = "Personalgebäude bauen und mit Strom versorgen: Abfertigung dauert sonst länger" if have == 0 else "Mehr Personal: ein weiteres Personalgebäude bauen"
+	for info: Dictionary in done:
+		var h: Dictionary = info["hall"]
+		if int((info["counts"] as Dictionary).get("personalraum", 0)) == 0:
+			out.append(["Kein Personalraum im Terminal", -3])
+			if hint == "":
+				hint = "Personalraum in den Personalbereich stellen"
+		if not game.zones_of(h).is_empty():
+			for it: Dictionary in game.inside_of(h):
+				if it["id"] == "gepaeckanlage" and game.zone_at(h, (it["rect"] as Rect2).get_center(), GameState.floor_of(it)) != "personal":
+					out.append(["Gepäcksortierung offen zugänglich (nicht im Personalbereich)", -2])
+					break
 	return out
 
 
@@ -543,6 +620,8 @@ func step(sim: float) -> void:
 	_move_bridges(sim)
 	_belts(sim)
 	_animate_inside(sim)
+	_animate_doors(sim)
+	_staff_tick(sim)
 	for per: Dictionary in people.duplicate():
 		_update_person(per, sim)
 
@@ -583,7 +662,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 				plan.insert(si, ["go", con[1]])
 				return
 			if path.is_empty():
-				path = _path(int(per["hall_id"]), per["pos"], st[1], bool(per["dep"]))
+				path = _path(int(per["hall_id"]), per["pos"], st[1], bool(per["dep"]), String(per.get("mode", "")))
 				per["path"] = path
 				per["pi"] = 0
 			var pos: Vector3 = per["pos"]
@@ -662,8 +741,23 @@ func _security_problems(h: Dictionary, g: Dictionary) -> Array:
 	if entries.is_empty() or gates.is_empty():
 		return out
 	var oneway := _cell_set(_cells_of(h, "sb_ausgang"))
+	# 0. Bereiche: Gates im Sicherheitsbereich, Eingang und Check-in öffentlich
+	for it: Dictionary in game.inside_of(h):
+		var iid := String(it["id"])
+		var zc: String = game.zone_at(h, (it["rect"] as Rect2).get_center(), GameState.floor_of(it))
+		if (iid == "gate" or iid == "busgate") and zc != "sicherheit":
+			out.append("Gates müssen im Sicherheitsbereich liegen: Bereich »Sicherheitsbereich« über die Gates ziehen")
+			return out
+		if (iid == "eingang" or iid == "checkin") and (zc == "sicherheit" or zc == "personal"):
+			out.append("Eingang und Check-in gehören in den öffentlichen Bereich")
+			return out
 	# 1. Ohne durch die Kontrolle (und ohne verkehrt durch den Ausgang) zu den Gates?
 	var free := _flood(g, "arr", entries, oneway)
+	for key: String in free:
+		var parts := key.split(",")
+		if game.zone_at(h, Vector2(float(parts[0]) + 0.5, float(parts[1]) + 0.5), int(parts[2])) == "sicherheit":
+			out.append("Sicherheitsbereich offen: Vom Eingang kommt man ohne Kontrolle hinein. Mit Wänden, Glaswänden oder Personaltüren abtrennen.")
+			return out
 	for c: Array in gates:
 		if free.has(_ckey(c)):
 			out.append("Sicherheitsbereich offen: Gates sind ohne Kontrolle erreichbar. Mit Wänden oder Glaswänden abtrennen.")
@@ -785,7 +879,7 @@ func _make_grids(h: Dictionary) -> Dictionary:
 	var out := {}
 	var lo := -1 if game.hall_basement(h) else 0
 	for f in range(lo, game.hall_levels(h)):
-		out[f] = {"dep": _make_grid(h, "dep", f), "arr": _make_grid(h, "arr", f)}
+		out[f] = {"dep": _make_grid(h, "dep", f), "arr": _make_grid(h, "arr", f), "staff": _make_grid(h, "staff", f)}
 	var links := {}
 	for it: Dictionary in game.inside_of(h):
 		if not bool(Catalog.ITEMS[it["id"]].get("connector", false)):
@@ -816,6 +910,8 @@ func _make_grid(h: Dictionary, mode: String = "dep", f: int = 0) -> AStarGrid2D:
 	for it: Dictionary in game.inside_of(h):
 		var itf := GameState.floor_of(it)
 		var def: Dictionary = Catalog.ITEMS[it["id"]]
+		if Catalog.is_zone(String(it["id"])):
+			continue
 		# Verbinder ragen in die Ebene darüber (dort ist ihr oberes Ende begehbar)
 		if itf != f and not (bool(def.get("connector", false)) and itf + 1 == f):
 			continue
@@ -839,6 +935,27 @@ func _make_grid(h: Dictionary, mode: String = "dep", f: int = 0) -> AStarGrid2D:
 			var c := Vector2i(floori(v.x), floori(v.z))
 			if g.is_in_boundsv(c):
 				g.set_point_solid(c, true)
+	# Türen öffnen die Wand (Personaltüren nur für Mitarbeiter)
+	for it: Dictionary in game.inside_of(h):
+		if not Catalog.is_door(String(it["id"])) or GameState.floor_of(it) != f:
+			continue
+		if mode != "staff" and String(game.opt(it, "art")) == "personal":
+			continue
+		for c: Array in _cells_of_item(it):
+			var cell: Vector2i = c[0]
+			if g.is_in_boundsv(cell):
+				g.set_point_solid(cell, false)
+	# Personalbereich ist für Fluggäste gesperrt
+	if mode != "staff":
+		for z: Dictionary in game.zones_of(h):
+			if GameState.floor_of(z) != f or String(Catalog.ITEMS[z["id"]]["zone"]) != "personal":
+				continue
+			var zr: Rect2 = z["rect"]
+			for x in range(floori(zr.position.x), ceili(zr.end.x)):
+				for zz in range(floori(zr.position.y), ceili(zr.end.y)):
+					var c := Vector2i(x, zz)
+					if g.is_in_boundsv(c) and game.zone_at(h, Vector2(float(x) + 0.5, float(zz) + 0.5), f) == "personal":
+						g.set_point_solid(c, true)
 	return g
 
 
@@ -852,11 +969,11 @@ static func _floor_at(p: Vector3) -> int:
 
 
 ## Weg auf einer Ebene (a und b auf derselben Ebene).
-func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true) -> Array:
+func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true, mode: String = "") -> Array:
 	var f := _floor_at(a)
 	if not grids.has(hall_id) or not (grids[hall_id] as Dictionary).has(f):
 		return [b]
-	var g: AStarGrid2D = grids[hall_id][f]["dep" if dep else "arr"]
+	var g: AStarGrid2D = grids[hall_id][f][mode if mode != "" else ("dep" if dep else "arr")]
 	var ca := _cell(g, a)
 	var cb := _cell(g, b)
 	var sa := g.is_point_solid(ca)
@@ -1164,3 +1281,215 @@ func _animate_inside(sim: float) -> void:
 				var ph := fmod(inside_t * 0.12 + float(it["pos"].x) * 0.01, 2.0)
 				var u := clampf(ph * 1.6 - 0.3, 0.0, 1.0) if ph < 1.0 else clampf((2.0 - ph) * 1.6 - 0.3, 0.0, 1.0)
 				cab.position.y = smoothstep(0.0, 1.0, u) * Catalog.FLOOR_H
+
+
+# ---------------------------------------------------------------- Türen und Personal
+
+## Türflügel gehen auf, wenn jemand näher als zwei Meter kommt (Personaltüren nur für Mitarbeiter).
+func _animate_doors(sim: float) -> void:
+	for d: Array in doors:
+		var it: Dictionary = d[0]
+		var node: Variant = it.get("node")
+		if not is_instance_valid(node):
+			continue
+		var n := node as Node3D
+		var kind := String(n.get_meta("door_kind", "automatik"))
+		var c: Vector3 = it["pos"]
+		var want := 0.0
+		var reach := 2.2 if kind == "automatik" else 1.7
+		for per: Dictionary in people:
+			if kind == "personal" and not bool(per.get("staff", false)):
+				continue
+			var q: Vector3 = per["pos"]
+			if absf(q.y - c.y) < 2.0 and Vector2(q.x - c.x, q.z - c.z).length() < reach:
+				want = 1.0
+				break
+		var o := move_toward(float(d[1]), want, sim * (2.4 if want > 0.5 else 1.2))
+		d[1] = o
+		if not n.visible:
+			continue
+		var e := smoothstep(0.0, 1.0, o)
+		for nm: String in ["TuerL", "TuerR"]:
+			var leaf := n.get_node_or_null(nm) as Node3D
+			if leaf == null:
+				continue
+			if kind == "automatik":
+				var bx := float(leaf.get_meta("base_x", 0.0))
+				leaf.position.x = bx + signf(bx) * e * 1.02
+			else:
+				leaf.rotation.y = float(leaf.get_meta("swing", 1.0)) * e * 1.45
+
+
+## Mitarbeiter gehen vom Personalraum zu den Schaltern und zurück, eine Reinigungskraft schiebt
+## ihren Wagen durch die öffentlichen Bereiche.
+func _staff_tick(sim: float) -> void:
+	staff_t -= sim
+	if staff_t > 0.0:
+		return
+	staff_t = randf_range(6.0, 14.0)
+	var count := 0
+	var cleaners := 0
+	for per: Dictionary in people:
+		if bool(per.get("staff", false)):
+			count += 1
+			if bool(per.get("cleaner", false)):
+				cleaners += 1
+	for info: Dictionary in halls:
+		var h: Dictionary = info["hall"]
+		if not is_instance_valid(h.get("node")):
+			continue
+		var hid := (h["node"] as Node).get_instance_id()
+		if not grids.has(hid):
+			continue
+		var area: float = info["area"]
+		if cleaners < 1 and area > 400.0 and randf() < 0.5:
+			_spawn_cleaner(h, hid)
+			cleaners += 1
+		if count >= 4 + int(area / 600.0):
+			continue
+		var rooms := []
+		var work := []
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] == "personalraum":
+				rooms.append(it)
+			elif String(it["id"]) in WORKPLACES:
+				work.append(it)
+		if rooms.is_empty() or work.is_empty():
+			continue
+		var room: Dictionary = rooms[randi() % rooms.size()]
+		var job: Dictionary = work[randi() % work.size()]
+		var start := _front(room, 1.5, 0.3)
+		var goal := _front(job, _size(job).x * 0.3, 0.6)
+		var vest := String(job["id"]) in ["gepaeckanlage", "gepaeckband"]
+		var shirt: Color = Color(0.2, 0.3, 0.52) if not vest else Color(0.25, 0.27, 0.3)
+		if String(job["id"]) == "sicherheit" or String(job["id"]) == "passkontrolle":
+			shirt = Color(0.12, 0.2, 0.35)
+		elif String(job["id"]) == "cafe":
+			shirt = Color(0.15, 0.15, 0.16)
+		var node: Node3D = Factory.make_staff(shirt, Color(0.12, 0.13, 0.18), randi() % 4, vest)
+		node.position = start
+		node.visible = false
+		add_child(node)
+		var plan := [["show"], ["go", goal], ["wait", randf_range(4.0, 12.0)], ["go", start], ["end"]]
+		people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
+			"timer": 0.0, "pos": start, "staff": true, "mode": "staff"})
+		count += 1
+
+
+func _spawn_cleaner(h: Dictionary, hid: int) -> void:
+	var g: Dictionary = grids[hid]
+	if not g.has(0):
+		return
+	var grid: AStarGrid2D = g[0]["dep"]
+	var r := grid.region
+	var pts := []
+	var tries := 0
+	while pts.size() < 5 and tries < 80:
+		tries += 1
+		var c := Vector2i(randi_range(r.position.x + 1, r.end.x - 2), randi_range(r.position.y + 1, r.end.y - 2))
+		if grid.is_point_solid(c):
+			continue
+		var zc := game.zone_at(h, Vector2(float(c.x) + 0.5, float(c.y) + 0.5), 0)
+		if zc == "personal":
+			continue
+		pts.append(Vector3(float(c.x) + 0.5, 0.0, float(c.y) + 0.5))
+	if pts.size() < 2:
+		return
+	var node: Node3D = Factory.make_staff(Color(0.3, 0.55, 0.75), Color(0.2, 0.25, 0.32), randi() % 4)
+	var cart := MeshInstance3D.new()
+	cart.name = "Wagen"
+	cart.mesh = preload("res://scripts/interior.gd").cleaning_cart_mesh()
+	cart.position = Vector3(0, 0, -0.85)
+	cart.rotation.y = PI
+	node.add_child(cart)
+	node.position = pts[0]
+	node.visible = false
+	add_child(node)
+	var plan := [["show"]]
+	for i in range(1, pts.size()):
+		plan.append(["go", pts[i]])
+		plan.append(["wait", randf_range(5.0, 10.0)])
+	plan.append(["end"])
+	people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
+		"timer": 0.0, "pos": pts[0], "staff": true, "cleaner": true})
+
+
+## Alte Spielstände: Bereiche aus Wänden und Kontrolle ableiten. Alles, was vom Eingang ohne
+## Kontrolle erreichbar ist, wird öffentlich, der Rest Sicherheitsbereich; um die Gepäcksortierung
+## kommt ein Personalbereich.
+func auto_zones(h: Dictionary) -> void:
+	if not game.zones_of(h).is_empty():
+		return
+	var g := _make_grids(h)
+	var entries := _cells_of(h, "eingang")
+	if entries.is_empty():
+		return
+	# eigenes Raster: nur Wände, Kontrolle und Ausgang sperren
+	var blocked := _cell_set(_cells_of(h, "sicherheit") + _cells_of(h, "sb_ausgang") + _cells_of(h, "passkontrolle"))
+	var open_g := {}
+	for fk: Variant in g:
+		if typeof(fk) != TYPE_INT:
+			continue
+		var f: int = fk
+		var base: AStarGrid2D = g[f]["staff"]
+		var og := AStarGrid2D.new()
+		og.region = base.region
+		og.cell_size = Vector2(1, 1)
+		og.update()
+		for l: Dictionary in game.walls_of(h):
+			if GameState.floor_of(l) != f:
+				continue
+			for v: Vector3 in game.wall_probe(l):
+				var c := Vector2i(floori(v.x), floori(v.z))
+				if og.is_in_boundsv(c):
+					og.set_point_solid(c, true)
+		for it: Dictionary in game.inside_of(h):
+			if Catalog.is_door(String(it["id"])) and GameState.floor_of(it) == f and String(game.opt(it, "art")) != "personal":
+				for c: Array in _cells_of_item(it):
+					if og.is_in_boundsv(c[0]):
+						og.set_point_solid(c[0], false)
+		open_g[f] = {"dep": og}
+	open_g["links"] = g.get("links", {})
+	var public := _flood(open_g, "dep", entries, blocked)
+	var r: Rect2 = h["rect"]
+	for fk: Variant in open_g:
+		if typeof(fk) != TYPE_INT:
+			continue
+		var f: int = fk
+		# Zeilen in Läufe zerlegen, gleiche Läufe untereinander zu Rechtecken zusammenfassen
+		var rects := []
+		var open_runs := {}
+		for z in range(floori(r.position.y), ceili(r.end.y)):
+			var runs := []
+			var x := floori(r.position.x)
+			while x < ceili(r.end.x):
+				var secure := not public.has(_ckey([Vector2i(x, z), f]))
+				if secure:
+					var x0 := x
+					while x < ceili(r.end.x) and not public.has(_ckey([Vector2i(x, z), f])):
+						x += 1
+					runs.append(Vector2i(x0, x))
+				else:
+					x += 1
+			var next_open := {}
+			for run: Vector2i in runs:
+				if open_runs.has(run):
+					var rr: Rect2 = open_runs[run]
+					rr.size.y += 1.0
+					next_open[run] = rr
+				else:
+					next_open[run] = Rect2(float(run.x), float(z), float(run.y - run.x), 1.0)
+			for run: Vector2i in open_runs:
+				if not next_open.has(run):
+					rects.append(open_runs[run])
+			open_runs = next_open
+		for run: Vector2i in open_runs:
+			rects.append(open_runs[run])
+		game.build_zone("bereich_oeffentlich", r, true, f)
+		for rr: Rect2 in rects:
+			game.build_zone("bereich_sicherheit", rr, true, f)
+	for it: Dictionary in game.inside_of(h):
+		if it["id"] == "gepaeckanlage":
+			var gr: Rect2 = (it["rect"] as Rect2).grow(1.0).intersection(r)
+			game.build_zone("bereich_personal", Rect2(floorf(gr.position.x), floorf(gr.position.y), ceilf(gr.size.x), ceilf(gr.size.y)), true, GameState.floor_of(it))
+	dirty = true

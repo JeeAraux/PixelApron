@@ -3,7 +3,7 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 base_color : source_color = vec3(0.2, 0.2, 0.19);
-uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband
+uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband, 10 Betriebsstraße
 uniform float width = 7.5;
 uniform float len = 100.0;
 uniform int flip = 0;
@@ -110,6 +110,21 @@ void fragment() {
 		}
 		if (pv >= 15.0 && pv < 16.5 && lx < (16.5 - pv) * 0.45) {
 			col = white;
+		}
+	} else if (mark == 10) {
+		// Betriebsstraße auf der Luftseite: weiße Randlinien, gestrichelte Mitte, Zebra-Kanten alle 40 m
+		if (abs(ax - (half_w - 0.35)) < 0.12) {
+			col = white;
+		}
+		if (ax < 0.1 && mod(v, 5.0) < 2.5) {
+			col = white * 0.95;
+		}
+		if (ax > half_w - 0.12) {
+			col = vec3(0.5, 0.49, 0.46);
+		}
+		float zv = mod(v, 40.0);
+		if (zv < 3.0 && ax < half_w - 0.5 && mod(v + x, 1.2) < 0.6 && ax > half_w - 1.4) {
+			col = white * 0.9;
 		}
 	} else if (mark == 2) {
 		// ICAO: durchgehende gelbe Mittellinie, doppelte gelbe Randlinie am Rand der tragfähigen Fläche
