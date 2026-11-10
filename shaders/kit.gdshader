@@ -5,6 +5,8 @@ shader_type spatial;
 render_mode cull_disabled;
 
 global uniform float night;
+global uniform float snow;
+global uniform float wet;
 
 varying vec3 wpos;
 
@@ -36,6 +38,13 @@ void fragment() {
 	ALBEDO = base;
 	ROUGHNESS = 0.82;
 	SPECULAR = 0.3;
+	if (COLOR.a > 0.95 && (snow > 0.01 || wet > 0.01)) {
+		// Schnee auf Dächern und Oberseiten, Nässe macht Flächen dunkler und glänzend
+		float up = smoothstep(0.6, 0.92, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
+		ALBEDO = mix(ALBEDO, vec3(0.86, 0.88, 0.92), snow * up * 0.85);
+		ALBEDO *= 1.0 - 0.12 * wet * (1.0 - snow);
+		ROUGHNESS = mix(ROUGHNESS, 0.3, wet * up);
+	}
 	if (COLOR.a < 0.45) {
 		// Lampe: nachts hell leuchtend
 		EMISSION = base * night * 6.0 + base * 0.15;

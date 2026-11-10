@@ -23,6 +23,10 @@ var gate_use: Dictionary = {}  # Instanz-ID des Gates -> Flug-ID
 var demand_dep := 0.0          # abfliegende Passagiere pro Stunde
 var demand_arr := 0.0
 var hint := ""
+var betrieb: Variant = null    # operations.gd (Statistik)
+var lost_recent := 0.0         # Spielminuten, in denen noch über verlorene Koffer geklagt wird
+var lost_unhandled := false    # verlorene Koffer ohne Gepäckermittlung
+var non_schengen_seen := false
 var bridges: Dictionary = {}   # Instanz-ID des Gates -> Fluggastbrücke
 const Models = preload("res://scripts/models.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
@@ -32,7 +36,8 @@ var doors: Array = []           # [Tür-Datensatz, Öffnung 0..1]
 var staff_t := 0.0               # Takt für Mitarbeiter, die zu ihren Plätzen gehen
 ## Mitarbeiter je Einrichtung (Schichtstärke) für die Personalrechnung
 const STAFF_NEED := {"checkin": 4, "sicherheit": 8, "gate": 2, "busgate": 2, "passkontrolle": 6, "zoll": 3,
-	"gepaeckanlage": 6, "gepaeckband": 1, "cafe": 4, "shop": 2, "infoschalter": 2, "kiosk": 1, "wc": 1}
+	"gepaeckanlage": 6, "gepaeckband": 1, "cafe": 4, "shop": 2, "infoschalter": 2, "kiosk": 1, "wc": 1,
+	"airline_lounge": 4, "gepaeckermittlung": 2, "gepaeckroentgen": 3}
 const STAFF_PER_STAND := 6
 ## Arbeitsplätze, zu denen Mitarbeiter aus dem Personalraum gehen
 const WORKPLACES := ["checkin", "sicherheit", "gate", "busgate", "passkontrolle", "zoll", "gepaeckanlage", "infoschalter",
@@ -190,6 +195,47 @@ func retail_per_pax() -> int:
 	return total
 
 
+## Anteil der Fluggäste, deren Koffer nicht ankommt: Durchleuchtung und Förderband zum Umschlag
+## senken die Fehlleitungen, eine Gepäckband-Zuordnung zum Gate auch.
+func lost_rate(hall: Dictionary) -> float:
+	var r := 0.05
+	if not _any(hall, "gepaeckroentgen").is_empty():
+		r -= 0.02
+	if not game.baggage_link(hall).is_empty():
+		r -= 0.015
+	for it: Dictionary in game.inside_of(hall):
+		if it["id"] == "gepaeckband" and int(game.opt(it, "gate")) > 0:
+			r -= 0.005
+			break
+	return maxf(r, 0.005)
+
+
+func has_fastlane() -> bool:
+	for it: Dictionary in game.items_of("sicherheit"):
+		if bool(game.opt(it, "fastlane")):
+			return true
+	return false
+
+
+## Zusatzerlöse eines abfliegenden Flugs: Lounge-Gäste (Vielflieger) und Mietwagenrückgaben.
+func extra_income(p: Dictionary) -> int:
+	var pax := int(Catalog.PLANES[p["kind"]]["pax"])
+	var total := 0
+	var business := roundi(float(pax) * 0.08)
+	if has_fastlane():
+		total += business * 6
+	if _sum("airline_lounge") > 0:
+		var guests := business
+		total += guests * 25
+		if betrieb != null:
+			betrieb.stats["lounge"] = int(betrieb.stats["lounge"]) + guests
+	for it: Dictionary in game.items_of("mietwagen"):
+		if game.supplied(it, "strom"):
+			total += roundi(float(pax) * 0.8)
+			break
+	return total
+
+
 ## Personal: gebraucht (Schalter, Kontrolle, Gates, Stände …) und vorhanden (Personalgebäude mit Strom).
 func staff_needed() -> int:
 	var n := 0
@@ -259,6 +305,34 @@ func factors() -> Array:
 	var bonus := mini(10, roundi(float(decor) / maxf(area / 100.0, 1.0) * 4.0))
 	if bonus > 0:
 		out.append(["Ausstattung im Terminal (Pflanzen, Sitze, Café, Kunst)", bonus])
+	# Bedürfnisse hinter der Kontrolle: etwas zu essen und zu trinken, Lounge, Gepäck
+	var food := false
+	var zoned := false
+	for info: Dictionary in done:
+		var h: Dictionary = info["hall"]
+		if game.zones_of(h).is_empty():
+			food = food or int((info["counts"] as Dictionary).get("cafe", 0)) + int((info["counts"] as Dictionary).get("kiosk", 0)) + int((info["counts"] as Dictionary).get("snackautomat", 0)) > 0
+			continue
+		zoned = true
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] in ["cafe", "kiosk", "snackautomat", "getraenkeautomat", "airline_lounge"] and game.zone_at(h, (it["rect"] as Rect2).get_center(), GameState.floor_of(it)) == "sicherheit":
+				food = true
+	if not food:
+		out.append(["Hunger: nichts zu essen im Wartebereich" if zoned else "Hunger: kein Café, Kiosk oder Automat", -4])
+		if hint == "":
+			hint = "Café, Kiosk oder Snackautomat in den Sicherheitsbereich stellen"
+	if lost_recent > 0.0 and lost_unhandled:
+		out.append(["Verlorene Koffer und keine Gepäckermittlung", -4])
+		if hint == "":
+			hint = "Gepäckermittlung (Lost & Found) nahe den Gepäckbändern bauen"
+	if non_schengen_seen and _sum("gepaeckroentgen") == 0:
+		out.append(["Gepäck für Non-Schengen-Flüge wird nicht durchleuchtet", -3])
+		if hint == "":
+			hint = "Gepäckdurchleuchtung in den Personalbereich neben die Gepäcksortierung stellen"
+	if _sum("airline_lounge") > 0:
+		out.append(["Airline-Lounge für Vielflieger", 2])
+	if has_fastlane():
+		out.append(["Fast-Lane an der Kontrolle für Vielflieger", 1])
 	var need := staff_needed()
 	var have := staff_available()
 	if have < need:
@@ -442,6 +516,8 @@ func _front(it: Dictionary, spread: float, depth: float) -> Vector3:
 func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 	if gate.is_empty():
 		return
+	if not bool(p.get("schengen", true)):
+		non_schengen_seen = true
 	var br := _bridge_for_gate(gate)
 	if not br.is_empty() and not bool(p.get("bus", false)):
 		br["plane"] = p
@@ -468,8 +544,14 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 		_maybe(plan, hall, "shop", 0.25)
 		if not bool(p.get("schengen", true)):
 			_through(plan, hall, "passkontrolle", true, 1.5)
-		_maybe(plan, hall, "cafe", 0.2)
-		_maybe(plan, hall, "wc", 0.15)
+		# Bedürfnisse: Hunger (Café, Kiosk, Automat), Toilette; Vielflieger in die Lounge
+		if i % 10 == 0 and not _any(hall, "airline_lounge").is_empty():
+			_maybe(plan, hall, "airline_lounge", 1.0)
+			plan.append(["wait", randf_range(4.0, 8.0)])
+		elif not _maybe(plan, hall, "cafe", 0.25):
+			if not _maybe(plan, hall, "kiosk", 0.15):
+				_maybe(plan, hall, "snackautomat", 0.1)
+		_maybe(plan, hall, "wc", 0.18)
 		var row: float = [-1.0, 0.6, 2.4][randi() % 3]
 		var flip := 1.0 if row > 0.0 else -1.0
 		var seat_x := -3.25 + float(randi() % 8) * 0.93
@@ -539,16 +621,31 @@ func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing:
 	var band := belt_for(hall, gate)
 	if not band.is_empty():
 		belt_load[(band["node"] as Node).get_instance_id()] = int(p["id"])
+	var rate := lost_rate(hall)
+	var desk := _any(hall, "gepaeckermittlung")
 	for i in range(n):
 		var plan := [["wait", float(i) * spacing], ["show"], ["hide_bag"]]
 		if not bool(p.get("schengen", true)):
 			_through(plan, hall, "passkontrolle", false, 1.2)
+		var lost := randf() < rate
+		if betrieb != null:
+			betrieb.stats["koffer"] = int(betrieb.stats["koffer"]) + PAX_PER_FIGURE
+			if lost:
+				betrieb.stats["koffer_weg"] = int(betrieb.stats["koffer_weg"]) + 1
+		if lost:
+			lost_recent = 240.0
+			lost_unhandled = desk.is_empty()
 		if not band.is_empty():
 			var bs := _size(band)
 			plan.append(["go", _pt(band, Vector3(randf_range(-bs.x * 0.4, bs.x * 0.4), 0, bs.y * 0.5 + 0.5 + randf() * 0.8))])
 			plan.append(["bags", int(p["id"])])
-			plan.append(["wait", randf_range(2.0, 9.0)])
-			plan.append(["take_bag"])
+			plan.append(["wait", randf_range(2.0, 9.0) + (6.0 if lost else 0.0)])
+			if not lost:
+				plan.append(["take_bag"])
+		if lost and not desk.is_empty():
+			# Koffer kam nicht an: zur Gepäckermittlung
+			plan.append(["go", _front(desk, 1.4, 1.0)])
+			plan.append(["wait", randf_range(4.0, 7.0)])
 		if not bool(p.get("schengen", true)):
 			_through(plan, hall, "zoll", false, 0.6)
 		_maybe(plan, hall, "wc", 0.2)
@@ -610,15 +707,16 @@ func _through(plan: Array, hall: Dictionary, id: String, forward: bool, stop: fl
 	plan.append(["go", b if forward else a])
 
 
-func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> void:
+func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> bool:
 	if randf() >= chance:
-		return
+		return false
 	var it := _any(hall, id)
 	if it.is_empty():
-		return
+		return false
 	var s := _size(it)
 	plan.append(["go", _front(it, s.x * 0.35, 0.8)])
 	plan.append(["wait", randf_range(2.0, 5.0)])
+	return true
 
 
 func _spawn(p: Dictionary, hall: Dictionary, dep: bool, start: Vector3, plan: Array) -> void:
@@ -675,6 +773,7 @@ var clock := 0.0
 
 func step(sim: float) -> void:
 	clock += sim
+	lost_recent = maxf(0.0, lost_recent - sim * 0.5)
 	if dirty:
 		_analyze()
 	_move_bridges(sim)

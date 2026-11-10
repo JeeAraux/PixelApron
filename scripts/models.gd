@@ -5,6 +5,7 @@ extends RefCounted
 
 const Kit = preload("res://scripts/mesh_kit.gd")
 const PixelFont = preload("res://scripts/pixel_font.gd")
+const Catalog = preload("res://scripts/catalog.gd")
 
 const WHITE := Color(0.93, 0.93, 0.91)
 const BELLY := Color(0.79, 0.80, 0.81)
@@ -93,24 +94,80 @@ const SPECS := {
 		"nose_gear_z": -25.0, "main_gear_z": 1.5, "main_gear_x": 5.3, "bogie": 2, "main_wheel_r": 0.66, "nose_wheel_r": 0.5,
 		"doors": [-27.0, 22.0], "exits": [-12.0, 2.0], "win_from": -26.0, "win_to": 21.0, "win_dy": 0.75,
 	},
+	"a350": {
+		"len": 66.8, "r": 2.99, "cy": 4.7, "nose_len": 8.2, "nose_tip": 0.25, "mask": true,
+		"tail_start": 16.0, "tail_r": 0.5, "tail_drop": 0.6,
+		"wing_z": -6.5, "wing_c": 12.0, "kink_c": 6.8, "tip_x": 31.8, "tip_c": 2.0, "sweep": 32.0, "dihedral": 5.5, "wing_y": 2.9,
+		"winglet": [3.2, 0.5, 1.8, 0.7],
+		"eng_x": 9.8, "eng_y": 2.25, "eng_r": 1.65, "eng_flat": 1.0, "eng_z": -12.6, "eng_len": 6.6,
+		"stab_z": 27.4, "stab_c": 5.8, "stab_span": 9.6, "stab_y": 6.6, "stab_sweep": 32.0,
+		"fin_z": 21.6, "fin_c": 9.4, "fin_h": 9.6, "fin_sweep": 42.0, "fin_tip_c": 3.2, "dorsal": false,
+		"nose_gear_z": -27.0, "main_gear_z": 1.8, "main_gear_x": 5.4, "bogie": 2, "main_wheel_r": 0.68, "nose_wheel_r": 0.52,
+		"doors": [-29.0, 23.5], "exits": [-12.5, 3.0], "win_from": -28.0, "win_to": 22.5, "win_dy": 0.8,
+	},
+	"b787": {
+		"len": 62.8, "r": 2.88, "cy": 4.5, "nose_len": 7.6, "nose_tip": 0.34,
+		"tail_start": 15.5, "tail_r": 0.45, "tail_drop": 0.7,
+		"wing_z": -6.0, "wing_c": 11.0, "kink_c": 6.2, "tip_x": 30.0, "tip_c": 1.6, "sweep": 32.0, "dihedral": 7.0, "wing_y": 2.7,
+		"winglet": [0.0, 0.0, 0.0, 0.0],
+		"eng_x": 9.4, "eng_y": 2.2, "eng_r": 1.6, "eng_flat": 1.0, "eng_z": -12.0, "eng_len": 6.8, "chevrons": true,
+		"stab_z": 25.8, "stab_c": 5.5, "stab_span": 9.2, "stab_y": 6.2, "stab_sweep": 33.0,
+		"fin_z": 20.0, "fin_c": 9.0, "fin_h": 9.4, "fin_sweep": 42.0, "fin_tip_c": 3.0, "dorsal": false,
+		"nose_gear_z": -25.3, "main_gear_z": 1.7, "main_gear_x": 5.0, "bogie": 2, "main_wheel_r": 0.66, "nose_wheel_r": 0.5,
+		"doors": [-27.5, 22.0], "exits": [-11.0, 2.0], "win_from": -26.5, "win_to": 21.0, "win_dy": 0.8,
+	},
+	"crj900": {
+		"len": 36.2, "r": 1.35, "cy": 2.4, "nose_len": 4.6, "nose_tip": 0.3,
+		"tail_start": 6.2, "tail_r": 0.32, "tail_drop": 0.25,
+		"rear_eng": true,
+		"wing_z": -2.4, "wing_c": 4.4, "kink_c": 2.6, "tip_x": 12.3, "tip_c": 1.0, "sweep": 26.0, "dihedral": 4.0, "wing_y": 1.2,
+		"winglet": [1.2, 0.2, 0.7, 0.4],
+		"eng_x": 2.65, "eng_y": 3.15, "eng_r": 0.66, "eng_flat": 1.0, "eng_z": 7.4, "eng_len": 3.4,
+		"stab_z": 15.0, "stab_c": 2.3, "stab_span": 4.4, "stab_y": 7.55, "stab_sweep": 30.0,
+		"fin_z": 11.2, "fin_c": 4.6, "fin_h": 4.4, "fin_sweep": 40.0, "fin_tip_c": 2.6, "dorsal": true,
+		"nose_gear_z": -14.3, "main_gear_z": 0.9, "main_gear_x": 2.1, "main_wheel_r": 0.42, "nose_wheel_r": 0.28,
+		"doors": [-14.6, 10.6], "exits": [-3.6], "win_from": -13.0, "win_to": 6.0, "win_dy": 0.36,
+	},
+	"b777f": {
+		"len": 63.7, "r": 3.1, "cy": 4.8, "nose_len": 7.5, "nose_tip": 0.3,
+		"tail_start": 15.0, "tail_r": 0.55, "tail_drop": 0.8, "cargo": true,
+		"wing_z": -6.5, "wing_c": 12.5, "kink_c": 7.0, "tip_x": 32.0, "tip_c": 2.0, "sweep": 31.6, "dihedral": 6.0, "wing_y": 2.9,
+		"winglet": [0.0, 0.0, 0.0, 0.0],
+		"eng_x": 9.7, "eng_y": 2.1, "eng_r": 1.9, "eng_flat": 1.0, "eng_z": -13.2, "eng_len": 7.4,
+		"stab_z": 26.6, "stab_c": 6.0, "stab_span": 10.6, "stab_y": 6.7, "stab_sweep": 32.0,
+		"fin_z": 20.6, "fin_c": 9.8, "fin_h": 10.0, "fin_sweep": 40.0, "fin_tip_c": 3.2, "dorsal": false,
+		"nose_gear_z": -26.0, "main_gear_z": 2.0, "main_gear_x": 5.5, "bogie": 3, "main_wheel_r": 0.68, "nose_wheel_r": 0.52,
+		"doors": [-28.0, 23.0], "exits": [], "win_from": -27.0, "win_to": -26.0, "win_dy": 0.8,
+	},
 }
+
+## Lackierungen: 0 Zierstreifen, 1 farbiger Bauch, 2 Heckbogen, 3 farbiger Rücken, 4 farbige Nase
+const LIVERY_STYLES := 5
+
+
+static func _kink_x(s: Dictionary) -> float:
+	if bool(s.get("rear_eng", false)):
+		return float(s["r"]) + 2.4
+	return float(s["eng_x"]) + 1.4
 
 
 # ================================================================== Flugzeuge
 
-static func plane_mesh(kind: String, livery: Color) -> ArrayMesh:
-	var key := "plane_%s_%s" % [kind, livery.to_html()]
+## style: Lackierung (LIVERY_STYLES), cargo: Frachter ohne Fenster mit großer Frachttür.
+static func plane_mesh(kind: String, livery: Color, style: int = 0, cargo: bool = false) -> ArrayMesh:
+	var key := "plane_%s_%s_%d_%s" % [kind, livery.to_html(), style, cargo]
 	if _cache.has(key):
 		return _cache[key]
 	var s: Dictionary = SPECS.get(kind, SPECS["a320"])
+	cargo = cargo or bool(s.get("cargo", false))
 	var k := Kit.new()
-	_fuselage(k, s, livery)
+	_fuselage(k, s, livery, style, cargo)
 	_wings(k, s, livery)
 	_tail(k, s, livery)
 	for side: float in [-1.0, 1.0]:
 		_engine(k, s, livery, side)
 	_lights(k, s)
-	_wordmark(k, s, livery)
+	_wordmark(k, s, livery, cargo)
 	var mesh := k.commit()
 	_cache[key] = mesh
 	return mesh
@@ -172,8 +229,13 @@ static func fan_mesh(kind: String) -> ArrayMesh:
 const BRANDS := ["WIESENAIR", "AEROLUNA", "ALPENFLUG", "BALTIKO", "SKYVIA", "NORDLUFT", "HANSALUX", "SONNJET"]
 
 
-static func _wordmark(k: Kit, s: Dictionary, livery: Color) -> void:
+static func _wordmark(k: Kit, s: Dictionary, livery: Color, cargo: bool = false) -> void:
 	var brand: String = BRANDS[(livery.r8 + livery.g8 + livery.b8 * 2) % BRANDS.size()]
+	for al: Array in Catalog.AIRLINES:
+		if (al[1] as Color).is_equal_approx(livery):
+			brand = String(al[3]).to_upper()
+	if cargo:
+		brand += " CARGO"
 	var length: float = s["len"]
 	var z0 := -length * 0.5
 	var px: float = clampf(float(s["r"]) * 0.062, 0.07, 0.16)
@@ -249,7 +311,7 @@ static func _skin_angle(s: Dictionary, z: float, y: float) -> float:
 	return acos(clampf((y - yw) / maxf(yw - float(q[3]), 0.01), -1.0, 1.0))
 
 
-static func _fuselage(k: Kit, s: Dictionary, livery: Color) -> void:
+static func _fuselage(k: Kit, s: Dictionary, livery: Color, style: int = 0, cargo: bool = false) -> void:
 	var length: float = s["len"]
 	var z0 := -length * 0.5
 	var z1 := length * 0.5
@@ -281,14 +343,34 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color) -> void:
 			var aa := a if a <= PI else TAU - a
 			ring.append(_skin(s, zz, aa, sd)[0])
 		rings.append(ring)
+	var mask := bool(s.get("mask", false))
 	var col_fn := func(m: Vector3, i: int, _j: int) -> Color:
 		if m.z > z1 - 0.25:
 			return DARK_METAL   # APU-Auslass
 		var q := _section(s, m.z)
 		var t := (m.z - z0) / nose_len
+		var mid := float(q[0])
+		var lo := mid - (mid - float(q[3])) * 0.42
+		# A350: schwarze Maske um die Cockpitscheiben
+		if mask and t > 0.55 and t < 0.9 and m.y > mid + (float(q[2]) - mid) * 0.05 and m.y < mid + (float(q[2]) - mid) * 0.72:
+			return Color(0.1, 0.1, 0.12)
 		if t < 0.24:
-			return Color(0.86, 0.86, 0.85)   # Radom etwas grauer
-		if m.y < float(q[0]) - (float(q[0]) - float(q[3])) * 0.42:
+			return Color(0.86, 0.86, 0.85) if style != 4 else livery.darkened(0.1)   # Radom
+		match style:
+			1:
+				if m.y < mid - (mid - float(q[3])) * 0.12 and t > 0.3:
+					return livery
+			2:
+				var bow := (m.z - (ts - 9.0)) - (m.y - mid) * 2.2
+				if bow > 0.0 and m.y > lo:
+					return livery
+			3:
+				if m.y > mid + (float(q[2]) - mid) * 0.55 and t > 0.95:
+					return livery
+			4:
+				if t < 1.15 and m.y < mid + (float(q[2]) - mid) * 0.2:
+					return livery
+		if m.y < lo:
 			return BELLY
 		return WHITE
 	k.loft(rings, col_fn, true, false, true)
@@ -305,7 +387,16 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color) -> void:
 	var doors: Array = s["doors"]
 	var exits: Array = s["exits"]
 	for side: float in [-1.0, 1.0]:
+		if cargo:
+			# Frachter: keine Fensterreihe, große Hauptdeck-Frachttür links hinter dem Cockpit
+			_door(k, s, side, doors[0], cy - 0.05, 0.43, 0.95)
+			if side < 0.0:
+				var cz := float(doors[0]) + nose_len * 0.6 + 4.0
+				_door(k, s, side, cz, cy + 0.2, 1.8, 1.4)
+			continue
 		var sz := z0 + nose_len * 0.95
+		if style != 0:
+			sz = ts + 3.0   # Zierstreifen nur bei Lackierung 0
 		while sz < ts + 2.0:
 			var se := minf(sz + 0.9, ts + 2.0)
 			var a_hi := _skin_angle(s, sz, cy - r * 0.18)
@@ -429,7 +520,7 @@ static func _wing_at(s: Dictionary, ax: float) -> Array:
 	var d := ax - root_x
 	var le := float(s["wing_z"]) + d * tan(deg_to_rad(float(s["sweep"])))
 	var y := float(s["wing_y"]) + d * tan(deg_to_rad(float(s["dihedral"])))
-	var kink_x := float(s["eng_x"]) + 1.4
+	var kink_x := _kink_x(s)
 	var chord := 0.0
 	if ax <= kink_x:
 		chord = lerpf(float(s["wing_c"]), float(s["kink_c"]), (ax - root_x) / (kink_x - root_x))
@@ -479,7 +570,7 @@ static func _wing_col(j: int, n: int, base: Color) -> Color:
 
 static func _wings(k: Kit, s: Dictionary, livery: Color) -> void:
 	var r: float = s["r"]
-	var kink_x := float(s["eng_x"]) + 1.4
+	var kink_x := _kink_x(s)
 	var tip_x: float = s["tip_x"]
 	var dih := deg_to_rad(float(s["dihedral"]))
 	var high := bool(s.get("high", false))
@@ -547,7 +638,7 @@ static func flap_part(kind: String, side: float, inner: bool) -> Array:
 	var key := "flap_%s_%d_%d" % [kind, int(side), int(inner)]
 	var s: Dictionary = SPECS.get(kind, SPECS["a320"])
 	var root_x: float = float(s["r"]) * float(s.get("root_f", 0.82))
-	var kink_x := float(s["eng_x"]) + 1.4
+	var kink_x := _kink_x(s)
 	var ail_a := float(s["tip_x"]) - 6.5
 	var x0 := root_x + 0.25 if inner else kink_x + 0.1
 	var x1 := kink_x - 0.1 if inner else ail_a - 0.2
@@ -703,6 +794,29 @@ static func _engine(k: Kit, s: Dictionary, livery: Color, side: float) -> void:
 		return Color(0.55, 0.56, 0.58) if fz < z0 + ln + 0.35 else DARK_METAL, false, false, ex)
 	k.lathe([[z0 + ln + 0.4, ey, r * 0.3, r * 0.3], [z0 + ln + 0.9, ey, r * 0.18, r * 0.18], [z0 + ln + 1.25, ey, 0.03, 0.03]], 16,
 		func(_a: float, _b: float, _c: float, _d: float) -> Color: return Color(0.42, 0.4, 0.38), true, false, ex)
+	if bool(s.get("chevrons", false)):
+		# gezackte Hinterkante der Triebwerksverkleidung (787)
+		var zc := z0 + ln * 0.74
+		var rc := r * 0.86
+		for i in range(16):
+			var a0 := TAU * float(i) / 16.0
+			var a1 := TAU * float(i + 1) / 16.0
+			var am := (a0 + a1) * 0.5
+			var pa := Vector3(ex + sin(a0) * rc, ey + cos(a0) * rc * flat, zc)
+			var pb := Vector3(ex + sin(a1) * rc, ey + cos(a1) * rc * flat, zc)
+			var pc := Vector3(ex + sin(am) * rc * 0.93, ey + cos(am) * rc * 0.93 * flat, zc + 0.45)
+			k.tri(pa, pb, pc, livery, Vector3(ex, ey, zc))
+	if bool(s.get("rear_eng", false)):
+		# Hecktriebwerk: waagrechter Stummelpylon zum Rumpf
+		var q := _section(s, z0 + ln * 0.45)
+		var fx := float(q[1]) * 0.85
+		var hrings := []
+		for f: float in [0.0, 0.5, 1.0]:
+			var x := side * lerpf(fx, absf(ex) - r * 0.85, f)
+			var c := lerpf(ln * 0.62, ln * 0.5, f)
+			hrings.append(_airfoil(Vector3(x, ey, z0 + ln * 0.22), Vector3(0, 0, 1), Vector3(0, 1, 0), c, 0.14, 0.0, 8))
+		k.loft(hrings, func(_m: Vector3, _i: int, _j: int) -> Color: return WHITE.darkened(0.04), true, false, false)
+		return
 	# Pylon: schlankes Profil vom Triebwerk nach oben unter den Flügel
 	var top_y := ey + r * flat * 0.92
 	var prings := []
@@ -730,7 +844,7 @@ static func _gear(k: Kit, s: Dictionary) -> void:
 	var mx: float = s["main_gear_x"]
 	var mr: float = s["main_wheel_r"]
 	var high := bool(s.get("high", false))
-	var rows: Array = [0.0] if int(s.get("bogie", 1)) < 2 else [-0.78, 0.78]
+	var rows: Array = [0.0] if int(s.get("bogie", 1)) < 2 else ([-0.78, 0.78] if int(s.get("bogie", 1)) == 2 else [-1.45, 0.0, 1.45])
 	for side: float in [-1.0, 1.0]:
 		var w := _wing_at(s, mx)
 		var x := side * mx
@@ -1437,14 +1551,27 @@ static func gse_part(kind: String) -> ArrayMesh:
 			# Gummipuffer vorn
 			k.box(Vector3(-0.45, -0.1, -7.75), Vector3(0.45, 0.12, -7.6), Color(0.1, 0.1, 0.1))
 		"kasten":
-			# Catering-Kasten, Unterkante bei y = 0, mit Rolltor hinten und Firmenstreifen
-			k.box(Vector3(-1.25, 0.0, -1.8), Vector3(1.25, 2.4, 3.7), Color(0.93, 0.93, 0.91))
-			k.box(Vector3(-1.27, 1.0, -1.8), Vector3(1.27, 1.3, 3.7), Color(0.2, 0.4, 0.65))
+			# Catering-Kasten, Unterkante bei y = 0: gerundete Kanten, Firmenstreifen, Rolltor hinten
+			var kst := [
+				[-1.84, 0.06, 1.2, 2.34, 1.18, 1.14, 8.0, 8.0],
+				[-1.78, 0.0, 1.2, 2.4, 1.25, 1.21, 9.0, 9.0],
+				[3.64, 0.0, 1.2, 2.4, 1.25, 1.21, 9.0, 9.0],
+				[3.7, 0.06, 1.2, 2.34, 1.18, 1.14, 8.0, 8.0],
+			]
+			var kasten_col := func(m: Vector3, _p: Array) -> Color:
+				if m.y > 1.0 and m.y < 1.3:
+					return Color(0.2, 0.4, 0.65)
+				if m.y > 1.32 and m.y < 1.37:
+					return Color(0.95, 0.7, 0.12)
+				return Color(0.94, 0.94, 0.92)
+			_shell(k, kst, kasten_col, 32, 0.3, [], true, Vector3.ZERO, Color(0.9, 0.9, 0.88))
 			k.box(Vector3(-1.0, 0.2, 3.7), Vector3(1.0, 2.2, 3.74), Color(0.7, 0.71, 0.72))
 			for i in range(9):
 				k.box(Vector3(-1.0, 0.25 + float(i) * 0.22, 3.74), Vector3(1.0, 0.27 + float(i) * 0.22, 3.76), Color(0.6, 0.61, 0.62))
 			k.box(Vector3(-1.3, -0.12, -1.85), Vector3(1.3, 0.0, 3.75), DARK_METAL)
-			k.box(Vector3(-0.3, 2.4, 0.5), Vector3(0.3, 2.55, 1.0), Color(0.98, 0.55, 0.08))
+			k.cyl(Vector3(0, 2.4, 0.75), Vector3(0, 2.55, 0.75), 0.13, 0.11, Color(0.98, 0.55, 0.08, 0.3), 10)
+			for sx: float in [-1.0, 1.0]:
+				PixelFont.draw(k, "CATERING", Vector3(sx * 1.27, 1.7, 1.0), Vector3(0, 0, -sx), Vector3.UP, Vector3(sx, 0, 0), 0.06, Color(0.2, 0.4, 0.65))
 		"buehne":
 			# ausfahrbare Brücke vorn am Kasten (zeigt nach -Z), Geländer seitlich
 			k.box(Vector3(-0.8, -0.1, -3.0), Vector3(0.8, 0.0, 0.0), Color(0.55, 0.56, 0.58))
@@ -1567,16 +1694,35 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			k.box(Vector3(-1.15, 0.8, -1.5), Vector3(1.15, 0.92, 3.4), Color(0.4, 0.41, 0.43))
 			_wheels(k, 1.15, 0.45, [-3.0, 2.6])
 		"gpu":
-			# Bodenstromaggregat auf Anhänger: Generatorkasten, Kabeltrommel, Deichsel
-			k.box(Vector3(-0.75, 0.45, -1.2), Vector3(0.75, 0.6, 1.3), DARK_METAL)
-			k.soft_box(Vector3(-0.7, 0.6, -1.1), Vector3(0.7, 1.55, 1.2), 0.08, Color(0.88, 0.89, 0.86), 12, 6)
-			k.box(Vector3(-0.71, 0.75, -0.6), Vector3(0.71, 1.35, 0.6), Color(0.3, 0.32, 0.34))
-			for i in range(6):
-				k.box(Vector3(-0.72, 0.8 + float(i) * 0.09, -0.55), Vector3(0.72, 0.83 + float(i) * 0.09, 0.55), Color(0.5, 0.51, 0.52))
-			k.cyl(Vector3(-0.45, 1.75, 0.5), Vector3(0.45, 1.75, 0.5), 0.3, 0.3, Color(0.15, 0.15, 0.16), 12)
-			k.box(Vector3(-0.06, 0.4, -2.3), Vector3(0.06, 0.48, -1.2), DARK_METAL)
-			k.box(Vector3(-0.3, 1.55, -1.1), Vector3(0.3, 1.6, -0.7), Color(0.85, 0.7, 0.2))
-			_wheels(k, 0.8, 0.3, [0.0])
+			# Bodenstromaggregat (Diesel, 90 kVA) auf Einachsanhänger: gerundete Haube mit Lüftungsgittern,
+			# Bedienfeld, Kabeltrommel hinten, Deichsel vorn
+			var gpu_c := Color(0.9, 0.91, 0.88)
+			k.box(Vector3(-0.72, 0.42, -1.25), Vector3(0.72, 0.56, 1.35), DARK_METAL)
+			var gst2 := [
+				[-1.16, 0.62, 1.05, 1.5, 0.62, 0.56, 6.0, 8.0],
+				[-1.1, 0.56, 1.05, 1.58, 0.7, 0.64, 7.0, 8.0],
+				[1.18, 0.56, 1.05, 1.58, 0.7, 0.64, 7.0, 8.0],
+				[1.24, 0.62, 1.05, 1.5, 0.62, 0.56, 6.0, 8.0],
+			]
+			var gpu_col := func(m: Vector3, _p: Array) -> Color:
+				if absf(m.x) > 0.6 and m.y > 0.75 and m.y < 1.35 and absf(m.z) < 0.7:
+					return Color(0.3, 0.32, 0.34) if int((m.y - 0.75) * 11.0) % 2 == 0 else Color(0.5, 0.51, 0.52)
+				if m.y > 1.32 and m.y < 1.4 and absf(m.x) > 0.6:
+					return Color(0.95, 0.7, 0.12)
+				return gpu_c
+			_shell(k, gst2, gpu_col, 32, 0.12, [-0.7, 0.7], true, Vector3.ZERO, gpu_c)
+			k.box(Vector3(-0.45, 0.8, -1.18), Vector3(0.45, 1.35, -1.15), Color(0.2, 0.22, 0.24))
+			k.box(Vector3(-0.3, 1.15, -1.19), Vector3(-0.05, 1.28, -1.17), Color(0.15, 0.85, 0.3, 0.3))
+			k.box(Vector3(0.05, 1.15, -1.19), Vector3(0.3, 1.28, -1.17), Color(0.95, 0.7, 0.12, 0.3))
+			k.cyl(Vector3(-0.42, 1.78, 0.6), Vector3(0.42, 1.78, 0.6), 0.28, 0.28, Color(0.12, 0.12, 0.13), 16, true, Color(0.75, 0.1, 0.08))
+			for sx: float in [-0.42, 0.42]:
+				k.box(Vector3(sx - 0.03, 1.5, 0.45), Vector3(sx + 0.03, 1.8, 0.75), DARK_METAL)
+			k.cyl(Vector3(0.3, 1.58, -0.3), Vector3(0.3, 1.82, -0.3), 0.05, 0.05, DARK_METAL, 8)
+			k.box(Vector3(-0.05, 0.4, -2.3), Vector3(0.05, 0.47, -1.2), DARK_METAL)
+			k.cyl(Vector3(0, 0.43, -2.35), Vector3(0, 0.47, -2.35), 0.07, 0.07, DARK_METAL, 10)
+			for sx: float in [-1.0, 1.0]:
+				_wheel(k, Vector3(sx * 0.66, 0.3, 0.1), 0.3, 0.2, sx, Color(0.7, 0.71, 0.72), 0)
+				k.box(Vector3(minf(sx * 0.56, sx * 0.8), 0.62, -0.25), Vector3(maxf(sx * 0.56, sx * 0.8), 0.66, 0.45), DARK_METAL)
 		"gepaeckschlepper":
 			# Gepäckschlepper (Front -Z), Kupplung hinten bei z = 1,5
 			var gst := [
@@ -1611,26 +1757,43 @@ static func gse_mesh(kind: String) -> ArrayMesh:
 			k.cyl(Vector3(0, 2.07, 0.4), Vector3(0, 2.22, 0.4), 0.1, 0.08, Color(0.98, 0.55, 0.08), 8)
 			_wheels(k, 0.72, 0.33, [-0.9, 0.9])
 		"wagen":
-			# Gepäckwagen ohne Ladung (Front -Z mit Deichsel), Plane und Pfosten
-			k.box(Vector3(-0.85, 0.42, -1.3), Vector3(0.85, 0.55, 1.3), DARK_METAL)
-			k.box(Vector3(-0.8, 0.55, -1.25), Vector3(0.8, 0.58, 1.25), Color(0.42, 0.43, 0.44))
-			# offener Wagen: Eckpfosten, Stirnwände, niedriges Seitengitter
-			for p: Vector3 in [Vector3(-0.85, 0, -1.3), Vector3(0.78, 0, -1.3), Vector3(-0.85, 0, 1.23), Vector3(0.78, 0, 1.23)]:
-				k.box(p + Vector3(0, 0.55, 0), p + Vector3(0.07, 1.25, 0.07), DARK_METAL)
+			# Gepäckwagen (Front -Z mit Deichsel): Stahlrahmen, Ladefläche mit Rollen, Stirnwände,
+			# gewölbtes Planendach auf vier Pfosten, seitlich aufgerollte Planen
+			var frame := Color(0.24, 0.26, 0.27)
+			var canvas := Color(0.27, 0.4, 0.3)
+			k.box(Vector3(-0.85, 0.36, -1.3), Vector3(0.85, 0.5, 1.3), frame)
+			k.box(Vector3(-0.82, 0.5, -1.26), Vector3(0.82, 0.56, 1.26), Color(0.46, 0.47, 0.48))
+			for i in range(9):
+				var rz := -1.1 + float(i) * 0.275
+				k.cyl(Vector3(-0.78, 0.565, rz), Vector3(0.78, 0.565, rz), 0.025, 0.025, Color(0.6, 0.61, 0.62), 6, false)
 			for sz: float in [-1.3, 1.25]:
-				k.box(Vector3(-0.85, 0.58, sz), Vector3(0.85, 1.25, sz + 0.05), Color(0.3, 0.42, 0.32))
+				k.box(Vector3(-0.86, 0.56, sz), Vector3(0.86, 1.2, sz + 0.05), canvas)
+				k.box(Vector3(-0.87, 1.18, sz - 0.01), Vector3(0.87, 1.24, sz + 0.06), frame)
+			for p4: Vector3 in [Vector3(-0.86, 0, -1.3), Vector3(0.8, 0, -1.3), Vector3(-0.86, 0, 1.24), Vector3(0.8, 0, 1.24)]:
+				k.box(p4 + Vector3(0, 0.5, 0), p4 + Vector3(0.06, 1.95, 0.06), frame)
 			for sx: float in [-0.87, 0.82]:
-				k.box(Vector3(sx, 0.85, -1.3), Vector3(sx + 0.05, 0.9, 1.3), DARK_METAL)
-			k.box(Vector3(-0.05, 0.35, -2.4), Vector3(0.05, 0.42, -1.3), DARK_METAL)
-			k.box(Vector3(-0.07, 0.4, 1.3), Vector3(0.07, 0.48, 1.5), DARK_METAL)
-			# Dach mit Plane, seitlich aufgerollte Planen
-			k.soft_box(Vector3(-0.9, 1.9, -1.35), Vector3(0.9, 2.0, 1.35), 0.06, Color(0.3, 0.42, 0.32), 12, 6)
-			for p: Vector3 in [Vector3(-0.85, 0, -1.3), Vector3(0.78, 0, -1.3), Vector3(-0.85, 0, 1.23), Vector3(0.78, 0, 1.23)]:
-				k.box(p + Vector3(0, 1.25, 0), p + Vector3(0.07, 1.9, 0.07), DARK_METAL)
+				k.box(Vector3(sx, 0.8, -1.3), Vector3(sx + 0.05, 0.85, 1.3), frame)
+			var rst := [
+				[-1.38, 1.86, 1.9, 2.02, 0.92, 0.6, 2.4, 6.0],
+				[1.38, 1.86, 1.9, 2.02, 0.92, 0.6, 2.4, 6.0],
+			]
+			var roof_col := func(m: Vector3, _p: Array) -> Color:
+				return canvas.darkened(0.08) if absf(m.x) > 0.84 else canvas
+			_shell(k, rst, roof_col, 24, 0.5, [], true, Vector3.ZERO, canvas.darkened(0.15))
 			for sx: float in [-0.9, 0.9]:
-				k.cyl(Vector3(sx, 1.82, -1.3), Vector3(sx, 1.82, 1.3), 0.07, 0.07, Color(0.26, 0.36, 0.28), 8)
-			k.box(Vector3(-0.3, 1.45, -1.33), Vector3(0.3, 1.7, -1.3), Color(0.95, 0.95, 0.92))
-			_wheels(k, 0.85, 0.22, [-0.95, 0.95])
+				k.cyl(Vector3(sx, 1.8, -1.3), Vector3(sx, 1.8, 1.3), 0.075, 0.075, canvas.darkened(0.12), 10)
+			k.box(Vector3(-0.3, 1.42, -1.33), Vector3(0.3, 1.66, -1.3), Color(0.95, 0.95, 0.92))
+			# Deichsel mit Zugöse, Kupplung hinten, Rückstrahler
+			k.box(Vector3(-0.04, 0.38, -2.4), Vector3(0.04, 0.44, -1.3), frame)
+			for sx: float in [-0.3, 0.3]:
+				k.cyl(Vector3(sx, 0.4, -1.3), Vector3(0.0, 0.41, -2.2), 0.025, 0.025, frame, 6, false)
+			k.cyl(Vector3(0, 0.41, -2.45), Vector3(0, 0.45, -2.45), 0.07, 0.07, DARK_METAL, 10)
+			k.box(Vector3(-0.07, 0.38, 1.3), Vector3(0.07, 0.46, 1.5), frame)
+			for sx: float in [-0.7, 0.7]:
+				k.box(Vector3(sx - 0.08, 0.4, 1.3), Vector3(sx + 0.08, 0.48, 1.32), Color(0.8, 0.1, 0.08))
+			for wz: float in [-0.95, 0.95]:
+				for sx: float in [-1.0, 1.0]:
+					_wheel(k, Vector3(sx * 0.72, 0.22, wz), 0.22, 0.16, sx, Color(0.7, 0.71, 0.72), 0)
 		"pylon":
 			k.box(Vector3(-0.2, 0.0, -0.2), Vector3(0.2, 0.04, 0.2), Color(0.12, 0.12, 0.12))
 			k.cyl(Vector3(0, 0.04, 0), Vector3(0, 0.72, 0), 0.15, 0.025, Color(0.98, 0.42, 0.08), 10, true)
@@ -1959,3 +2122,173 @@ static func stairs_mesh(h: float) -> ArrayMesh:
 	var mesh := k.commit()
 	_cache[key] = mesh
 	return mesh
+
+
+# ================================================================== Winterdienst, Bahn, Fracht
+
+## Schneepflug mit Kehrblasgerät (Front -Z): Lkw-Fahrerhaus, breites Räumschild vorn, Kehrwalze hinten.
+static func plow_mesh() -> ArrayMesh:
+	if _cache.has("pflug"):
+		return _cache["pflug"]
+	var k := Kit.new()
+	var orange := Color(0.95, 0.5, 0.1)
+	_truck_cab(k, orange, -3.6, 2.2)
+	k.box(Vector3(-1.1, 0.55, -1.6), Vector3(1.1, 0.85, 4.2), DARK_METAL)
+	k.soft_box(Vector3(-1.15, 0.85, -1.4), Vector3(1.15, 2.4, 2.4), 0.12, orange, 12, 4)
+	for i in range(5):
+		k.box(Vector3(-1.16, 1.2 + float(i) * 0.2, -1.2), Vector3(1.16, 1.24 + float(i) * 0.2, 2.2), orange.darkened(0.2))
+	# Räumschild: gebogenes Blech schräg vor dem Fahrzeug
+	var blade_a := Vector3(-2.6, 0.12, -4.6)
+	var blade_b := Vector3(2.6, 0.12, -5.6)
+	var d := blade_b - blade_a
+	for i in range(10):
+		var f0 := float(i) / 10.0
+		var f1 := float(i + 1) / 10.0
+		var p0 := blade_a + d * f0
+		var p1 := blade_a + d * f1
+		for j in range(4):
+			var a0 := float(j) / 4.0 * 1.2
+			var a1 := float(j + 1) / 4.0 * 1.2
+			var off0 := Vector3(0, 0.12 + sin(a0) * 1.0, -cos(a0) * 0.35 + 0.35)
+			var off1 := Vector3(0, 0.12 + sin(a1) * 1.0, -cos(a1) * 0.35 + 0.35)
+			k.quad(p0 + off0, p1 + off0, p1 + off1, p0 + off1, YELLOW, (p0 + p1) * 0.5 + Vector3(0, 0.5, 1.0))
+	for i in range(7):
+		var q := blade_a + d * (float(i) / 6.0)
+		k.box(q + Vector3(-0.05, 0.6, 0.0), q + Vector3(0.05, 0.75, 0.25), Color(0.85, 0.15, 0.1) if i % 2 == 0 else Color(0.95, 0.95, 0.92))
+	k.box(Vector3(-0.15, 0.6, -4.9), Vector3(0.15, 0.8, -3.6), DARK_METAL)
+	# Kehrwalze hinten mit Gehäuse
+	k.cyl(Vector3(-1.4, 0.45, 4.6), Vector3(1.4, 0.45, 5.3), 0.42, 0.42, Color(0.15, 0.15, 0.16), 14, true, Color(0.85, 0.2, 0.12))
+	k.box(Vector3(-1.5, 0.85, 4.2), Vector3(1.5, 1.0, 5.6), orange)
+	_wheels(k, 1.2, 0.5, [-2.4, 2.6])
+	var m := k.commit()
+	_cache["pflug"] = m
+	return m
+
+
+## Enteisungsfahrzeug (Front -Z): Fahrerhaus, Glykoltank, Teleskoparm mit Korb für den Bediener.
+static func deicer_mesh() -> ArrayMesh:
+	if _cache.has("enteiser"):
+		return _cache["enteiser"]
+	var k := Kit.new()
+	var col := Color(0.25, 0.55, 0.3)
+	_truck_cab(k, Color(0.93, 0.93, 0.91), -4.2, 2.2)
+	k.box(Vector3(-1.1, 0.55, -2.2), Vector3(1.1, 0.85, 4.2), DARK_METAL)
+	k.soft_box(Vector3(-1.15, 0.85, -2.0), Vector3(1.15, 2.6, 2.6), 0.25, col, 12, 6)
+	k.box(Vector3(-1.16, 1.6, -2.0), Vector3(1.16, 1.75, 2.6), Color(0.95, 0.95, 0.92))
+	PixelFont.draw(k, "ENTEISUNG", Vector3(1.17, 2.1, 0.3), Vector3(0, 0, -1), Vector3.UP, Vector3(1, 0, 0), 0.05, Color(0.95, 0.95, 0.92))
+	PixelFont.draw(k, "ENTEISUNG", Vector3(-1.17, 2.1, 0.3), Vector3(0, 0, 1), Vector3.UP, Vector3(-1, 0, 0), 0.05, Color(0.95, 0.95, 0.92))
+	# Drehkranz, Teleskoparm schräg nach oben und vorn, Korb mit Sprühdüse
+	k.cyl(Vector3(0, 2.6, 3.3), Vector3(0, 2.9, 3.3), 0.6, 0.6, DARK_METAL, 14)
+	var a := Vector3(0, 2.9, 3.3)
+	var b := Vector3(0, 7.2, 0.4)
+	var dd := b - a
+	k.box(Vector3(-0.18, -0.18, -dd.length() * 0.5), Vector3(0.18, 0.18, dd.length() * 0.5), YELLOW, Transform3D(Basis.looking_at(dd.normalized(), Vector3.UP), (a + b) * 0.5))
+	k.box(Vector3(-0.7, 6.8, -0.4), Vector3(0.7, 7.0, 0.8), DARK_METAL)
+	for x: float in [-0.7, 0.68]:
+		k.box(Vector3(x, 7.0, -0.4), Vector3(x + 0.02, 7.9, 0.8), YELLOW)
+	k.box(Vector3(-0.7, 7.85, -0.42), Vector3(0.7, 7.9, 0.82), YELLOW)
+	k.box(Vector3(-0.6, 7.0, -0.45), Vector3(0.6, 7.8, -0.4), Color(0.6, 0.75, 0.82, 0.6))
+	k.cyl(Vector3(0, 7.3, -0.45), Vector3(0, 7.2, -1.2), 0.06, 0.04, METAL, 6)
+	k.cyl(Vector3(0, 2.6, 4.0), Vector3(0, 2.8, 4.0), 0.12, 0.1, Color(0.98, 0.55, 0.08, 0.3), 8)
+	_wheels(k, 1.2, 0.5, [-3.0, 2.8])
+	var m := k.commit()
+	_cache["enteiser"] = m
+	return m
+
+
+## Hauptdecklader (K-Loader, Front -Z): flaches Fahrgestell, Plattform mit Rollenbahn auf Scherenhub.
+static func loader_mesh(h: float = 4.5) -> ArrayMesh:
+	var key := "lader_%.1f" % h
+	if _cache.has(key):
+		return _cache[key]
+	var k := Kit.new()
+	var col := Color(0.92, 0.78, 0.16)
+	var lst := [
+		[-4.1, 0.42, 0.7, 0.95, 1.5, 1.45, 6.0, 6.0],
+		[-4.0, 0.35, 0.7, 1.0, 1.6, 1.55, 7.0, 7.0],
+		[4.0, 0.35, 0.7, 1.0, 1.6, 1.55, 7.0, 7.0],
+		[4.1, 0.42, 0.7, 0.95, 1.5, 1.45, 6.0, 6.0],
+	]
+	_shell(k, lst, func(m: Vector3, _p: Array) -> Color: return DARK_METAL if m.y < 0.55 else col, 32, 0.4, [], true, Vector3.ZERO, col)
+	for sx: float in [-1.1, 1.1]:
+		for i in range(2):
+			var a := Vector3(sx, 1.0, -3.0 if i == 0 else 3.0)
+			var b := Vector3(sx, h - 0.15, 3.0 if i == 0 else -3.0)
+			var d := b - a
+			k.box(Vector3(-0.07, -0.07, -d.length() * 0.5), Vector3(0.07, 0.07, d.length() * 0.5), METAL, Transform3D(Basis.looking_at(d.normalized(), Vector3.UP), (a + b) * 0.5))
+	k.box(Vector3(-1.6, h - 0.15, -3.9), Vector3(1.6, h, 3.9), DARK_METAL)
+	for i in range(14):
+		var z := -3.6 + float(i) * 0.55
+		k.cyl(Vector3(-1.5, h + 0.04, z), Vector3(1.5, h + 0.04, z), 0.05, 0.05, METAL, 6, false)
+	for sx: float in [-1.6, 1.55]:
+		k.box(Vector3(sx, h, -3.9), Vector3(sx + 0.05, h + 0.6, 3.9), col)
+	# Bedienstand vorn
+	k.box(Vector3(0.6, 1.0, 3.9), Vector3(1.5, 2.6, 4.6), col)
+	k.box(Vector3(0.65, 1.8, 3.85), Vector3(1.45, 2.5, 3.9), GLASS)
+	_wheels(k, 1.45, 0.38, [-3.0, 3.0])
+	var m := k.commit()
+	_cache[key] = m
+	return m
+
+
+## S-Bahn nach dem Vorbild eines Elektrotriebzugs (zwei Wagen, Front -Z, 45 m): rot-weiß, große
+## Frontscheibe, Doppeltüren, Dachaufbauten mit Stromabnehmer.
+static func train_mesh() -> ArrayMesh:
+	if _cache.has("sbahn"):
+		return _cache["sbahn"]
+	var k := Kit.new()
+	var red := Color(0.8, 0.12, 0.1)
+	var white := Color(0.94, 0.94, 0.92)
+	var hw := 1.5
+	for car in range(2):
+		var z0 := -22.3 + float(car) * 22.4
+		var z1 := z0 + 22.2
+		var front := car == 0
+		var rear := car == 1
+		var st := []
+		if front:
+			st.append([z0 - 0.4, 0.75, 2.0, 2.9, 0.9, 0.7, 3.0, 4.0])
+			st.append([z0, 0.6, 2.0, 3.6, 1.4, 1.2, 4.0, 5.0])
+			st.append([z0 + 1.6, 0.5, 2.0, 4.0, hw, 1.38, 6.0, 7.0])
+		else:
+			st.append([z0, 0.55, 2.0, 3.95, hw - 0.04, 1.34, 6.0, 7.0])
+		if rear:
+			st.append([z1 - 1.6, 0.5, 2.0, 4.0, hw, 1.38, 6.0, 7.0])
+			st.append([z1, 0.6, 2.0, 3.6, 1.4, 1.2, 4.0, 5.0])
+			st.append([z1 + 0.4, 0.75, 2.0, 2.9, 0.9, 0.7, 3.0, 4.0])
+		else:
+			st.append([z1, 0.55, 2.0, 3.95, hw - 0.04, 1.34, 6.0, 7.0])
+		var doors := [z0 + 5.0, z0 + 15.5]
+		var cfn := func(m: Vector3, _p: Array) -> Color:
+			var ax := absf(m.x)
+			if (front and m.z < z0 + 1.0) or (rear and m.z > z1 - 1.0):
+				if m.y > 2.2 and m.y < 3.4:
+					return GLASS
+				if m.y > 1.2 and m.y < 1.45 and ax > 0.5:
+					return LAMP
+				return red
+			if ax > 1.2:
+				for dz: float in doors:
+					if absf(m.z - dz) < 0.75 and m.y < 3.25:
+						return Color(0.55, 0.12, 0.1) if absf(m.z - dz) > 0.05 else DARK_METAL
+				if m.y > 2.15 and m.y < 3.2:
+					return GLASS
+			if m.y < 1.9:
+				return red
+			return white
+		_shell(k, st, cfn, 32, 0.5, doors.map(func(v: float) -> float: return v - 0.75) + doors.map(func(v: float) -> float: return v + 0.75))
+		for bz: float in [z0 + 3.5, z1 - 3.5]:
+			for sx: float in [-1.0, 1.0]:
+				for wz: float in [-1.1, 1.1]:
+					k.cyl(Vector3(sx * 0.75, 0.42, bz + wz), Vector3(sx * 0.6, 0.42, bz + wz), 0.42, 0.42, DARK_METAL, 10)
+			k.box(Vector3(-1.2, 0.3, bz - 1.6), Vector3(1.2, 0.6, bz + 1.6), Color(0.2, 0.2, 0.21))
+		k.box(Vector3(-0.9, 4.0, z0 + 4.0), Vector3(0.9, 4.3, z0 + 10.0), Color(0.6, 0.61, 0.62))
+		if car == 0:
+			var pz := z1 - 3.0
+			k.box(Vector3(-0.6, 4.3, pz - 0.4), Vector3(0.6, 4.35, pz + 0.4), DARK_METAL)
+			for sx: float in [-1.0, 1.0]:
+				k.cyl(Vector3(0, 4.35, pz), Vector3(sx * 0.1, 5.2, pz - 0.8), 0.04, 0.04, DARK_METAL, 5)
+			k.box(Vector3(-0.8, 5.2, pz - 0.9), Vector3(0.8, 5.25, pz - 0.7), DARK_METAL)
+	var m := k.commit()
+	_cache["sbahn"] = m
+	return m

@@ -109,7 +109,7 @@ const ITEMS := {
 	"tower": {"name": "Tower", "size": Vector2(12, 12), "h": 39.0, "cost": 900000, "grid": 2.0,
 		"needs": {"strom": 60}, "desc": "Ohne Tower mit Strom finden keine Flüge statt."},
 	"hangar": {"name": "Hangar", "size": Vector2(44, 36), "h": 14.0, "cost": 650000, "grid": 2.0,
-		"needs": {"strom": 120}, "desc": "Wartungshalle für Flugzeuge."},
+		"needs": {"strom": 120}, "desc": "Wartungshalle für Flugzeuge. Nach einigen Flügen ist bei jedem Flugzeug ein Check fällig: Mit Hangar (mit Strom) erledigen ihn die Techniker während der Abfertigung, der Flughafen verdient daran. Ohne Hangar fällt der Flug mit langer Verspätung aus dem Plan."},
 	"feuerwache": {"name": "Feuerwache", "size": Vector2(30, 20), "h": 13.0, "cost": 700000, "grid": 2.0,
 		"doors": [[Vector3(-11.5, 0, 4), 5.4, 5.4, 5.6], [Vector3(-4.5, 0, 4), 5.4, 5.4, 5.6], [Vector3(2.5, 0, 4), 5.4, 5.4, 5.6]],
 		"needs": {"strom": 50, "wasser": 6}, "desc": "Flughafenfeuerwehr."},
@@ -132,6 +132,24 @@ const ITEMS := {
 	"parkplatz": {"name": "Parkplatz", "size": Vector2(32, 25), "h": 0.5, "cost": 260000, "grid": 2.0,
 		"access": {"ein": Vector2(-6.7, -13), "aus": Vector2(6.7, -13)}, "spaces": 22,
 		"desc": "Ebenerdiger Parkplatz mit 22 Stellplätzen und Schranken. Die Zufahrt (Pfeil) muss an einer Straße liegen. Bringt Parkgebühren."},
+	"frachtterminal": {"name": "Frachtterminal", "short": "Fracht", "size": Vector2(60, 36), "h": 13.0, "cost": 2800000, "grid": 2.0,
+		"needs": {"strom": 60},
+		"desc": "Lagerhalle mit Ladetoren, Container-Regalen und ULD-Stellplätzen. Mit Strom kommen Frachtflüge (Boeing 777F, Frachtversionen von ATR, A321 und A330), vor allem nachts. Fracht bringt Geld je Tonne und braucht kein Gate."},
+	"winterdienst": {"name": "Winterdienst", "size": Vector2(34, 20), "h": 9.0, "cost": 850000, "grid": 2.0,
+		"needs": {"strom": 30, "wasser": 2},
+		"desc": "Halle mit Räumfahrzeugen (Schneepflug mit Kehrbesen) und Enteisungsfahrzeugen, Salz- und Glykollager. Bei Schnee räumt der Konvoi die Piste schnell, und die Flugzeuge werden vor dem Start enteist. Ohne Winterdienst bleibt die Piste bei Schnee lange gesperrt."},
+	"bahnhof": {"name": "S-Bahnhof", "size": Vector2(48, 18), "h": 8.0, "cost": 4200000, "grid": 2.0,
+		"needs": {"strom": 60},
+		"desc": "Bahnhof mit Bahnsteig unter Glasdach. Alle paar Minuten hält eine S-Bahn, Fahrgäste gehen zum Terminal. Höchstens 300 m vom Terminal entfernt bauen. Weniger Autos, zufriedenere Fluggäste."},
+	"taxistand": {"name": "Taxistand", "size": Vector2(24, 5), "h": 3.0, "cost": 30000, "grid": 1.0,
+		"access": {"halt": Vector2(0, -4.5)},
+		"desc": "Warteschlange für Taxis an einer Straße (Pfeil zeigt zur Straße), nah am Terminal. Taxis bringen und holen Fluggäste."},
+	"kissandfly": {"name": "Kiss & Fly", "size": Vector2(30, 5), "h": 3.0, "cost": 40000, "grid": 1.0,
+		"access": {"halt": Vector2(0, -4.5)},
+		"desc": "Kurzzeit-Haltezone zum Bringen und Abholen (Pfeil zeigt zur Straße). Weniger Gedränge vor dem Terminal."},
+	"mietwagen": {"name": "Mietwagenzentrum", "size": Vector2(36, 26), "h": 5.0, "cost": 900000, "grid": 2.0,
+		"needs": {"strom": 10}, "access": {"ein": Vector2(-7, -13.5), "aus": Vector2(7, -13.5)}, "spaces": 30,
+		"desc": "Schalterpavillon mehrerer Vermieter und Stellplätze mit Mietwagen. Zufahrt (Pfeil) an einer Straße. Bringt Gebühren je Fluggast."},
 	"busch": {"name": "Busch", "size": Vector2(2, 2), "h": 1.6, "cost": 200, "grid": 0.5, "desc": "Blühender Strauch."},
 	"hecke": {"name": "Hecke", "size": Vector2(6, 1.2), "h": 1.7, "cost": 600, "grid": 0.5, "desc": "Geschnittene Hecke, 6 m."},
 	"blumenbeet": {"name": "Blumenbeet", "size": Vector2(4, 2), "h": 0.7, "cost": 800, "grid": 0.5, "desc": "Bunte Blumen im Steinrand."},
@@ -202,6 +220,15 @@ const ITEMS := {
 	"wc": {"name": "Toiletten", "size": Vector2(6, 5), "h": 2.7, "cost": 70000, "grid": 1.0, "inside": true,
 		"needs": {"strom": 2, "wasser": 3}, "cap": 250,
 		"desc": "Damen, Herren, barrierefrei. 250 Passagiere pro Stunde. Braucht Wasser in der Halle."},
+	"airline_lounge": {"name": "Airline-Lounge", "short": "Lounge", "size": Vector2(12, 8), "h": 3.2, "cost": 380000, "grid": 1.0, "inside": true,
+		"needs": {"strom": 12, "wasser": 1}, "decor": 4,
+		"desc": "Lounge für Business- und Vielflieger mit Buffet, Sesseln und Fensterplätzen. In den Sicherheitsbereich stellen. Airlines mit Vertrag verlangen sie oft; bringt 25 € je Lounge-Gast."},
+	"gepaeckermittlung": {"name": "Gepäckermittlung", "short": "Lost & Found", "size": Vector2(5, 3), "h": 2.6, "cost": 35000, "grid": 0.5, "inside": true,
+		"needs": {"strom": 1},
+		"desc": "Schalter für verlorene Koffer (Lost & Found) nahe den Gepäckbändern. Wessen Koffer nicht ankommt, meldet sich hier. Ohne Schalter sind diese Fluggäste sehr verärgert."},
+	"gepaeckroentgen": {"name": "Gepäckdurchleuchtung", "short": "Gepäck-Röntgen", "size": Vector2(8, 5), "h": 2.8, "cost": 600000, "grid": 1.0, "inside": true,
+		"needs": {"strom": 30},
+		"desc": "Durchleuchtungsanlage (EDS) für aufgegebenes Gepäck neben der Gepäcksortierung, mit Förderbändern und Kontrollplatz. In den Personalbereich stellen. Pflicht für Flüge außerhalb Schengens und weniger fehlgeleitete Koffer."},
 	"heizkoerper": {"name": "Heizkörper", "size": Vector2(2, 0.5), "h": 0.9, "cost": 1500, "grid": 0.5,
 		"inside": true, "needs": {"waerme": 30}, "heats": 400,
 		"desc": "Heizt 400 m² Halle. Braucht Wärme von der Heizzentrale über ein Heizrohr."},
@@ -272,15 +299,15 @@ const ITEMS := {
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "betriebsstrasse", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude"]],
-	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "rolltreppe", "aufzug", "treppe", "personalraum"]],
-	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
+	["wege", "Wege", ["kopieren", "strasse", "strasse4", "einbahn", "tunnel", "spuren", "kreuzung", "gehweg", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "betriebsstrasse", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude", "frachtterminal", "winterdienst"]],
+	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum"]],
+	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
 		"ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium", "palme", "baumbeet", "gruenwand",
 		"springbrunnen", "fluegel", "flugzeugmodell", "fahnen"]],
 	["versorgung", "Versorgung", ["stromkabel", "wasserrohr", "heizrohr", "trafo", "wasseranschluss", "heizzentrale"]],
-	["umfeld", "Umfeld", ["parkhaus", "parkplatz", "haltestelle", "zaun", "baum", "busch", "hecke", "blumenbeet", "teich", "felsen", "kuebel", "laterne", "bank", "picknick"]],
+	["umfeld", "Umfeld", ["parkhaus", "parkplatz", "mietwagen", "haltestelle", "taxistand", "kissandfly", "bahnhof", "zaun", "baum", "busch", "hecke", "blumenbeet", "teich", "felsen", "kuebel", "laterne", "bank", "picknick"]],
 ]
 
 ## Höhe einer Terminal-Ebene in Metern (Keller = Ebene -1)
@@ -307,10 +334,21 @@ const PLANES := {
 		"code": "C", "span": 35.8, "range": "mittel"},
 	"a330": {"name": "Airbus A330-300", "min_rwy": 2500.0, "pax": 290, "turn": 60.0, "fee": 5200, "vapp": 72.0, "vr": 78.0, "nose": 31.85,
 		"code": "E", "span": 60.3, "range": "lang"},
+	"crj900": {"name": "Bombardier CRJ900", "min_rwy": 1600.0, "pax": 90, "turn": 28.0, "fee": 1400, "vapp": 66.0, "vr": 68.0, "nose": 18.1,
+		"code": "C", "span": 24.9, "range": "kurz"},
+	"b787": {"name": "Boeing 787-9", "min_rwy": 2500.0, "pax": 290, "turn": 60.0, "fee": 5600, "vapp": 71.0, "vr": 78.0, "nose": 31.4,
+		"code": "E", "span": 60.1, "range": "lang"},
+	"a350": {"name": "Airbus A350-900", "min_rwy": 2600.0, "pax": 315, "turn": 65.0, "fee": 6200, "vapp": 72.0, "vr": 80.0, "nose": 33.4,
+		"code": "E", "span": 64.8, "range": "lang"},
+	"b777f": {"name": "Boeing 777F", "min_rwy": 2800.0, "pax": 0, "turn": 70.0, "fee": 7000, "vapp": 74.0, "vr": 82.0, "nose": 31.85,
+		"code": "E", "span": 64.8, "range": "lang", "fracht": true, "tonnen": 100},
 }
+## Flugzeuge, die auch als Frachter (ohne Fenster) kommen: Nutzlast in Tonnen
+const FREIGHTERS := {"atr72": 8, "a321": 28, "a330": 60, "b777f": 100}
 ## Ausgedachte Airlines mit Hausfarbe
-const AIRLINES := [["IF", Color(0.62, 0.22, 0.18)], ["DJ", Color(0.18, 0.30, 0.52)], ["BW", Color(0.16, 0.42, 0.40)],
-	["WZ", Color(0.85, 0.55, 0.12)], ["NX", Color(0.35, 0.22, 0.48)]]
+## [Kürzel, Hausfarbe, Lackierung (Models.LIVERY_STYLES), Name]
+const AIRLINES := [["IF", Color(0.62, 0.22, 0.18), 1, "Isarflug"], ["DJ", Color(0.18, 0.30, 0.52), 3, "Donaujet"], ["BW", Color(0.16, 0.42, 0.40), 0, "Bodenseewings"],
+	["WZ", Color(0.85, 0.55, 0.12), 2, "Weizenair"], ["NX", Color(0.35, 0.22, 0.48), 4, "Nordexpress"]]
 ## Ziele: [Name, Schengen?, Reichweite]
 const DESTINATIONS := [["Hamburg", true, "kurz"], ["Berlin", true, "kurz"], ["Sylt", true, "kurz"], ["Kopenhagen", true, "kurz"],
 	["Palma", true, "mittel"], ["Wien", true, "mittel"], ["Zürich", true, "mittel"], ["Rom", true, "mittel"], ["Paris", true, "mittel"],
@@ -339,6 +377,7 @@ static func label(id: String) -> String:
 const TOOLS := {
 	"spuren": {"name": "Spuren ändern", "desc": "Klicke auf eine Straße: 2-spurig, 4-spurig, Einbahnstraße und umgekehrte Einbahnstraße im Wechsel."},
 	"kreuzung": {"name": "Kreuzung regeln", "desc": "Klicke auf eine Kreuzung: rechts vor links, Vorfahrtsstraße oder Ampel im Wechsel."},
+	"kopieren": {"name": "Blaupause", "desc": "Bereich kopieren und beliebig oft einfügen: Gates, Stände, ganze Terminalmodule mit Einrichtung."},
 }
 const ROADS := ["strasse", "strasse4", "einbahn", "tunnel"]
 ## Tunnel: Tiefe der Fahrbahn, Länge einer Rampe, ab welcher Tiefe die Decke geschlossen ist

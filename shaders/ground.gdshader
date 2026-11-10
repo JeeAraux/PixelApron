@@ -33,6 +33,9 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+global uniform float snow;
+global uniform float wet;
+
 void fragment() {
 	for (int i = 0; i < cut_n; i++) {
 		vec2 d = wpos.xz - cut_a[i].xy;
@@ -81,7 +84,13 @@ void fragment() {
 	} else if (edge > -6.0) {
 		col = mix(col, vec3(0.85, 0.8, 0.55), 0.35);
 	}
+	// Wetter: Schneedecke mit leichter Struktur, nasse Wiese dunkler
+	if (edge <= 0.0) {
+		float n = fract(sin(dot(floor(wpos.xz * 0.7), vec2(12.9898, 78.233))) * 43758.5453);
+		col = mix(col, vec3(0.9, 0.92, 0.95) * (0.95 + 0.06 * n), clamp(snow * (0.85 + 0.15 * n), 0.0, 0.95));
+		col *= 1.0 - 0.18 * wet * (1.0 - snow);
+	}
 	ALBEDO = col;
-	ROUGHNESS = 1.0;
-	SPECULAR = 0.0;
+	ROUGHNESS = 1.0 - 0.35 * wet;
+	SPECULAR = 0.15 * wet;
 }

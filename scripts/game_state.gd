@@ -11,6 +11,7 @@ signal view_changed(on: bool)  # Leitungsansicht an/aus
 signal interior_changed(on: bool)  # Innenansicht (Dächer aus) an/aus
 signal day_ended                   # Mitternacht (Tagesbilanz)
 signal floor_changed(f: int)       # angezeigte Ebene im Terminal (-1 Keller, 0 Erdgeschoss, 1, 2)
+signal before_save                 # Systeme legen ihren Zustand in extra ab
 
 const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
@@ -48,6 +49,7 @@ const OPTIONS := {
 	"shop": [["stil", "Laden", ["kiosk", "dutyfree", "buecher", "elektronik", "apotheke", "mode"]]],
 	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]], ["gate", "Für Gate", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]]],
 	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
+	"sicherheit": [["fastlane", "Fast-Lane", [false, true]]],
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
 }
@@ -61,6 +63,8 @@ const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig":
 var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0
 var satisfaction_factors: Array = []
+var extra: Dictionary = {}       # Zustand weiterer Systeme (Wetter, Betrieb, Flotte) für den Spielstand
+var atc_manual := false          # Lotsenmodus: Freigaben gibt der Spieler
 var traffic_demand := 0      # Landungen und Starts in der letzten Spielstunde
 var day_income := 0
 var last_day := 0
@@ -101,15 +105,22 @@ func _spend(amount: int) -> void:
 	money_changed.emit(money)
 
 
+var income_cb: Callable          # Betrieb: Einnahmen nach Bereich zählen (Bereich, Betrag)
+
+
 ## Einnahme ohne Meldung (z. B. viele kleine Parkgebühren)
-func earn_quiet(amount: int) -> void:
+func earn_quiet(amount: int, cat: String = "Sonstiges") -> void:
 	_spend(-amount)
 	day_income += amount
+	if income_cb.is_valid():
+		income_cb.call(cat, amount)
 
 
-func earn(amount: int, why: String) -> void:
+func earn(amount: int, why: String, cat: String = "Sonstiges") -> void:
 	_spend(-amount)
 	day_income += amount
+	if income_cb.is_valid():
+		income_cb.call(cat, amount)
 	toast.emit("+" + fmt_money(amount) + "  " + why)
 
 
@@ -1784,8 +1795,9 @@ func clear_all() -> void:
 # ---------------------------------------------------------------- Speichern und Laden
 
 func save_game(quiet: bool = false) -> void:
-	var data := {"version": 7, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
-		"wind": [wind_dir, wind_kt]}
+	before_save.emit()
+	var data := {"version": 8, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
+		"wind": [wind_dir, wind_kt], "extra": extra, "lotse": atc_manual}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
 		var pts := []
@@ -1877,6 +1889,8 @@ func load_game() -> bool:
 	wind_kt = float(wnd[1])
 	last_day = int(minutes / 1440.0)
 	satisfaction = float(data.get("satisfaction", 75.0))
+	extra = data.get("extra", {})
+	atc_manual = bool(data.get("lotse", false))
 	money_changed.emit(money)
 	toast.emit("Spielstand geladen")
 	return true

@@ -28,6 +28,7 @@ var stand_fwd: Dictionary = {}       # Standknoten -> Blickrichtung des geparkte
 var stand_code: Dictionary = {}      # Standknoten -> "C" oder "E" (größtes Flugzeug)
 var near: Array = []                 # je Knoten: Knoten im Umkreis von NEAR m (für Reservierungen)
 var zone := PackedByteArray()        # 1 = im Pistenschutzbereich
+var zone_rwy := PackedInt32Array()   # Index der nächsten Piste (in runways) je Knoten
 var in_stand := PackedByteArray()    # 1 = liegt auf einer Standfläche
 var runways: Array = []              # [Anfang, Ende, Breite] je Piste
 var holds: Array = []                # Rollhalteorte: {"pos", "dir" (zur Piste), "line"}
@@ -142,7 +143,9 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 		for n: int in _lead_targets(pos[lid], fwd):
 			_link(lid, n)
 	zone.resize(pos.size())
+	zone_rwy.resize(pos.size())
 	for i in range(pos.size()):
+		zone_rwy[i] = nearest_runway(pos[i])
 		var li := line_idx[i]
 		if line_hold.has(li):
 			zone[i] = 1 if _rwy_dist(pos[i]) < float(line_hold[li]) - 0.5 else 0
@@ -240,6 +243,24 @@ func _rwy_dist(p: Vector3) -> float:
 ## Abstand zur nächsten Pistenmitte (für Rollhalteorte und den Pistenschutzbereich).
 func runway_distance(p: Vector3) -> float:
 	return _rwy_dist(p)
+
+
+## Abstand zur Mitte einer bestimmten Piste (Index in runways).
+func runway_distance_i(p: Vector3, ri: int) -> float:
+	if ri < 0 or ri >= runways.size():
+		return INF
+	return _seg_dist(p, runways[ri][0], runways[ri][1])
+
+
+func nearest_runway(p: Vector3) -> int:
+	var best := -1
+	var bd := INF
+	for i in range(runways.size()):
+		var d := _seg_dist(p, runways[i][0], runways[i][1])
+		if d < bd:
+			bd = d
+			best = i
+	return best
 
 
 func in_zone(p: Vector3) -> bool:

@@ -17,6 +17,7 @@ const Catalog = preload("res://scripts/catalog.gd")
 func run(main: Node) -> void:
 	await get_tree().process_frame
 	main.set_process(false)
+	main.weather.force("klar")
 	var game = main.game
 	var b = main.builder
 	var lines0: int = game.lines.size()
@@ -450,6 +451,102 @@ func run(main: Node) -> void:
 	fl.clear()
 	lines0 = game.lines.size()
 
+	# 0.13: neue Flugzeuge, Lackierungen, Frachter, neue Bauten und Fahrzeuge
+	var Mo = load("res://scripts/models.gd")
+	var Fa = load("res://scripts/factory.gd")
+	var meshes_ok := true
+	for kind: String in ["a350", "b787", "crj900", "b777f"]:
+		var pm: ArrayMesh = Mo.plane_mesh(kind, Color(0.2, 0.3, 0.6), 2, false)
+		meshes_ok = meshes_ok and pm.get_surface_count() > 0 and pm.surface_get_array_len(0) > 3000
+	var plain: ArrayMesh = Mo.plane_mesh("a321", Color(0.6, 0.2, 0.2), 0, false)
+	var freighter: ArrayMesh = Mo.plane_mesh("a321", Color(0.6, 0.2, 0.2), 0, true)
+	check(meshes_ok and plain.surface_get_array_len(0) > freighter.surface_get_array_len(0), "Neue Flugzeuge (A350, 787, CRJ900, 777F) und Frachter ohne Fensterreihe")
+	var veh_ok := true
+	for m: ArrayMesh in [Mo.plow_mesh(), Mo.deicer_mesh(), Mo.loader_mesh(4.0), Mo.train_mesh(), Mo.car_mesh("kombi", Color.RED, true), Mo.gse_mesh("wagen"), Mo.gse_mesh("gpu"), Mo.gse_part("kasten")]:
+		veh_ok = veh_ok and m.get_surface_count() > 0
+	check(veh_ok, "Räumfahrzeug, Enteiser, Hauptdecklader, S-Bahn und neue Bodenfahrzeuge gebaut")
+	var built_ok := true
+	for id: String in ["frachtterminal", "winterdienst", "bahnhof", "taxistand", "kissandfly", "mietwagen", "airline_lounge", "gepaeckermittlung", "gepaeckroentgen"]:
+		var nd: Node3D = Fa.make_item(id)
+		built_ok = built_ok and Fa.bounds_of(nd).size.length() > 1.0
+		nd.free()
+	check(built_ok, "Neue Bauten: Frachtterminal, Winterdienst, S-Bahnhof, Taxistand, Kiss & Fly, Mietwagen, Lounge, Gepäckermittlung, Gepäckröntgen")
+	# zwei Pisten: eine zum Landen, eine zum Starten
+	var second: Dictionary = game.build_line("piste", [Vector3(-1200, 0, -900), Vector3(1200, 0, -900)], true)
+	fl._choose_runways()
+	check(not second.is_empty() and fl.land_ri != fl.dep_ri and String(fl.wind_text()).contains("Start"), "Zwei Pisten: getrennt für Landung und Start (" + String(fl.wind_text()).split("\n")[0] + ")")
+	game.remove(second, 1.0)
+	fl._choose_runways()
+	check(fl.land_ri == fl.dep_ri, "Mit einer Piste wieder gemeinsamer Betrieb")
+	# Wetter: Schnee sammelt sich, Piste wird geräumt, Enteisung
+	var wx = main.weather
+	wx.force("schnee")
+	wx.runway_snow = 0.0
+	wx.step(90.0)
+	check(wx.needs_plowing() and wx.deice_minutes() == 12.0, "Schnee auf der Piste: Räumen nötig, ohne Winterdienst lange Enteisung")
+	wx.start_plowing(fl._runway()["samples"])
+	check(wx.runway_closed() and not fl._may_take_runway(-5, fl.land_ri), "Piste während des Räumens gesperrt")
+	wx.step(30.0)
+	check(not wx.runway_closed() and wx.runway_snow < 0.2, "Piste geräumt")
+	wx.force("nebel")
+	check(wx.is_fog() and fl._cat1() and wx.spawn_factor() > 1.0, "Nebel: Anflug mit Anflugbefeuerung möglich, weniger Flüge")
+	wx.force("klar")
+	wx.snow_cover = 0.0
+	wx.runway_snow = 0.0
+	# Betrieb: Pünktlichkeit, Verträge, Szenarien, Lernschritte
+	var ob = main.betrieb
+	ob.recent.clear()
+	for i in range(12):
+		ob.departure({}, 3.0 if i % 4 != 0 else 40.0, 150, 0)
+	check(absf(float(ob.punctuality()) - 75.0) < 0.1 and int(ob.stats["pax"]) >= 1800, "Pünktlichkeit aus den letzten Abflügen (%d %%)" % roundi(float(ob.punctuality())))
+	var money_c: int = game.money
+	var ok_if: bool = ob.offer_ok("IF")
+	var signed: bool = ob.sign("IF")
+	check(ok_if == signed and (not signed or (game.money > money_c and float(ob.airline_weight("IF")) == 3.0)), "Vertrag mit Isarflug: Bedingungen geprüft, Prämie gezahlt")
+	check(int(ob.income.get("Verträge", 0)) > 0 or not signed, "Einnahmen nach Bereich gezählt")
+	check(ob.tutorial_check("piste") and ob.tutorial_check("stand") and ob.tutorial_check("terminal"), "Lernschritte erkennen den fertigen Startflughafen")
+	# Lotsenmodus: Flugzeug wartet in der Warteschleife auf die Landefreigabe
+	game.atc_manual = true
+	fl.next_flight = 0.0
+	fl.step(0.1)
+	var held: Dictionary = {}
+	for pl: Dictionary in fl.planes:
+		if pl["state"] == "warteschleife":
+			held = pl
+	check(not held.is_empty() and String(fl.needs_clearance(held)) == "Landung frei", "Lotsenmodus: Flugzeug bittet um Landefreigabe")
+	if not held.is_empty():
+		var ans: String = fl.clearance(int(held["id"]))
+		check(held["state"] == "anflug" and ans.contains("Landung frei"), "Landefreigabe erteilt: " + ans)
+	game.atc_manual = false
+	fl.clear()
+	# Frachtflug am Stand: kein Gate, Einnahmen je Tonne
+	var cargo_plane := {"id": 998, "kind": "b777f", "stand": game.stands()[0], "code": "WZ 1", "city": "Dubai", "gse": [], "pos": Vector3.ZERO,
+		"cargo": true, "delay": 0.0, "heading": Vector3(0, 0, 1)}
+	var fracht0 := int(ob.income.get("Fracht", 0))
+	fl._park(cargo_plane)
+	check((cargo_plane["gate"] as Dictionary).is_empty() and not bool(cargo_plane.get("bus", true)) and int(ob.income.get("Fracht", 0)) > fracht0, "Frachtflug: ohne Gate abgefertigt, Fracht bringt Geld")
+	fl._clear_gse(cargo_plane)
+	fl._clear_extra(cargo_plane)
+	fl._release_all(998)
+	main.ops.release(cargo_plane)
+	# Gepäck: Fehlleitungsquote und Durchleuchtung
+	check(float(tb.lost_rate(game.items_of("halle")[0])) < 0.05, "Förderband und Bandzuordnung senken fehlgeleitete Koffer")
+	# Blaupause: Bank kopieren und daneben einfügen
+	var bench: Dictionary = game.build_item("bank", Vector3(900, 0, 400), 0)
+	var benches: int = game.items_of("bank").size()
+	b.set_tool("kopieren")
+	b.on_click(Vector3(894, 0, 394))
+	b.on_click(Vector3(906, 0, 406))
+	b.on_click(Vector3(940, 0, 400))
+	check(not bench.is_empty() and game.items_of("bank").size() == benches + 1, "Blaupause: Bereich kopiert und eingefügt")
+	b.set_tool("")
+	main.betrieb.start_scenario("winter")
+	check(wx.forced == "schnee" and game.money == 18000000, "Szenario Winterchaos: Schnee und Startbudget")
+	main.betrieb.start_scenario("")
+	check(wx.forced == "", "Szenario beendet, Wetter wieder frei")
+	wx.force("klar")
+	game.money = money_c
+
 	# Straße mit Kurve
 	var money0: int = game.money
 	b.set_tool("strasse")
@@ -659,6 +756,7 @@ func run(main: Node) -> void:
 	await get_tree().process_frame
 	game.load_game()
 	check(game.lines.size() == nl and game.items.size() == ni and game.money == nm, "Spielstand wieder geladen")
+	check((game.extra as Dictionary).has("betrieb") and (game.extra as Dictionary).has("wetter"), "Wetter, Statistik und Verträge im Spielstand")
 	var term2: Dictionary = game.items_of("halle")[0]
 	check(game.walls_of(term2).size() == 5 and game.inside_of(term2).size() > 20 and tb.check() == "", "Terminal mit Wänden und Einrichtung geladen " + tb.check())
 	check(game.zones_of(term2).size() >= 2 and game.items_of("tuer").size() == 2, "Bereiche und Türen geladen")

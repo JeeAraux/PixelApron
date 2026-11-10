@@ -85,6 +85,10 @@ func _vehicle(kind: String, at: Vector3, heading: Vector3, h: float = 0.0) -> Di
 					leaf.set_meta("base", leaf.position)
 					leaf.set_meta("slide", Vector3(sx * 0.14, 0, half * 0.5))
 					mi.add_child(leaf)
+	if kind != "treppe":
+		var lp := Factory.light_pool(10.0, 2.0, 7.0, 0.45)
+		lp.position = Vector3(0, 0.08, -_length_of(kind) * 0.5 - 0.2)
+		node.add_child(lp)
 	add_child(node)
 	var v := {"node": node, "pts": PackedVector3Array(), "i": 0, "v": 0.0, "vmax": BUS_V, "rev": false,
 		"pos": at, "heading": heading.normalized(), "moving": false, "len": _length_of(kind), "wait": 0.0, "kind": kind}

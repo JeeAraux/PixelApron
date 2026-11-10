@@ -56,7 +56,8 @@ func compute_target() -> int:
 		total += float((l["samples"] as PackedVector3Array).size() - 1)
 	if total <= 0.0:
 		return 0
-	return mini(160, int(total / 70.0) + game.traffic_demand * CARS_PER_MOVEMENT)
+	var per := float(CARS_PER_MOVEMENT) * (0.75 if station_ok() else 1.0)
+	return mini(160, int(total / 70.0) + int(float(game.traffic_demand) * per))
 
 
 # ---------------------------------------------------------------- Aufbau
@@ -94,7 +95,7 @@ func rebuild() -> void:
 func _find_access() -> void:
 	dirty = false
 	access = {}
-	for it: Dictionary in game.items_of("parkhaus") + game.items_of("parkplatz"):
+	for it: Dictionary in game.items_of("parkhaus") + game.items_of("parkplatz") + game.items_of("mietwagen"):
 		var def: Dictionary = Catalog.ITEMS[it["id"]]
 		var acc: Dictionary = def["access"]
 		var xf := (it["node"] as Node3D).transform
@@ -137,6 +138,14 @@ func _find_access() -> void:
 			continue
 		access[(it["node"] as Node).get_instance_id()] = {"rec": it, "halt": lp, "bus": true,
 			"wait": xf * Vector3(-0.6, 0, 1.0), "xf": xf}
+	# Taxistand und Kiss & Fly: Haltepunkt vor der Vorderseite an der Straße
+	for id: String in ["taxistand", "kissandfly"]:
+		for it: Dictionary in game.items_of(id):
+			var xf := (it["node"] as Node3D).transform
+			var lp := _nearest_lane(xf * Vector3(0, 0, -4.5), 14.0)
+			if lp.is_empty():
+				continue
+			access[(it["node"] as Node).get_instance_id()] = {"rec": it, "halt": lp, id: true}
 
 
 ## Nächste rechte Spur in der Nähe eines Punkts: {line, d, k, pos (Abstand auf der Spur), point}
@@ -284,8 +293,15 @@ func _assign_goal(m: Dictionary) -> void:
 			var a: Dictionary = access[key]
 			if purpose == "parkhaus" and a.has("ein"):
 				options.append({"lane": a["ein"], "action": "parken", "acc": a})
-			elif purpose == "terminal" and a.has("halt"):
+			elif purpose == "terminal" and a.has("halt") and not a.has("bus"):
+				if a.has("taxistand") and String((m["node"] as Node).get_meta("kind", "")) != "taxi":
+					continue
 				options.append({"lane": a["halt"], "action": "halten", "acc": a})
+		# Taxis fahren bevorzugt zum Taxistand
+		if String((m["node"] as Node).get_meta("kind", "")) == "taxi":
+			var taxi_opts := options.filter(func(o: Dictionary) -> bool: return (o["acc"] as Dictionary).has("taxistand"))
+			if not taxi_opts.is_empty():
+				options = taxi_opts
 		if not options.is_empty():
 			m["goal"] = options[randi() % options.size()]
 	elif purpose == "bus":
@@ -524,6 +540,7 @@ func step(dt: float) -> void:
 		_drive(m, dt)
 	_animate_barriers(dt)
 	_staff_shift(dt)
+	_trains(dt)
 	_step_peds(dt)
 
 
@@ -547,7 +564,10 @@ func _spawn_tick() -> void:
 			purpose = "parkhaus"
 		elif r < 0.75:
 			purpose = "terminal"
-		var m := _spawn_on_lane(l, d, k, 0.0, purpose)
+		var kind := ""
+		if purpose == "terminal" and _has("taxistand") and randf() < 0.35:
+			kind = "taxi"
+		var m := _spawn_on_lane(l, d, k, 0.0, purpose, kind)
 		if (m["goal"] as Dictionary).is_empty() and purpose != "durch":
 			m["purpose"] = "durch"
 
@@ -578,7 +598,7 @@ func _parking_tick(dt: float) -> void:
 			_lane_leg(lane["line"], int(lane["d"]), int(lane["k"]), float(lane["pos"]) + 6.0)]
 		var m := _spawn_with_legs(legs, "raus")
 		m["v"] = 2.0
-		game.earn_quiet(PARK_FEE)
+		game.earn_quiet(PARK_FEE, "Parken")
 
 
 func _drive(m: Dictionary, dt: float) -> void:
@@ -1245,3 +1265,90 @@ func _staff_shift(dt: float) -> void:
 		_ped(PackedVector3Array([door, front, front.lerp(goal, 0.5), goal, inside]), "rein", true)
 	else:
 		_ped(PackedVector3Array([inside, goal, goal.lerp(front, 0.5), front, door]), "weg", true)
+
+
+# ---------------------------------------------------------------- S-Bahn, Taxis, Kiss & Fly, Mietwagen
+
+var train_t: Dictionary = {}       # Bahnhof (Instanz-ID) -> Zeit im Zugumlauf
+
+
+func _has(id: String) -> bool:
+	for key: int in access:
+		if (access[key] as Dictionary).has(id):
+			return true
+	return false
+
+
+## S-Bahnhof mit Strom, höchstens 300 m vom nächsten Terminal entfernt?
+func station_ok() -> bool:
+	for it: Dictionary in game.items_of("bahnhof"):
+		if not game.supplied(it, "strom"):
+			continue
+		var p: Vector3 = it["pos"]
+		for h: Dictionary in game.items_of("halle"):
+			if (h["rect"] as Rect2).grow(300.0).has_point(Vector2(p.x, p.z)):
+				return true
+	return false
+
+
+## Einflüsse der Landseite auf die Zufriedenheit: [Text, Punkte]
+func landside_factors() -> Array:
+	if dirty:
+		_find_access()
+	var out := []
+	if station_ok():
+		out.append(["S-Bahn-Anschluss", 4])
+	elif not game.items_of("bahnhof").is_empty():
+		out.append(["S-Bahnhof ohne Strom oder zu weit vom Terminal", -1])
+	if _has("taxistand"):
+		out.append(["Taxistand am Terminal", 2])
+	if _has("kissandfly"):
+		out.append(["Kiss & Fly: Bringen und Abholen ohne Gedränge", 2])
+	for it: Dictionary in game.items_of("mietwagen"):
+		if game.supplied(it, "strom") and access.has((it["node"] as Node).get_instance_id()):
+			out.append(["Mietwagenzentrum", 2])
+			break
+	return out
+
+
+## Züge: alle zwei Minuten fährt eine S-Bahn ein, hält 25 Sekunden (Fahrgäste gehen zum Terminal) und fährt weiter.
+func _trains(dt: float) -> void:
+	for it: Dictionary in game.items_of("bahnhof"):
+		var node: Node3D = it["node"]
+		var z := node.get_node_or_null("Zug") as Node3D
+		if z == null:
+			continue
+		var key := node.get_instance_id()
+		var t := float(train_t.get(key, randf_range(0.0, 60.0))) + dt
+		if not game.supplied(it, "strom"):
+			z.visible = false
+			train_t[key] = t
+			continue
+		const ARRIVE := 14.0
+		const STOP := 25.0
+		const LEAVE := 14.0
+		const CYCLE := 120.0
+		if t > CYCLE:
+			t -= CYCLE
+		train_t[key] = t
+		var x := 0.0
+		if t < ARRIVE:
+			var f := t / ARRIVE
+			x = -48.0 * pow(1.0 - f, 2.0)
+		elif t < ARRIVE + STOP:
+			x = 0.0
+			if not bool(z.get_meta("unloaded", false)):
+				z.set_meta("unloaded", true)
+				if station_ok():
+					var xf := node.transform
+					for i in range(3 + randi() % 4):
+						_ped_to_entrance(xf * Vector3(randf_range(-3.0, 3.0), 0, 9.5), "rein", float(i) * 0.8)
+		elif t < ARRIVE + STOP + LEAVE:
+			var f := (t - ARRIVE - STOP) / LEAVE
+			x = 48.0 * f * f
+		else:
+			z.visible = false
+			z.set_meta("unloaded", false)
+			continue
+		z.visible = true
+		z.position.x = x

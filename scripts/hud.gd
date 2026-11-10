@@ -19,10 +19,17 @@ signal map_requested
 signal floor_step(dir: int)
 signal option_changed(key: String, dir: int)
 signal draw_mode_selected(mode: String)
+signal clearance_requested(id: int)
+signal atc_toggled(on: bool)
+signal contract_requested(code: String)
+signal scenario_requested(key: String)
+signal tutorial_requested
+signal spot_requested(pos: Vector3)
 
 const Catalog = preload("res://scripts/catalog.gd")
 const GameState = preload("res://scripts/game_state.gd")
 const Settings = preload("res://scripts/settings.gd")
+const Ops = preload("res://scripts/operations.gd")
 
 const C_PANEL := Color(0.083, 0.075, 0.055, 0.88)
 const C_GOLD := Color(0.73, 0.65, 0.42)
@@ -82,6 +89,17 @@ var mode_box: HBoxContainer
 var mode_buttons: Dictionary = {}
 var hint_panel: PanelContainer
 var hint_label: Label
+var ops_ref: Variant = null         # operations.gd (Statistik, Verträge, Szenario)
+var ops_window: PanelContainer
+var ops_body: VBoxContainer
+var ops_tab := "statistik"
+var ops_sig := ""
+var ops_timer := 0.0
+var ops_button: Button
+var atc_button: Button
+var row_nodes: Dictionary = {}      # Flug-ID -> [Zeile, Code, Strecke, Zeit, Status, Knopf]
+var tutorial_panel: PanelContainer
+var tutorial_label: Label
 
 
 func _ready() -> void:
@@ -98,6 +116,8 @@ func _ready() -> void:
 	_build_toast()
 	_build_game_menu()
 	_build_hint()
+	_build_ops()
+	_build_tutorial()
 
 
 ## Kleines Schild am Mauszeiger mit Länge, Winkel und Radius beim Wegebau.
@@ -121,6 +141,16 @@ func _process(_dt: float) -> void:
 	if hint_panel != null and hint_panel.visible:
 		var mp := get_viewport().get_mouse_position()
 		hint_panel.position = mp + Vector2(22, 18)
+	if ops_window != null and ops_window.visible:
+		ops_timer -= _dt
+		if ops_timer <= 0.0:
+			ops_timer = 1.0
+			_ops_refresh()
+	if tutorial_panel != null and ops_ref != null:
+		var tt: String = ops_ref.tutorial_text()
+		tutorial_panel.visible = tt != ""
+		if tt != "" and tutorial_label.text != tt:
+			tutorial_label.text = tt
 
 
 # ---------------------------------------------------------------- Stil
@@ -234,6 +264,10 @@ func _build_top() -> void:
 	money_box.add_child(day_label)
 	row.add_child(money_box)
 	row.add_child(VSeparator.new())
+	ops_button = _button("Betrieb", true)
+	ops_button.tooltip_text = "Statistik, Airline-Verträge, Szenarien und Lernschritte (F2)"
+	ops_button.toggled.connect(func(on: bool) -> void: show_ops(on))
+	row.add_child(ops_button)
 	map_button = _button("Karte", true)
 	map_button.tooltip_text = "Ganze Karte zeigen und zurück (M)"
 	map_button.toggled.connect(func(_on: bool) -> void: map_requested.emit())
@@ -345,10 +379,10 @@ func _build_flights() -> void:
 	var panel := PanelContainer.new()
 	panel.anchor_left = 1.0
 	panel.anchor_right = 1.0
-	panel.offset_left = -416.0
+	panel.offset_left = -456.0
 	panel.offset_right = -16.0
 	panel.offset_top = 80.0
-	panel.custom_minimum_size = Vector2(400, 0)
+	panel.custom_minimum_size = Vector2(440, 0)
 	root.add_child(panel)
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
@@ -360,6 +394,11 @@ func _build_flights() -> void:
 	head.add_child(sp)
 	flight_done = _label("", 13, C_DIM)
 	head.add_child(flight_done)
+	atc_button = _button("Lotse", true)
+	atc_button.custom_minimum_size = Vector2(58, 26)
+	atc_button.tooltip_text = "Lotsenmodus: Landung, Pushback und Start gibst du selbst frei"
+	atc_button.toggled.connect(func(on: bool) -> void: atc_toggled.emit(on))
+	head.add_child(atc_button)
 	flights_toggle = _fold_button()
 	flights_toggle.pressed.connect(func() -> void: _fold(flights_details, flights_toggle, not flights_details.visible))
 	head.add_child(flights_toggle)
@@ -389,31 +428,90 @@ func set_flights(rows: Array, status: String, done: int, hint: String = "", wind
 	else:
 		flight_status.text = "Keine neuen Flüge: " + status
 		flight_status.add_theme_color_override("font_color", C_BAD)
-	for c in flight_rows.get_children():
-		c.queue_free()
-	if rows.is_empty():
-		flight_rows.add_child(_label("Gerade kein Flugzeug unterwegs", 14, C_FAINT))
-		return
+	# Zeilen je Flug behalten und nur aktualisieren, damit die Freigabe-Knöpfe klickbar bleiben
+	var seen := {}
 	var shown := 0
 	for r: Array in rows:
+		var fid := int(r[5]) if r.size() > 5 else shown
 		shown += 1
 		if shown > 8:
-			flight_rows.add_child(_label("… und %d weitere" % (rows.size() - 8), 13, C_FAINT))
 			break
-		var line := HBoxContainer.new()
-		line.add_theme_constant_override("separation", 8)
-		var code := _label(String(r[0]), 15, Color(0.94, 0.76, 0.31))
-		code.custom_minimum_size = Vector2(62, 0)
-		line.add_child(code)
-		var route := _label(String(r[2]), 14, C_TEXT)
-		route.custom_minimum_size = Vector2(130, 0)
-		line.add_child(route)
-		var st := _label(String(r[3]), 14, r[4])
-		st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		st.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		line.add_child(st)
-		line.tooltip_text = String(r[1])
-		flight_rows.add_child(line)
+		seen[fid] = true
+		var e: Array = row_nodes.get(fid, [])
+		if e.is_empty() or not is_instance_valid(e[0]):
+			e = _flight_row(fid)
+			row_nodes[fid] = e
+		(e[1] as Label).text = String(r[0])
+		(e[2] as Label).text = String(r[2])
+		(e[3] as Label).text = String(r[7]) if r.size() > 7 else ""
+		(e[3] as Label).add_theme_color_override("font_color", C_BAD if String(e[3].text).contains("+") else C_DIM)
+		(e[4] as Label).text = String(r[3])
+		(e[4] as Label).add_theme_color_override("font_color", r[4])
+		var btxt := String(r[6]) if r.size() > 6 else ""
+		(e[5] as Button).visible = btxt != ""
+		(e[5] as Button).text = btxt
+		(e[0] as Control).tooltip_text = String(r[1])
+		flight_rows.move_child(e[0], shown - 1)
+	for fid: int in row_nodes.keys():
+		if not seen.has(fid):
+			var e: Array = row_nodes[fid]
+			if is_instance_valid(e[0]):
+				(e[0] as Node).queue_free()
+			row_nodes.erase(fid)
+	var more := rows.size() - 8
+	var tail := flight_rows.get_node_or_null("Mehr") as Label
+	var empty_l := flight_rows.get_node_or_null("Leer") as Label
+	if rows.is_empty():
+		if empty_l == null:
+			empty_l = _label("Gerade kein Flugzeug unterwegs", 14, C_FAINT)
+			empty_l.name = "Leer"
+			flight_rows.add_child(empty_l)
+	elif empty_l != null:
+		empty_l.queue_free()
+	if more > 0:
+		if tail == null:
+			tail = _label("", 13, C_FAINT)
+			tail.name = "Mehr"
+			flight_rows.add_child(tail)
+		tail.text = "… und %d weitere" % more
+		flight_rows.move_child(tail, flight_rows.get_child_count() - 1)
+	elif tail != null:
+		tail.queue_free()
+
+
+func _flight_row(fid: int) -> Array:
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 6)
+	line.mouse_filter = Control.MOUSE_FILTER_PASS
+	var code := _label("", 15, Color(0.94, 0.76, 0.31))
+	code.custom_minimum_size = Vector2(58, 0)
+	line.add_child(code)
+	var route := _label("", 14, C_TEXT)
+	route.custom_minimum_size = Vector2(104, 0)
+	route.clip_text = true
+	line.add_child(route)
+	var tm := _label("", 12, C_DIM)
+	tm.custom_minimum_size = Vector2(70, 0)
+	line.add_child(tm)
+	var st := _label("", 13, C_TEXT)
+	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	st.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	st.clip_text = true
+	line.add_child(st)
+	var b := _button("", false)
+	b.custom_minimum_size = Vector2(0, 24)
+	b.add_theme_font_size_override("font_size", 12)
+	b.add_theme_color_override("font_color", C_OK)
+	b.visible = false
+	b.pressed.connect(func() -> void: clearance_requested.emit(fid))
+	line.add_child(b)
+	flight_rows.add_child(line)
+	return [line, code, route, tm, st, b]
+
+
+func set_atc(on: bool) -> void:
+	if atc_button != null:
+		atc_button.set_pressed_no_signal(on)
 
 
 # ---------------------------------------------------------------- Baumenü
@@ -907,3 +1005,305 @@ func toast(text: String) -> void:
 	toast_tween = create_tween()
 	toast_tween.tween_interval(2.4)
 	toast_tween.tween_property(toast_label, "modulate:a", 0.0, 0.6)
+
+
+# ---------------------------------------------------------------- Betrieb (Statistik, Verträge, Ziele)
+
+## Säulendiagramm ohne Achsen (Werte 0 … max), mit Beschriftung darunter.
+class BarChart extends Control:
+	var values: Array = []
+	var labels: Array = []
+	var color := Color(0.94, 0.76, 0.31)
+
+	func _draw() -> void:
+		var n := values.size()
+		if n == 0:
+			return
+		var mx := 1.0
+		for v: float in values:
+			mx = maxf(mx, v)
+		var w := size.x / float(n)
+		var h := size.y - 16.0
+		for i in range(n):
+			var bh := h * float(values[i]) / mx
+			draw_rect(Rect2(i * w + 1.0, h - bh, w - 2.0, bh), color)
+			if i < labels.size() and String(labels[i]) != "":
+				draw_string(ThemeDB.fallback_font, Vector2(i * w, size.y - 2.0), String(labels[i]), HORIZONTAL_ALIGNMENT_LEFT, w * 3.0, 11, Color(0.76, 0.72, 0.58))
+
+
+func _build_ops() -> void:
+	ops_window = PanelContainer.new()
+	ops_window.anchor_left = 0.5
+	ops_window.anchor_right = 0.5
+	ops_window.offset_left = -330.0
+	ops_window.offset_right = 330.0
+	ops_window.offset_top = 80.0
+	ops_window.custom_minimum_size = Vector2(660, 560)
+	ops_window.visible = false
+	root.add_child(ops_window)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 8)
+	ops_window.add_child(col)
+	var head := HBoxContainer.new()
+	var title := _label("BETRIEB", 20, C_TEXT)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	var close := _button("×", false)
+	close.custom_minimum_size = Vector2(34, 30)
+	close.pressed.connect(func() -> void: show_ops(false))
+	head.add_child(close)
+	col.add_child(head)
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 6)
+	var tg := ButtonGroup.new()
+	for t: Array in [["statistik", "Statistik"], ["vertraege", "Airline-Verträge"], ["ziele", "Szenarien und Ziele"]]:
+		var b := _button(String(t[1]), true)
+		b.button_group = tg
+		b.button_pressed = t[0] == ops_tab
+		b.custom_minimum_size = Vector2(0, 34)
+		var key: String = t[0]
+		b.pressed.connect(func() -> void:
+			ops_tab = key
+			ops_sig = ""
+			_ops_refresh())
+		tabs.add_child(b)
+	col.add_child(tabs)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(636, 470)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(scroll)
+	ops_body = VBoxContainer.new()
+	ops_body.add_theme_constant_override("separation", 6)
+	ops_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(ops_body)
+
+
+func show_ops(on: bool) -> void:
+	ops_window.visible = on
+	ops_button.set_pressed_no_signal(on)
+	if on:
+		ops_sig = ""
+		_ops_refresh()
+
+
+func toggle_ops() -> void:
+	show_ops(not ops_window.visible)
+
+
+## Inhalt der Betriebsseite als Liste von Einträgen; neu gebaut nur, wenn sich etwas geändert hat.
+func _ops_refresh() -> void:
+	if ops_ref == null:
+		return
+	var rows: Array = []
+	match ops_tab:
+		"statistik":
+			rows = _ops_stats()
+		"vertraege":
+			rows = _ops_contracts()
+		"ziele":
+			rows = _ops_goals()
+	var sig := var_to_str(rows)
+	if sig == ops_sig:
+		return
+	ops_sig = sig
+	for c in ops_body.get_children():
+		c.queue_free()
+	for r: Array in rows:
+		ops_body.add_child(_ops_row(r))
+
+
+func _ops_row(r: Array) -> Control:
+	match String(r[0]):
+		"title":
+			return _label(String(r[1]), 17, Color(0.94, 0.76, 0.31))
+		"text":
+			var l := _label(String(r[1]), 14, r[2] if r.size() > 2 else C_DIM)
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size = Vector2(620, 0)
+			return l
+		"kv":
+			var h := HBoxContainer.new()
+			var k := _label(String(r[1]), 14, C_DIM)
+			k.custom_minimum_size = Vector2(300, 0)
+			h.add_child(k)
+			h.add_child(_label(String(r[2]), 15, r[3] if r.size() > 3 else C_TEXT))
+			return h
+		"bar":
+			var h := HBoxContainer.new()
+			h.add_theme_constant_override("separation", 8)
+			var k := _label(String(r[1]), 14, C_TEXT)
+			k.custom_minimum_size = Vector2(300, 0)
+			k.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			h.add_child(k)
+			var pb := ProgressBar.new()
+			pb.custom_minimum_size = Vector2(200, 18)
+			pb.max_value = 1.0
+			pb.value = float(r[2])
+			pb.show_percentage = false
+			var fill := StyleBoxFlat.new()
+			fill.bg_color = r[3]
+			pb.add_theme_stylebox_override("fill", fill)
+			var bg := StyleBoxFlat.new()
+			bg.bg_color = Color(0.15, 0.14, 0.1)
+			pb.add_theme_stylebox_override("background", bg)
+			h.add_child(pb)
+			h.add_child(_label(String(r[4]) if r.size() > 4 else "", 13, C_DIM))
+			return h
+		"button":
+			var b := _button(String(r[1]), false)
+			b.custom_minimum_size = Vector2(0, 34)
+			b.disabled = not bool(r[4])
+			var action: String = r[2]
+			var arg: Variant = r[3]
+			b.pressed.connect(func() -> void: _ops_action(action, arg, b))
+			return b
+		"chart":
+			var ch := BarChart.new()
+			ch.values = r[1]
+			ch.labels = r[2]
+			ch.custom_minimum_size = Vector2(620, 90)
+			return ch
+		"sep":
+			return HSeparator.new()
+	return Control.new()
+
+
+func _ops_action(action: String, arg: Variant, b: Button) -> void:
+	match action:
+		"sign":
+			contract_requested.emit(String(arg))
+			ops_sig = ""
+			_ops_refresh()
+		"spot":
+			spot_requested.emit(arg)
+		"scenario":
+			if not b.text.begins_with("Wirklich"):
+				b.text = "Wirklich? Der aktuelle Flughafen wird ersetzt"
+				b.add_theme_color_override("font_color", C_BAD)
+				return
+			scenario_requested.emit(String(arg))
+			show_ops(false)
+		"tutorial":
+			tutorial_requested.emit()
+			show_ops(false)
+
+
+func _ops_stats() -> Array:
+	var o = ops_ref
+	var st: Dictionary = o.stats
+	var rows := [["title", "Pünktlichkeit und Verkehr"]]
+	var pu: float = o.punctuality()
+	rows.append(["kv", "Abflüge gesamt", str(int(st["abfluege"]))])
+	rows.append(["kv", "Pünktlich (bis 15 Min, letzte 40)", "–" if pu < 0.0 else "%d %%" % roundi(pu), C_OK if pu >= 85.0 else (C_BAD if pu >= 0.0 and pu < 70.0 else C_TEXT)])
+	rows.append(["kv", "Durchschnittliche Verspätung", "%d Min" % roundi(float(o.avg_delay()))])
+	rows.append(["kv", "Abgeflogene Passagiere", GameState.fmt_money(int(st["pax"])).replace(" €", "")])
+	rows.append(["kv", "Umgeschlagene Fracht", "%d t" % int(st["tonnen"])])
+	var bags := int(st["koffer"])
+	rows.append(["kv", "Fehlgeleitete Koffer", "%d von %d (%.1f ‰)" % [int(st["koffer_weg"]), bags, 1000.0 * float(st["koffer_weg"]) / maxf(float(bags), 1.0)]])
+	rows.append(["kv", "Lounge-Gäste", str(int(st["lounge"]))])
+	rows.append(["kv", "Wartungschecks im Hangar", str(int(st["checks"]))])
+	rows.append(["sep"])
+	rows.append(["title", "Passagiere je Stunde (letzte 24 Stunden)"])
+	var vals := []
+	var labs := []
+	for e: Array in o.hourly:
+		vals.append(float(e[1]))
+		labs.append("%02d" % (int(e[0]) % 24) if int(e[0]) % 3 == 0 else "")
+	rows.append(["chart", vals, labs])
+	rows.append(["sep"])
+	rows.append(["title", "Einnahmen nach Bereich (seit Spielbeginn)"])
+	var inc: Dictionary = o.income
+	var total := 0
+	for k: String in inc:
+		total += maxi(0, int(inc[k]))
+	var keys := inc.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return int(inc[a]) > int(inc[b]))
+	for k: String in keys:
+		if int(inc[k]) <= 0:
+			continue
+		rows.append(["bar", k, float(inc[k]) / maxf(float(total), 1.0), C_PRICE, GameState.fmt_money(int(inc[k]))])
+	if keys.is_empty():
+		rows.append(["text", "Noch keine Einnahmen.", C_FAINT])
+	rows.append(["sep"])
+	rows.append(["title", "Engpässe: hier warten Flugzeuge am längsten"])
+	var spots: Array = o.hotspots(5)
+	if spots.is_empty():
+		rows.append(["text", "Bisher keine Wartezeiten am Boden.", C_FAINT])
+	var mx := 1.0
+	for e: Array in spots:
+		mx = maxf(mx, float(e[1]))
+	for e: Array in spots:
+		var pos: Vector3 = e[0]
+		rows.append(["bar", "Bei x %d, z %d" % [roundi(pos.x), roundi(pos.z)], float(e[1]) / mx, C_BAD, "%d Min" % roundi(float(e[1]))])
+		rows.append(["button", "Auf der Karte zeigen", "spot", pos, true])
+	return rows
+
+
+func _ops_contracts() -> Array:
+	var o = ops_ref
+	var rows := [["text", "Airlines unter Vertrag fliegen dreimal so oft. Die Prämie gibt es beim Unterschreiben; werden die Bedingungen einen Tag lang nicht erfüllt, kündigt die Airline.", C_DIM]]
+	for al: Array in Catalog.AIRLINES:
+		var code := String(al[0])
+		var off: Dictionary = Ops.OFFERS[code]
+		rows.append(["sep"])
+		var active: bool = o.is_contract(code)
+		rows.append(["title", "%s (%s)%s" % [String(al[3]), code, " – unter Vertrag" if active else ""]])
+		rows.append(["text", String(off["text"]) + " · Prämie " + GameState.fmt_money(int(off["bonus"])), C_TEXT])
+		for r: Array in off["req"]:
+			var rq: Array = o.requirement(r)
+			rows.append(["text", ("✓ " if bool(rq[0]) else "✗ ") + String(rq[1]), C_OK if bool(rq[0]) else C_BAD])
+		if not active:
+			rows.append(["button", "Vertrag unterschreiben", "sign", code, o.offer_ok(code)])
+		elif float((o.contracts[code] as Dictionary).get("verletzt", 0.0)) > 0.0:
+			rows.append(["text", "Bedingungen nicht erfüllt: Kündigung droht!", C_BAD])
+	return rows
+
+
+func _ops_goals() -> Array:
+	var o = ops_ref
+	var rows := []
+	if String(o.scenario) != "":
+		var sc: Dictionary = Ops.SCENARIOS[o.scenario]
+		rows.append(["title", String(sc["name"]) + (" – geschafft!" if bool(o.scenario_done) else "")])
+		rows.append(["text", String(sc["desc"]), C_TEXT])
+		for g: Array in sc["goals"]:
+			var gs: Array = o.goal_state(g)
+			rows.append(["bar", ("✓ " if bool(gs[0]) else "") + String(gs[2]), float(gs[1]), C_OK if bool(gs[0]) else Color(0.94, 0.76, 0.31), ""])
+		rows.append(["sep"])
+	rows.append(["title", "Szenario starten"])
+	rows.append(["text", "Jedes Szenario beginnt mit dem Startflughafen und eigenem Budget. Der aktuelle Flughafen wird ersetzt (vorher speichern!).", C_DIM])
+	for key: String in Ops.SCENARIOS:
+		var sc: Dictionary = Ops.SCENARIOS[key]
+		rows.append(["text", String(sc["name"]) + ": " + String(sc["desc"]), C_TEXT])
+		rows.append(["button", "„%s“ starten" % String(sc["name"]), "scenario", key, true])
+	rows.append(["sep"])
+	rows.append(["title", "Lernschritte für Einsteiger"])
+	rows.append(["text", "Schritt für Schritt vom leeren Feld zum ersten Flug. Am besten auf einer neuen, leeren Karte (Menü → Neue Karte).", C_DIM])
+	rows.append(["button", "Lernschritte starten", "tutorial", 0, true])
+	return rows
+
+
+## Lernschritte: kleines Feld oben in der Mitte.
+func _build_tutorial() -> void:
+	tutorial_panel = PanelContainer.new()
+	tutorial_panel.anchor_left = 0.5
+	tutorial_panel.anchor_right = 0.5
+	tutorial_panel.offset_left = -300.0
+	tutorial_panel.offset_right = 300.0
+	tutorial_panel.offset_top = 118.0
+	tutorial_panel.visible = false
+	root.add_child(tutorial_panel)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 10)
+	tutorial_panel.add_child(h)
+	tutorial_label = _label("", 15, C_TEXT)
+	tutorial_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tutorial_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tutorial_label.custom_minimum_size = Vector2(480, 0)
+	h.add_child(tutorial_label)
+	var skip := _button("Beenden", false)
+	skip.custom_minimum_size = Vector2(80, 32)
+	skip.pressed.connect(func() -> void:
+		if ops_ref != null:
+			ops_ref.tutorial = -1)
+	h.add_child(skip)

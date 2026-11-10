@@ -8,6 +8,7 @@ const LINE_SHADER = preload("res://shaders/line.gdshader")
 const Models = preload("res://scripts/models.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
 const PixelFont = preload("res://scripts/pixel_font.gd")
+const Extras = preload("res://scripts/extras.gd")
 const BeltAnim = preload("res://scripts/belt_anim.gd")
 const Furniture = preload("res://scripts/furniture.gd")
 const Landscape = preload("res://scripts/landscape.gd")
@@ -838,6 +839,8 @@ static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 	var n := Node3D.new()
 	n.name = id
 	n.set_meta("opts", opts)
+	if Extras.build(n, id):
+		return n
 	if Catalog.is_inside(id):
 		_inside(n, id)
 		return n
@@ -1146,6 +1149,11 @@ static func _floodlight(n: Node3D) -> void:
 	k.cyl(Vector3(0, 25.0, 0), Vector3(0, 25.6, 0), 0.04, 0.04, steel, 6)
 	k.box(Vector3(-0.1, 25.6, -0.1), Vector3(0.1, 25.8, 0.1), Color(1.0, 0.15, 0.1, 0.3))
 	n.add_child(k.instance("Mast"))
+	# nachts: Lichtfeld auf dem Vorfeld vor den Scheinwerfern
+	var pool := light_pool(62.0, 8.0, 52.0, 0.42)
+	pool.rotation.y = PI
+	pool.position = Vector3(0, 0.14, 1.0)
+	n.add_child(pool)
 
 
 ## Vorfeld-Haltestelle: Haltebucht mit Bordstein, Wartedach mit Glaswänden, Haltestellenschild.
@@ -1318,6 +1326,9 @@ static func make_car(c: Color, kind: String = "") -> Node3D:
 				mi.add_child(leaf)
 	# Bremslichter und Blinker als eigene leuchtende Teile, die der Verkehr ein- und ausschaltet
 	var d: Array = Models.CAR_DIMS[kind]
+	var pool := light_pool(14.0 if kind != "linienbus" else 18.0, float(d[1]) * 0.8, float(d[1]) * 3.2)
+	pool.position = Vector3(0, 0.08, -float(d[0]) * 0.5 - 0.3)
+	n.add_child(pool)
 	var hl: float = float(d[0]) * 0.5
 	var hw: float = float(d[1]) * 0.5
 	var belt := Models.car_light_y(kind) + 0.16
@@ -1359,12 +1370,13 @@ static func _glow(parent: Node3D, pos: Vector3, size: Vector3, c: Color) -> void
 
 
 ## Flugzeug aus Rumpf-Mesh plus beweglichen Teilen: Fahrwerk, zwei Fans, Blinklichter.
-static func make_plane(kind: String, livery: Color) -> Node3D:
+static func make_plane(kind: String, livery: Color, style: int = 0, cargo: bool = false) -> Node3D:
 	var n := Node3D.new()
 	n.name = kind
 	var s: Dictionary = Models.SPECS.get(kind, Models.SPECS["a320"])
 	var mi := MeshInstance3D.new()
-	mi.mesh = Models.plane_mesh(kind, livery)
+	mi.name = "Rumpf"
+	mi.mesh = Models.plane_mesh(kind, livery, style, cargo)
 	n.add_child(mi)
 	var gear := MeshInstance3D.new()
 	gear.name = "Fahrwerk"
@@ -1408,6 +1420,11 @@ static func make_plane(kind: String, livery: Color) -> Node3D:
 	for sx: float in [-1.0, 1.0]:
 		_glow(land, Vector3(sx * float(s["r"]) * 1.15, float(wr[1]) - 0.05, float(wr[0]) - 0.02), Vector3(0.35, 0.2, 0.1), Color(1.0, 0.97, 0.85))
 	_glow(land, Vector3(0, cy - r + 0.05, float(s["nose_gear_z"]) - 0.3), Vector3(0.3, 0.2, 0.1), Color(1.0, 0.97, 0.85))
+	var lp := light_pool(70.0, 6.0, 26.0, 0.7)
+	lp.name = "Bodenlicht"
+	lp.top_level = true
+	lp.visible = false
+	n.add_child(lp)
 	var beacon := Node3D.new()
 	beacon.name = "Beacon"
 	n.add_child(beacon)
@@ -1427,6 +1444,18 @@ static func make_plane(kind: String, livery: Color) -> Node3D:
 
 ## Vorschaubild für Werkzeuge: Spuren (Stück 4-spurige Straße mit Pfeil), Kreuzung (Ampel).
 static func make_tool_thumb(id: String) -> Node3D:
+	if id == "kopieren":
+		# zwei gleiche Gebäude: Original und Kopie mit gestricheltem Rahmen
+		var c := Node3D.new()
+		blk(c, Vector3(-9, -0.2, -6), Vector3(9, 0, 6), Color(0.27, 0.29, 0.15))
+		for x: float in [-4.5, 4.5]:
+			blk(c, Vector3(x - 3.2, 0, -3), Vector3(x + 3.2, 3.5, 3), Color(0.82, 0.8, 0.74))
+			blk(c, Vector3(x - 3.4, 3.5, -3.2), Vector3(x + 3.4, 3.9, 3.2), Color(0.45, 0.47, 0.5))
+			blk(c, Vector3(x - 2.4, 1.0, 3.0), Vector3(x + 2.4, 2.4, 3.1), Color(0.3, 0.45, 0.55))
+		for i in range(5):
+			var z := -4.6 + float(i) * 2.3
+			blk(c, Vector3(0.6, 0.02, z), Vector3(8.6, 0.12, z + 1.0), Color(0.62, 0.86, 0.92))
+		return c
 	if id == "spuren":
 		var n := make_line_thumb("strasse4")
 		blk(n, Vector3(-1.5, 0.3, -5), Vector3(1.5, 0.6, 3), Color(0.95, 0.8, 0.2))
@@ -1656,3 +1685,30 @@ static func _inside_more(n: Node3D, id: String) -> void:
 			off.position = Vector3(2.2, 0, -1.0)
 			n.add_child(off)
 	n.add_child(k.instance("Ausstattung"))
+
+
+## Lichtkegel auf dem Boden (nachts sichtbar): Trapez von der Lampe (Breite w0) nach vorn (-Z) bis len (Breite w1).
+static var _beam_mat: ShaderMaterial = null
+
+
+static func light_pool(length: float, w0: float, w1: float, strength: float = 0.55) -> MeshInstance3D:
+	if _beam_mat == null:
+		_beam_mat = ShaderMaterial.new()
+		_beam_mat.shader = load("res://shaders/beam.gdshader")
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var pts := [Vector3(-w0 * 0.5, 0, 0), Vector3(w0 * 0.5, 0, 0), Vector3(w1 * 0.5, 0, -length), Vector3(-w1 * 0.5, 0, -length)]
+	var uvs := [Vector2(0.5 - 0.5 * w0 / w1, 0), Vector2(0.5 + 0.5 * w0 / w1, 0), Vector2(1, 1), Vector2(0, 1)]
+	for i: int in [0, 1, 2, 0, 2, 3]:
+		st.set_uv(uvs[i])
+		st.add_vertex(pts[i])
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var m := _beam_mat
+	if strength != 0.55:
+		m = _beam_mat.duplicate()
+		m.set_shader_parameter("strength", strength)
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.name = "Lichtkegel"
+	return mi

@@ -122,7 +122,7 @@ func cycle_mode() -> void:
 
 
 func is_drawing() -> bool:
-	return (is_line_tool() or is_rect_tool()) and not points.is_empty()
+	return (is_line_tool() or is_rect_tool() or tool == "kopieren") and not points.is_empty()
 
 
 func set_tool(id: String) -> void:
@@ -167,6 +167,8 @@ func on_move(p: Variant) -> void:
 		has_hover = true
 		return
 	var s := _snap(raw_hover)
+	if tool == "kopieren":
+		s = raw_hover.snapped(Vector3(2, 0, 2))
 	if has_hover and s.is_equal_approx(hover) and not (tool in ["abriss", "spuren", "kreuzung"]):
 		return
 	hover = s
@@ -178,6 +180,11 @@ func on_click(p: Vector3) -> void:
 	raw_hover = p
 	hover = _snap(p)
 	has_hover = true
+	if tool == "kopieren":
+		hover = p.snapped(Vector3(2, 0, 2))
+		_click_copy()
+		_refresh()
+		return
 	if is_rect_tool():
 		if points.is_empty():
 			points.append(hover)
@@ -251,6 +258,11 @@ func on_click(p: Vector3) -> void:
 
 
 func on_right() -> void:
+	if tool == "kopieren" and not clip.is_empty() and points.is_empty():
+		clip = {}
+		game.toast.emit("Blaupause verworfen")
+		_refresh()
+		return
 	if is_drawing():
 		if points.size() >= 2 and not (uses_modes() and draw_mode != "frei"):
 			finish()
@@ -670,6 +682,8 @@ func _refresh() -> void:
 		_refresh_item()
 	elif tool == "abriss":
 		_refresh_demolish()
+	elif tool == "kopieren":
+		_refresh_copy()
 	elif tool == "spuren":
 		_clear_highlight()
 		var rec := game.pick(hover) if has_hover else {}
@@ -994,3 +1008,155 @@ func _clear_highlight() -> void:
 		if is_instance_valid(node):
 			_overlay(node as Node, null)
 	target = {}
+
+
+# ---------------------------------------------------------------- Blaupause (Kopieren und Einfügen)
+
+var clip: Dictionary = {}     # kopierter Bereich: halls, lines, items, size, origin
+
+
+## Erster Klick: Ecke, zweiter Klick: Bereich kopieren; danach setzt jeder Klick eine Kopie ein.
+func _click_copy() -> void:
+	if not clip.is_empty() and points.is_empty():
+		_paste(hover)
+		return
+	if points.is_empty():
+		points.append(hover)
+		return
+	var r := GameState.hall_rect(points[0], hover)
+	points.clear()
+	clip = _capture(r)
+	var n := (clip["halls"] as Array).size() + (clip["lines"] as Array).size() + (clip["items"] as Array).size()
+	if n == 0:
+		clip = {}
+		game.toast.emit("Im Bereich liegt nichts zum Kopieren")
+	else:
+		game.toast.emit("Blaupause mit %d Teilen – zum Einfügen klicken, Rechtsklick verwirft sie" % n)
+
+
+func _capture(r: Rect2) -> Dictionary:
+	var c := r.get_center()
+	var origin := Vector3(c.x, 0, c.y)
+	var halls := []
+	var hall_ids := {}
+	for h: Dictionary in game.items_of("halle"):
+		var hr: Rect2 = h["rect"]
+		if r.encloses(hr):
+			hall_ids[h["node"]] = true
+			var inside := []
+			for it: Dictionary in game.inside_of(h):
+				var e := {"id": it["id"], "pos": (it["pos"] as Vector3) - origin, "rot": it["rot"], "opts": it.get("opts", {}).duplicate(),
+					"floor": GameState.floor_of(it)}
+				if Catalog.is_zone(String(it["id"])):
+					e["size"] = (it["rect"] as Rect2).size
+				inside.append(e)
+			var walls := []
+			for l: Dictionary in game.walls_of(h):
+				var pts := []
+				for q: Vector3 in l["points"]:
+					pts.append(q - origin)
+				walls.append({"kind": l["kind"], "points": pts, "floor": GameState.floor_of(l)})
+			halls.append({"rect": Rect2(hr.position - Vector2(origin.x, origin.z), hr.size), "opts": h.get("opts", {}).duplicate(), "inside": inside, "walls": walls})
+	var lines := []
+	for l: Dictionary in game.lines:
+		if Catalog.is_wall(String(l["kind"])):
+			continue
+		var all_in := true
+		for q: Vector3 in (l["samples"] as PackedVector3Array):
+			if not r.has_point(Vector2(q.x, q.z)):
+				all_in = false
+				break
+		if all_in:
+			var pts := []
+			for q: Vector3 in l["points"]:
+				pts.append(q - origin)
+			lines.append({"kind": l["kind"], "points": pts})
+	var items := []
+	for it: Dictionary in game.items:
+		var id := String(it["id"])
+		if id == "halle" or Catalog.is_inside(id):
+			continue
+		var p: Vector3 = it["pos"]
+		if r.has_point(Vector2(p.x, p.z)):
+			items.append({"id": id, "pos": p - origin, "rot": it["rot"], "opts": it.get("opts", {}).duplicate()})
+	return {"halls": halls, "lines": lines, "items": items, "size": r.size, "origin": origin}
+
+
+func _paste(at: Vector3) -> void:
+	var ok := 0
+	var total := 0
+	var money0 := game.money
+	var old_floor := game.view_floor
+	for h: Dictionary in clip["halls"]:
+		total += 1
+		var hr: Rect2 = h["rect"]
+		var nr := Rect2(hr.position + Vector2(at.x, at.z), hr.size)
+		if game.can_place_hall(nr) != "":
+			continue
+		var rec := game.build_hall(nr, false, h["opts"])
+		if rec.is_empty():
+			continue
+		ok += 1
+		for w: Dictionary in h["walls"]:
+			total += 1
+			game.view_floor = int(w["floor"])
+			var pts := []
+			for q: Vector3 in w["points"]:
+				pts.append(q + at)
+			if not game.build_line(String(w["kind"]), pts).is_empty():
+				ok += 1
+		for e: Dictionary in h["inside"]:
+			total += 1
+			var pos: Vector3 = (e["pos"] as Vector3) + at
+			if Catalog.is_zone(String(e["id"])):
+				var sz: Vector2 = e["size"]
+				var zr := Rect2(pos.x - sz.x * 0.5, pos.z - sz.y * 0.5, sz.x, sz.y)
+				if not game.build_zone(String(e["id"]), zr, false, int(e["floor"])).is_empty():
+					ok += 1
+				continue
+			game.view_floor = int(e["floor"])
+			if game.can_place(String(e["id"]), pos, int(e["rot"])) == "":
+				if not game.build_item(String(e["id"]), pos, int(e["rot"]), false, e["opts"], int(e["floor"])).is_empty():
+					ok += 1
+	game.view_floor = old_floor
+	for l: Dictionary in clip["lines"]:
+		total += 1
+		var pts := []
+		for q: Vector3 in l["points"]:
+			pts.append(q + at)
+		if not game.build_line(String(l["kind"]), pts).is_empty():
+			ok += 1
+	for e: Dictionary in clip["items"]:
+		total += 1
+		var pos: Vector3 = (e["pos"] as Vector3) + at
+		if game.can_place(String(e["id"]), pos, int(e["rot"])) != "":
+			continue
+		if not game.build_item(String(e["id"]), pos, int(e["rot"]), false, e["opts"]).is_empty():
+			ok += 1
+	game.toast.emit("Blaupause eingefügt: %d von %d Teilen für %s" % [ok, total, GameState.fmt_money(money0 - game.money)])
+
+
+func _refresh_copy() -> void:
+	if not has_hover:
+		return
+	var corners := []
+	if clip.is_empty():
+		if points.is_empty():
+			info.emit("Blaupause", "Klicke zwei Ecken eines Bereichs: Gebäude, Wege und ganze Terminalhallen darin werden kopiert. Danach setzt jeder Klick eine Kopie (zum normalen Preis). Rechtsklick verwirft die Blaupause.", 0)
+			_marker(hover, 2.0, mat_mark)
+			return
+		var r := GameState.hall_rect(points[0], hover)
+		corners = [Vector3(r.position.x, 0, r.position.y), Vector3(r.end.x, 0, r.position.y), Vector3(r.end.x, 0, r.end.y), Vector3(r.position.x, 0, r.end.y)]
+		info.emit("Blaupause", "Bereich %d × %d m: zweite Ecke klicken" % [roundi(r.size.x), roundi(r.size.y)], 1)
+	else:
+		var sz: Vector2 = clip["size"]
+		var h := Vector3(sz.x * 0.5, 0, sz.y * 0.5)
+		corners = [hover - h, hover + Vector3(h.x, 0, -h.z), hover + h, hover + Vector3(-h.x, 0, h.z)]
+		var n := (clip["halls"] as Array).size() + (clip["lines"] as Array).size() + (clip["items"] as Array).size()
+		info.emit("Blaupause einfügen", "%d Teile, %d × %d m. Klick setzt eine Kopie, Rechtsklick verwirft die Blaupause." % [n, roundi(sz.x), roundi(sz.y)], 1)
+	for i in range(4):
+		var a: Vector3 = corners[i]
+		var b: Vector3 = corners[(i + 1) % 4]
+		var steps := maxi(1, int(a.distance_to(b) / 6.0))
+		for j in range(steps + 1):
+			_marker(a.lerp(b, float(j) / float(steps)), 1.4, mat_snap)

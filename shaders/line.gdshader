@@ -60,6 +60,9 @@ void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
+global uniform float rwy_snow;
+global uniform float wet;
+
 void fragment() {
 	vec3 col = base_color * (0.93 + 0.12 * hash(floor(wpos.xz * 2.0)));
 	float x = (UV.x - 0.5) * width;
@@ -230,7 +233,15 @@ void fragment() {
 			col = vec3(0.86, 0.69, 0.22);
 		}
 	}
+	// Wetter: Schneematsch auf Wegen (mit Reifenspuren), nasser Belag glänzt
+	if (mark != 9) {
+		float n1 = hash(floor(wpos.xz * 0.45));
+		float n2 = hash(floor(wpos.xz * 1.3) + 5.0);
+		float cover = clamp(rwy_snow * (0.45 + 0.35 * n1 + 0.2 * n2), 0.0, 0.92);
+		col = mix(col, vec3(0.84, 0.86, 0.9), cover);
+		col *= 1.0 - 0.22 * wet * (1.0 - rwy_snow);
+	}
 	ALBEDO = col;
-	ROUGHNESS = 1.0;
-	SPECULAR = 0.0;
+	ROUGHNESS = 1.0 - 0.6 * wet;
+	SPECULAR = 0.45 * wet;
 }

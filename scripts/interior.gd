@@ -49,6 +49,11 @@ static func build(n: Node3D, id: String, opts: Dictionary) -> bool:
 			anim = true
 		"sicherheit":
 			_security(n, k)
+			if bool(opts.get("fastlane", false)):
+				# Fast-Lane für Vielflieger: goldener Boden und Schild über der rechten Spur
+				k.box(Vector3(0.2, 0.04, -4.0), Vector3(3.0, 0.05, 4.0), Color(0.62, 0.5, 0.24))
+				k.box(Vector3(0.4, 2.3, 3.9), Vector3(2.9, 2.75, 4.0), Color(0.15, 0.13, 0.1))
+				PixelFont.draw(k, "FAST LANE", Vector3(1.65, 2.52, 4.02), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.035, Color(0.95, 0.8, 0.4))
 			anim = true
 		"gate":
 			_gate(n, k, String(opts.get("bereich", "schengen")), false)

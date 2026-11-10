@@ -15,6 +15,8 @@ const Settings = preload("res://scripts/settings.gd")
 const Updater = preload("res://scripts/updater.gd")
 const GroundOps = preload("res://scripts/ground_ops.gd")
 const Airfield = preload("res://scripts/airfield.gd")
+const Weather = preload("res://scripts/weather.gd")
+const Operations = preload("res://scripts/operations.gd")
 const RESUME_FLAG := "user://nach_update_laden"
 const Catalog = preload("res://scripts/catalog.gd")
 const GROUND_SHADER = preload("res://shaders/ground.gdshader")
@@ -35,6 +37,8 @@ var flights: Flights
 var terminal: Terminal
 var ops: GroundOps
 var airfield: Airfield
+var weather: Weather
+var betrieb: Operations
 var hud: Hud
 var settings: Settings
 var updater: Updater
@@ -47,6 +51,8 @@ func _ready() -> void:
 	randomize()
 	# globale Shader-Werte: night = 0 am Tag, 1 in der Nacht (Lampen, Fenster, Lichthöfe)
 	RenderingServer.global_shader_parameter_add(&"night", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
+	for gp: StringName in [&"snow", &"wet", &"rwy_snow"]:
+		RenderingServer.global_shader_parameter_add(gp, RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
 	_make_view()
 	_make_world()
 	game = GameState.new()
@@ -92,6 +98,23 @@ func _ready() -> void:
 	cam_rig = IsoCamera.new()
 	cam_rig.name = "Kamera"
 	world.add_child(cam_rig)
+	weather = Weather.new()
+	weather.name = "Wetter"
+	world.add_child(weather)
+	weather.setup(game, cam_rig)
+	betrieb = Operations.new()
+	betrieb.name = "Betrieb"
+	add_child(betrieb)
+	betrieb.setup(game)
+	betrieb.flights = flights
+	betrieb.terminal = terminal
+	betrieb.traffic = traffic
+	betrieb.weather = weather
+	flights.weather = weather
+	flights.betrieb = betrieb
+	terminal.betrieb = betrieb
+	game.income_cb = betrieb.book_income
+	game.before_save.connect(_collect_extra)
 	hud = Hud.new()
 	add_child(hud)
 	settings = Settings.new()
@@ -257,17 +280,64 @@ func _connect() -> void:
 	builder.mode_changed.connect(hud.show_draw_modes)
 	builder.hint.connect(hud.set_hint)
 	hud.draw_mode_selected.connect(builder.set_mode)
+	hud.ops_ref = betrieb
+	hud.clearance_requested.connect(_on_clearance)
+	hud.atc_toggled.connect(_on_atc)
+	hud.contract_requested.connect(betrieb.sign)
+	hud.scenario_requested.connect(_start_scenario)
+	hud.tutorial_requested.connect(_on_tutorial)
+	hud.spot_requested.connect(_on_spot)
 	game.money_changed.connect(hud.set_money)
 	game.toast.connect(hud.toast)
 	game.view_changed.connect(_on_view_changed)
 	hud.set_money(game.money)
 
 
+func _on_clearance(id: int) -> void:
+	var t: String = flights.clearance(id)
+	if t != "":
+		hud.toast(t)
+
+
+func _on_atc(on: bool) -> void:
+	game.atc_manual = on
+	hud.toast("Lotsenmodus: Landung, Pushback und Start gibst du im Flugplan frei" if on else "Freigaben wieder automatisch")
+	if not on:
+		for p: Dictionary in flights.planes.duplicate():
+			p["frei_push"] = true
+			p["frei_start"] = true
+			if p["state"] == "warteschleife":
+				flights.clearance(int(p["id"]))
+
+
+func _on_tutorial() -> void:
+	betrieb.start_tutorial()
+	hud.toast("Lernschritte gestartet")
+
+
+func _on_spot(pos: Vector3) -> void:
+	cam_rig.target = pos
+	cam_rig.zoom_goal = 180.0
+
+
 func _new_map() -> void:
 	builder.set_tool("")
 	flights.clear()
 	game.clear_all()
+	betrieb.start_scenario("")
+	betrieb.start_tutorial()
 	hud.toast("Leere Karte, 30 Mio. € Startkapital")
+
+
+## Szenario: Startflughafen neu aufbauen, Budget und Wetter nach Vorgabe.
+func _start_scenario(key: String) -> void:
+	builder.set_tool("")
+	flights.clear()
+	game.clear_all()
+	game.load_starter()
+	game.minutes = 6.0 * 60.0
+	betrieb.start_scenario(key)
+	traffic.dirty = true
 
 
 func _load() -> void:
@@ -285,9 +355,19 @@ func _arg(args: PackedStringArray, prefix: String, fallback: String) -> String:
 
 
 ## Ältere Spielstände: Bereiche im Terminal aus Wänden und Kontrolle ableiten.
+## Wetter, Betrieb (Statistik, Verträge, Szenario) und Flotte aus dem Spielstand übernehmen.
 func _after_load() -> void:
 	for h: Dictionary in game.items_of("halle"):
 		terminal.auto_zones(h)
+	var ex: Dictionary = game.extra
+	weather.load_data(ex.get("wetter", {}))
+	betrieb.load_data(ex.get("betrieb", {}))
+	flights.load_data(ex.get("flotte", {}))
+	hud.set_atc(game.atc_manual)
+
+
+func _collect_extra() -> void:
+	game.extra = {"wetter": weather.save_data(), "betrieb": betrieb.save_data(), "flotte": flights.save_data()}
 
 
 func _set_speed(i: int) -> void:
@@ -405,6 +485,7 @@ func _daylight() -> void:
 	env.ambient_light_color = Color(0.66, 0.70, 0.78).lerp(Color(0.34, 0.40, 0.62), night).lerp(Color(0.85, 0.68, 0.6), dusk * (1.0 - night) * 0.35)
 	env.ambient_light_energy = lerpf(0.62, 0.52, night)
 	env.background_color = Color(0.36, 0.42, 0.3).lerp(Color(0.07, 0.09, 0.14), night)
+	weather.apply_light(sun, env)
 	if game.interior_view and game.view_floor < 0:
 		# Untergeschoss: dunkel, nur Lampen in Tunneln und Kanälen leuchten
 		env.background_color = Color(0.05, 0.05, 0.06)
@@ -436,6 +517,7 @@ func _process(delta: float) -> void:
 			status = flights.reason
 		hud.set_flights(flights.rows(), status, flights.done, flights.hint, flights.wind_text())
 		hud.set_economy(game.satisfaction, game.satisfaction_factors, game.day_income, game.upkeep_per_day())
+		_update_heat()
 
 
 ## Info-Werkzeug: Details zu Flugzeug, Gebäude oder Weg unter dem Mauszeiger.
@@ -579,6 +661,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_set_speed(3)
 			KEY_F5:
 				game.save_game()
+			KEY_F2:
+				hud.toggle_ops()
 			KEY_F9:
 				_load()
 			KEY_DELETE:
@@ -627,6 +711,11 @@ func _demo(args: PackedStringArray) -> void:
 			mode = a.substr(7)
 		if a.begins_with("--zeit="):
 			game.minutes = float(a.substr(7)) * 60.0
+		if a.begins_with("--wetter="):
+			weather.force(a.substr(9))
+			weather.snow_cover = 1.0 if a.substr(9) == "schnee" else 0.0
+			weather.wet = 1.0 if a.substr(9) == "regen" else 0.0
+			weather.runway_snow = 0.45 if a.substr(9) == "schnee" else 0.0
 	for i in range(2400):
 		flights.step(0.05)
 	set_process(false)
@@ -871,9 +960,13 @@ func _demo(args: PackedStringArray) -> void:
 		var showcase := Node3D.new()
 		world.add_child(showcase)
 		var i := 0
+		var px := -130.0
 		for kind: String in Catalog.PLANES:
-			var pl: Node3D = Factory.make_plane(kind, Catalog.AIRLINES[i % Catalog.AIRLINES.size()][1])
-			pl.position = base + Vector3(-110 + 50 * i + (12 if kind == "a330" else 0), 0, 0)
+			var al: Array = Catalog.AIRLINES[i % Catalog.AIRLINES.size()]
+			var pl: Node3D = Factory.make_plane(kind, al[1], int(al[2]), mode == "modelle_fracht")
+			var plen := float(Catalog.PLANES[kind]["nose"]) * 2.0
+			pl.position = base + Vector3(px + plen * 0.5, 0, 0)
+			px += plen + 8.0
 			pl.rotation.y = deg_to_rad(-90)
 			showcase.add_child(pl)
 			i += 1
@@ -895,6 +988,27 @@ func _demo(args: PackedStringArray) -> void:
 			per.position = base + Vector3(-20 + k * 1.0, 0, 34)
 			Factory.set_pose(per, k % 6)
 			showcase.add_child(per)
+		# neue Bauten ab 0.13
+		var bx := -60.0
+		for bid: String in ["frachtterminal", "winterdienst", "bahnhof", "mietwagen", "taxistand", "kissandfly"]:
+			var bn: Node3D = Factory.make_item(bid)
+			var bsz: Vector2 = Catalog.ITEMS[bid]["size"]
+			bn.position = base + Vector3(bx + bsz.x * 0.5, 0, 130)
+			showcase.add_child(bn)
+			bx += bsz.x + 10.0
+		for vk: Array in [["pflug", Vector3(-40, 0, 95)], ["enteiser", Vector3(-30, 0, 95)], ["lader", Vector3(-18, 0, 95)]]:
+			var vm := MeshInstance3D.new()
+			var Mo2 = load("res://scripts/models.gd")
+			vm.mesh = Mo2.plow_mesh() if vk[0] == "pflug" else (Mo2.deicer_mesh() if vk[0] == "enteiser" else Mo2.loader_mesh(4.0))
+			vm.position = base + (vk[1] as Vector3)
+			showcase.add_child(vm)
+		if mode == "modelle_bauten":
+			for c in showcase.get_children():
+				var bz := c as Node3D
+				if bz != null and bz.has_method("get_meta") and bz.name == "bahnhof":
+					var zg := bz.get_node_or_null("Zug") as Node3D
+					if zg != null:
+						zg.visible = true
 		# Fahrzeugreihe: alle Bodenfahrzeuge, Busse und Feuerwehr nebeneinander
 		var Lm = load("res://scripts/landmarks.gd")
 		var Mo = load("res://scripts/models.gd")
@@ -1052,9 +1166,60 @@ func _demo(args: PackedStringArray) -> void:
 	hud.set_flights(flights.rows(), flights.check_operation(), flights.done, flights.hint)
 	hud.set_economy(game.satisfaction, game.satisfaction_factors, game.day_income, game.upkeep_per_day())
 	_daylight()
+	var ob := _arg(args, "--betrieb=", "")
+	if ob != "":
+		hud.ops_tab = ob
+		hud.show_ops(true)
+	if "--lotse" in args:
+		game.atc_manual = true
+		hud.set_atc(true)
 	for i in range(120):
 		await get_tree().process_frame
 	if shot != "":
 		get_viewport().get_texture().get_image().save_png(shot)
 		print("screenshot ", shot)
 	get_tree().quit()
+
+
+# ---------------------------------------------------------------- Engpass-Karte
+
+var _heat_root: Node3D = null
+var _heat_mat: StandardMaterial3D = null
+
+
+## Solange die Statistik offen ist: rote Flecken dort, wo Flugzeuge am längsten gewartet haben.
+func _update_heat() -> void:
+	var show: bool = hud.ops_window != null and hud.ops_window.visible and hud.ops_tab == "statistik"
+	if not show:
+		if _heat_root != null:
+			_heat_root.queue_free()
+			_heat_root = null
+		return
+	if _heat_root == null:
+		_heat_root = Node3D.new()
+		_heat_root.name = "Engpaesse"
+		world.add_child(_heat_root)
+		_heat_mat = StandardMaterial3D.new()
+		_heat_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_heat_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_heat_mat.no_depth_test = true
+		_heat_mat.albedo_color = Color(1.0, 0.2, 0.1, 0.38)
+	for c in _heat_root.get_children():
+		c.queue_free()
+	var spots: Array = betrieb.hotspots(14)
+	var mx := 1.0
+	for e: Array in spots:
+		mx = maxf(mx, float(e[1]))
+	for e: Array in spots:
+		var mi := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		var r := 8.0 + 30.0 * sqrt(float(e[1]) / mx)
+		cm.top_radius = r
+		cm.bottom_radius = r
+		cm.height = 0.2
+		cm.radial_segments = 24
+		mi.mesh = cm
+		mi.material_override = _heat_mat
+		mi.position = (e[0] as Vector3) + Vector3(0, 0.5, 0)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_heat_root.add_child(mi)

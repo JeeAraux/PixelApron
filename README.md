@@ -22,6 +22,14 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.13: Wetter, Fracht, Verträge, Lotsenmodus und vieles mehr**
+  - **Wetter:** Regen, Nebel und Schnee mit Winterdienst (Räumkonvoi auf der Piste, Enteisung vor dem Start); nachts Scheinwerferkegel von Autos, Bodenfahrzeugen und Flugzeugen, Lichtfelder unter den Flutlichtmasten.
+  - **Flugbetrieb:** Bei mehreren Pisten wird nach dem Wind auf eine zum Landen und eine zum Starten verteilt. Frachtterminal mit Frachtflügen (777F und Frachtversionen), Wartungschecks im Hangar, Flugplan mit geplanten Zeiten und Verspätungen, Lotsenmodus mit Freigaben per Knopf.
+  - **Neue Flugzeuge:** Airbus A350-900, Boeing 787-9, Bombardier CRJ900 und Boeing 777F, jede Airline mit eigener Lackierung.
+  - **Terminal:** Airline-Lounge und Fast-Lane, Gepäckermittlung und Gepäckdurchleuchtung, Hunger als Bedürfnis.
+  - **Landseite:** S-Bahnhof mit einfahrenden Zügen, Taxistand, Kiss & Fly und Mietwagenzentrum.
+  - **Betrieb (F2):** Statistik mit Pünktlichkeit, Einnahmen nach Bereich und Engpässen, Airline-Verträge mit Prämien, Szenarien (Drehkreuz, Winterchaos, Frachtdrehkreuz) und Lernschritte für Einsteiger.
+  - **Blaupause:** Bereiche samt Terminalmodulen kopieren und einfügen.
 - **Update 0.12: Fahrzeuge und Flugzeuge von Grund auf neu**
   - **Flugzeuge nach Vorbild:** Rumpf mit echtem Nasen- und Heckprofil, Cockpitscheiben, Türen und Fensterreihe, Flügel mit Profil und Sharklets, gepfeiltes Leitwerk, Triebwerke mit Einlauflippe und Fan, Fahrwerk mit Felgen und Federbein, Airline-Schriftzug.
   - **Autos nach Vorbild** (Kompaktwagen, Limousine, Kombi, SUV, Transporter, Taxi): glatte Karosserie mit Motorhaube, geneigten Scheiben, Säulen, Türfugen, Scheinwerfern, Rückleuchten, Spiegeln und Felgen.
