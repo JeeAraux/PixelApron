@@ -38,7 +38,7 @@ const SPECS := {
 		"doors": [-15.2, 12.7], "exits": [-1.5, -0.6], "win_from": -13.6, "win_to": 11.3, "win_dy": 0.52,
 	},
 	"a321": {
-		"len": 44.5, "r": 1.98, "cy": 3.35, "nose_len": 5.6, "nose_tip": 0.26,
+		"nose_point": 0.0, "len": 44.5, "r": 1.98, "cy": 3.35, "nose_len": 5.6, "nose_tip": 0.26,
 		"tail_start": 9.85, "tail_r": 0.40, "tail_drop": 0.35,
 		"wing_z": -5.25, "wing_c": 6.6, "kink_c": 4.0, "tip_x": 17.0, "tip_c": 1.6, "sweep": 27.0, "dihedral": 5.0, "wing_y": 2.05,
 		"winglet": [2.4, 0.25, 1.2, 0.55],
@@ -49,7 +49,7 @@ const SPECS := {
 		"doors": [-18.6, 16.1], "exits": [-7.0, -0.6, 8.6], "win_from": -17.0, "win_to": 14.8, "win_dy": 0.52,
 	},
 	"b737": {
-		"len": 39.5, "r": 1.88, "cy": 3.0, "nose_len": 6.6, "nose_tip": 0.36,
+		"nose_point": 1.0, "cockpit": "boeing", "len": 39.5, "r": 1.88, "cy": 3.0, "nose_len": 6.6, "nose_tip": 0.36,
 		"tail_start": 8.4, "tail_r": 0.20, "tail_drop": 0.55,
 		"wing_z": -4.3, "wing_c": 7.2, "kink_c": 4.2, "tip_x": 17.0, "tip_c": 1.5, "sweep": 25.0, "dihedral": 6.0, "wing_y": 1.75,
 		"winglet": [2.5, 0.6, 1.5, 0.45],
@@ -60,7 +60,7 @@ const SPECS := {
 		"doors": [-16.2, 14.6], "exits": [-0.3, 0.6], "win_from": -14.6, "win_to": 13.2, "win_dy": 0.48,
 	},
 	"e190": {
-		"len": 36.2, "r": 1.5, "cy": 2.75, "nose_len": 4.8, "nose_tip": 0.3,
+		"nose_point": 0.35, "len": 36.2, "r": 1.5, "cy": 2.75, "nose_len": 4.8, "nose_tip": 0.3,
 		"tail_start": 7.0, "tail_r": 0.30, "tail_drop": 0.3,
 		"wing_z": -3.6, "wing_c": 5.4, "kink_c": 3.2, "tip_x": 14.3, "tip_c": 1.2, "sweep": 25.0, "dihedral": 5.0, "wing_y": 1.5,
 		"winglet": [1.6, 0.2, 0.9, 0.45],
@@ -84,7 +84,7 @@ const SPECS := {
 		"doors": [-10.4, 10.0], "exits": [], "win_from": -9.0, "win_to": 8.6, "win_dy": 0.3,
 	},
 	"a330": {
-		"len": 63.7, "r": 2.82, "cy": 4.5, "nose_len": 7.4, "nose_tip": 0.28,
+		"nose_point": 0.15, "len": 63.7, "r": 2.82, "cy": 4.5, "nose_len": 7.4, "nose_tip": 0.28,
 		"tail_start": 15.0, "tail_r": 0.5, "tail_drop": 0.6,
 		"wing_z": -6.0, "wing_c": 10.5, "kink_c": 6.4, "tip_x": 30.0, "tip_c": 2.1, "sweep": 30.0, "dihedral": 5.5, "wing_y": 2.75,
 		"winglet": [3.0, 0.3, 1.6, 0.8],
@@ -95,7 +95,7 @@ const SPECS := {
 		"doors": [-27.0, 22.0], "exits": [-12.0, 2.0], "win_from": -26.0, "win_to": 21.0, "win_dy": 0.75,
 	},
 	"a350": {
-		"len": 66.8, "r": 2.99, "cy": 4.7, "nose_len": 8.2, "nose_tip": 0.25, "mask": true,
+		"nose_point": 0.45, "len": 66.8, "r": 2.99, "cy": 4.7, "nose_len": 8.2, "nose_tip": 0.25, "mask": true,
 		"tail_start": 16.0, "tail_r": 0.5, "tail_drop": 0.6,
 		"wing_z": -6.5, "wing_c": 12.0, "kink_c": 6.8, "tip_x": 31.8, "tip_c": 2.0, "sweep": 32.0, "dihedral": 5.5, "wing_y": 2.9,
 		"winglet": [3.2, 0.5, 1.8, 0.7],
@@ -106,7 +106,7 @@ const SPECS := {
 		"doors": [-29.0, 23.5], "exits": [-12.5, 3.0], "win_from": -28.0, "win_to": 22.5, "win_dy": 0.8,
 	},
 	"b767": {
-		"len": 54.9, "r": 2.52, "cy": 4.0, "nose_len": 6.8, "nose_tip": 0.3,
+		"nose_point": 0.55, "cockpit": "boeing", "len": 54.9, "r": 2.52, "cy": 4.0, "nose_len": 6.8, "nose_tip": 0.3,
 		"tail_start": 13.0, "tail_r": 0.45, "tail_drop": 0.55,
 		"wing_z": -5.0, "wing_c": 9.0, "kink_c": 5.4, "tip_x": 23.8, "tip_c": 1.8, "sweep": 31.5, "dihedral": 6.0, "wing_y": 2.4,
 		"winglet": [3.4, 0.3, 1.6, 0.7],
@@ -117,7 +117,7 @@ const SPECS := {
 		"doors": [-23.0, 18.5], "exits": [-9.0, 1.5], "win_from": -22.0, "win_to": 17.5, "win_dy": 0.7,
 	},
 	"a380": {
-		"len": 72.7, "r": 3.6, "cy": 5.5, "nose_len": 9.2, "nose_tip": 0.32, "mask": true,
+		"len": 72.7, "r": 3.6, "cy": 5.5, "nose_len": 9.2, "nose_tip": 0.32,
 		"tail_start": 17.5, "tail_r": 0.6, "tail_drop": 1.1,
 		"wing_z": -3.5, "wing_c": 17.5, "kink_c": 9.2, "tip_x": 39.9, "tip_c": 3.0, "sweep": 33.5, "dihedral": 5.6, "wing_y": 3.2,
 		"winglet": [2.4, 0.6, 2.0, 0.9],
@@ -129,7 +129,7 @@ const SPECS := {
 		"doors": [-30.5, 25.0], "exits": [-14.5, 6.0], "win_from": -29.5, "win_to": 24.0, "win_dy": -0.9, "win_dy2": 1.7,
 	},
 	"b787": {
-		"len": 62.8, "r": 2.88, "cy": 4.5, "nose_len": 7.6, "nose_tip": 0.34,
+		"nose_point": 0.75, "cockpit": "boeing", "len": 62.8, "r": 2.88, "cy": 4.5, "nose_len": 7.6, "nose_tip": 0.34,
 		"tail_start": 15.5, "tail_r": 0.45, "tail_drop": 0.7,
 		"wing_z": -6.0, "wing_c": 11.0, "kink_c": 6.2, "tip_x": 30.0, "tip_c": 1.6, "sweep": 32.0, "dihedral": 7.0, "wing_y": 2.7,
 		"winglet": [0.0, 0.0, 0.0, 0.0],
@@ -140,7 +140,7 @@ const SPECS := {
 		"doors": [-27.5, 22.0], "exits": [-11.0, 2.0], "win_from": -26.5, "win_to": 21.0, "win_dy": 0.8,
 	},
 	"crj900": {
-		"len": 36.2, "r": 1.35, "cy": 2.4, "nose_len": 4.6, "nose_tip": 0.3,
+		"nose_point": 0.6, "len": 36.2, "r": 1.35, "cy": 2.4, "nose_len": 4.6, "nose_tip": 0.3,
 		"tail_start": 6.2, "tail_r": 0.32, "tail_drop": 0.25,
 		"rear_eng": true,
 		"wing_z": -2.4, "wing_c": 4.4, "kink_c": 2.6, "tip_x": 12.3, "tip_c": 1.0, "sweep": 26.0, "dihedral": 4.0, "wing_y": 1.2,
@@ -152,7 +152,7 @@ const SPECS := {
 		"doors": [-14.6, 10.6], "exits": [-3.6], "win_from": -13.0, "win_to": 6.0, "win_dy": 0.36,
 	},
 	"b777f": {
-		"len": 63.7, "r": 3.1, "cy": 4.8, "nose_len": 7.5, "nose_tip": 0.3,
+		"nose_point": 0.5, "cockpit": "boeing", "len": 63.7, "r": 3.1, "cy": 4.8, "nose_len": 7.5, "nose_tip": 0.3,
 		"tail_start": 15.0, "tail_r": 0.55, "tail_drop": 0.8, "cargo": true,
 		"wing_z": -6.5, "wing_c": 12.5, "kink_c": 7.0, "tip_x": 32.0, "tip_c": 2.0, "sweep": 31.6, "dihedral": 6.0, "wing_y": 2.9,
 		"winglet": [0.0, 0.0, 0.0, 0.0],
@@ -298,9 +298,11 @@ static func _section(s: Dictionary, z: float) -> Array:
 		var t := clampf((z - z0) / nose_len, 0.0, 1.0)
 		var tip_y := cy - r * float(s.get("nose_tip", 0.28))
 		var ft := 1.0 - pow(1.0 - t, 2.4)
-		var top := tip_y + (cy + top_r - tip_y) * pow(ft, 0.78)
-		var bot := tip_y - (tip_y - (cy - bot_r)) * pow(1.0 - pow(1.0 - t, 3.0), 0.55)
-		var hw := r * pow(1.0 - pow(1.0 - t, 2.2), 0.55)
+		# nose_point: 0 = stumpfe Airbus-Nase, 1 = spitze Boeing-737-Nase
+		var pt := float(s.get("nose_point", 0.0))
+		var top := tip_y + (cy + top_r - tip_y) * pow(ft, lerpf(0.78, 1.0, pt))
+		var bot := tip_y - (tip_y - (cy - bot_r)) * pow(1.0 - pow(1.0 - t, 3.0), lerpf(0.55, 0.68, pt))
+		var hw := r * pow(1.0 - pow(1.0 - t, 2.2), lerpf(0.55, 0.75, pt))
 		var yw := lerpf(tip_y, cy, pow(t, 0.7))
 		return [yw, maxf(hw, 0.02), maxf(top, yw + 0.02), minf(bot, yw - 0.02)]
 	if z > ts:
@@ -382,11 +384,8 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color, style: int = 0, carg
 		var t := (m.z - z0) / nose_len
 		var mid := float(q[0])
 		var lo := mid - (mid - float(q[3])) * 0.42
-		# A350: schwarze Maske um die Cockpitscheiben
-		if mask and t > 0.55 and t < 0.9 and m.y > mid + (float(q[2]) - mid) * 0.05 and m.y < mid + (float(q[2]) - mid) * 0.72:
-			return Color(0.1, 0.1, 0.12)
-		if t < 0.24:
-			return Color(0.86, 0.86, 0.85) if style != 4 else livery.darkened(0.1)   # Radom
+		if t < 0.2:
+			return WHITE.darkened(0.035) if style != 4 else livery.darkened(0.1)   # Radom, kaum abgesetzt
 		match style:
 			1:
 				if m.y < mid - (mid - float(q[3])) * 0.12 and t > 0.3:
@@ -405,14 +404,14 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color, style: int = 0, carg
 			return BELLY
 		return WHITE
 	k.loft(rings, col_fn, true, false, true)
-	# Cockpitscheiben: vorn zwei, seitlich je zwei, schwarz gerahmt, der Wölbung folgend
-	var panes := [[0.6, 0.71, 0.05, 0.5], [0.72, 0.8, 0.62, 0.98], [0.81, 0.87, 0.66, 0.98]]
+	_cockpit(k, s, mask)
+	# Fuge zwischen Radom und Rumpf, Anstellwinkel-Sensoren und statische Druckplatten
 	for side: float in [-1.0, 1.0]:
-		for pn: Array in panes:
-			var za := z0 + nose_len * float(pn[0])
-			var zb := z0 + nose_len * float(pn[1])
-			_skin_patch(k, s, side, za, zb, float(pn[2]), float(pn[3]), Color(0.17, 0.18, 0.2), 0.008)
-			_skin_patch(k, s, side, za + 0.05, zb - 0.05, float(pn[2]) + 0.04, float(pn[3]) - 0.04, GLASS, 0.014)
+		_skin_quad(k, s, side, [Vector2(0.205, 0.0), Vector2(0.212, 0.0), Vector2(0.212, PI), Vector2(0.205, PI)], WHITE.darkened(0.2), 0.016, 1, 28)
+		var aoa := _skin(s, z0 + nose_len * 0.42, PI * 0.42, side)
+		k.box((aoa[0] as Vector3) - Vector3(0.015, 0.02, 0.0), (aoa[0] as Vector3) + Vector3(side * 0.12, 0.02, 0.16), DARK_METAL)
+		var stp := _skin(s, z0 + nose_len * 0.7, PI * 0.56, side)
+		k.box((stp[0] as Vector3) + Vector3(-0.005, -0.09, -0.12), (stp[0] as Vector3) + Vector3(side * 0.012, 0.09, 0.12), Color(0.7, 0.71, 0.72))
 	# Zierstreifen in Hausfarbe unter den Fenstern, Fenster, Türen, Notausstiege
 	var wdy: float = s["win_dy"]
 	var doors: Array = s["doors"]
@@ -487,6 +486,105 @@ static func _skin_patch(k: Kit, s: Dictionary, side: float, za: float, zb: float
 			var c := ((pts[0][0] as Vector3) + (pts[2][0] as Vector3)) * 0.5
 			var nn: Vector3 = pts[0][1]
 			k.quad_n(pts[0][0], pts[1][0], pts[2][0], pts[3][0], pts[0][1], pts[1][1], pts[2][1], pts[3][1], col, c - nn)
+
+
+## Punkt [t, a] auf der Nase: t = Anteil der Nasenlänge, a = Winkel von oben, unter dem die Höhe
+## cy + yr·r erreicht wird.
+static func _ta(s: Dictionary, t: float, yr: float) -> Vector2:
+	var z := -float(s["len"]) * 0.5 + float(s["nose_len"]) * t
+	return Vector2(t, _skin_angle(s, z, float(s["cy"]) + yr * float(s["r"])))
+
+
+## Stelle t der Nase, an der ihre Oberkante die Höhe cy + yr·r erreicht (Suche halbierend).
+static func _t_top(s: Dictionary, yr: float) -> float:
+	var z0 := -float(s["len"]) * 0.5
+	var nl: float = s["nose_len"]
+	var y := float(s["cy"]) + yr * float(s["r"])
+	var lo := 0.0
+	var hi := 1.0
+	for i in range(24):
+		var m := (lo + hi) * 0.5
+		if float(_section(s, z0 + nl * m)[2]) < y:
+			lo = m
+		else:
+			hi = m
+	return (lo + hi) * 0.5
+
+
+## Fläche auf der Rumpfhaut zwischen vier Eckpunkten [t, a] (vorn unten, hinten unten, hinten oben,
+## vorn oben), bilinear unterteilt, damit sie der Wölbung folgt.
+static func _skin_quad(k: Kit, s: Dictionary, side: float, c: Array, col: Color, lift: float, nu: int = 5, nv: int = 4) -> void:
+	var z0 := -float(s["len"]) * 0.5
+	var nl: float = s["nose_len"]
+	var grid := []
+	for iu in range(nu + 1):
+		var row := []
+		var u := float(iu) / float(nu)
+		for iv in range(nv + 1):
+			var v := float(iv) / float(nv)
+			var q: Vector2 = (c[0] as Vector2).lerp(c[1], u).lerp((c[3] as Vector2).lerp(c[2], u), v)
+			var sk := _skin(s, z0 + nl * q.x, q.y, side)
+			row.append([(sk[0] as Vector3) + (sk[1] as Vector3) * lift, sk[1]])
+		grid.append(row)
+	for iu in range(nu):
+		for iv in range(nv):
+			var a: Array = grid[iu][iv]
+			var b: Array = grid[iu + 1][iv]
+			var cc: Array = grid[iu + 1][iv + 1]
+			var d: Array = grid[iu][iv + 1]
+			var mid := ((a[0] as Vector3) + (cc[0] as Vector3)) * 0.5
+			k.quad_n(a[0], b[0], cc[0], d[0], a[1], b[1], cc[1], d[1], col, mid - (a[1] as Vector3))
+
+
+## Cockpit: je Seite eine große Frontscheibe und zwei Seitenscheiben. Unterkante als gerade Linie,
+## Oberkante steigt nach hinten leicht an, das hintere Seitenfenster läuft schräg zu; schmale weiße
+## Holme dazwischen, schwarzer Gummirahmen, Scheibenwischer. A350: schwarze "Maske" um die Scheiben.
+## Airbus und Boeing unterscheiden sich in Höhe und Neigung (Spezifikation "cockpit").
+static func _cockpit(k: Kit, s: Dictionary, mask: bool) -> void:
+	var boeing := String(s.get("cockpit", "airbus")) == "boeing"
+	var yb := 0.33 if boeing else 0.36          # Unterkante (Anteil des Radius über der Mitte)
+	var yt0 := 0.70 if boeing else 0.72         # Oberkante vorn
+	var yt1 := 0.73 if boeing else 0.75         # Oberkante hinten
+	var f := 0.58 if boeing else 0.585          # Beginn der Frontscheibe (Anteil der Nasenlänge)
+	var frame := Color(0.13, 0.14, 0.15)
+	var glass := Color(0.2, 0.27, 0.36, 0.6)
+	var c := 0.035                               # halbe Breite des Mittelholms (Winkel)
+	# Mitte der Frontscheibe: unten und oben dort, wo die Oberkante der Nase diese Höhen erreicht
+	var tcb := _t_top(s, 0.44 if boeing else 0.47)
+	var tct := _t_top(s, 0.80 if boeing else 0.82)
+	f = tcb
+	for side: float in [-1.0, 1.0]:
+		var front := [Vector2(tcb, c), _ta(s, tcb + 0.05, yb), _ta(s, tct + 0.01, yt0), Vector2(tct, c)]
+		var t1 := tcb + 0.075
+		var t2 := t1 + (0.14 if boeing else 0.125)
+		var side1 := [_ta(s, t1, yb), _ta(s, t2, yb), _ta(s, t2, yt1), _ta(s, tct + 0.035, yt0 + 0.01)]
+		var t3 := t2 + 0.03
+		var side2 := [_ta(s, t3, yb + 0.02), _ta(s, t3 + 0.075, yb + 0.1), _ta(s, t3 + 0.05, yt1 - 0.06), _ta(s, t3, yt1 - 0.02)]
+		for pane: Array in [front, side1, side2]:
+			# Gummirahmen etwas größer, darauf die Scheibe
+			var fr := []
+			var cen := Vector2.ZERO
+			for q: Vector2 in pane:
+				cen += q * 0.25
+			for q: Vector2 in pane:
+				# A350: breite schwarze "Maske" um die Scheiben
+				fr.append(q + (q - cen) * (Vector2(0.2, 0.22) if mask else Vector2(0.05, 0.04)))
+			if pane == front:
+				fr[0] = Vector2(fr[0].x, c * 0.5)
+				fr[3] = Vector2(fr[3].x, c * 0.5)
+			_skin_quad(k, s, side, fr, frame, 0.02)
+			_skin_quad(k, s, side, pane, glass, 0.028)
+			# Himmel spiegelt sich im oberen Teil der Scheibe
+			var hi := [(pane[0] as Vector2).lerp(pane[3], 0.6), (pane[1] as Vector2).lerp(pane[2], 0.6), pane[2], pane[3]]
+			_skin_quad(k, s, side, hi, Color(0.42, 0.52, 0.62, 0.6), 0.032, 4, 2)
+		# Scheibenwischer: dünner dunkler Arm auf der Frontscheibe, unten angelenkt
+		var w0: Vector2 = (front[0] as Vector2).lerp(front[1], 0.55)
+		var w1: Vector2 = w0.lerp((front[3] as Vector2).lerp(front[2], 0.4), 0.55)
+		var z0 := -float(s["len"]) * 0.5
+		var nl: float = s["nose_len"]
+		var pa := _skin(s, z0 + nl * w0.x, w0.y, side)
+		var pb := _skin(s, z0 + nl * w1.x, w1.y, side)
+		k.cyl((pa[0] as Vector3) + (pa[1] as Vector3) * 0.03, (pb[0] as Vector3) + (pb[1] as Vector3) * 0.03, 0.018, 0.012, Color(0.08, 0.08, 0.09), 5, false)
 
 
 ## Kabinenfenster: abgerundetes Rechteck auf der Haut (Mitte z, Höhe y).
@@ -870,10 +968,22 @@ static func _gear(k: Kit, s: Dictionary) -> void:
 	var nz: float = s["nose_gear_z"]
 	var nr: float = s["nose_wheel_r"]
 	var nb := float(_profile(s, nz)[0]) - float(_profile(s, nz)[2])
-	k.cyl(Vector3(0, nb + 0.2, nz), Vector3(0, nr, nz + 0.12), 0.09, 0.09, METAL, 8)
+	# Bugfahrwerk: Federbein (oben grau, unten verchromter Kolben), Drehmomentstütze, Achse, zwei Räder,
+	# Rollscheinwerfer, dunkler Schacht und zwei schmale, leicht nach außen geneigte Klappen
+	var chrome := Color(0.86, 0.88, 0.9)
+	k.cyl(Vector3(0, nb + 0.3, nz - 0.12), Vector3(0, nr + 0.62, nz - 0.02), 0.12, 0.1, Color(0.6, 0.62, 0.64), 10)
+	k.cyl(Vector3(0, nr + 0.66, nz - 0.02), Vector3(0, nr, nz + 0.1), 0.065, 0.065, chrome, 10)
+	k.cyl(Vector3(0, nr + 0.52, nz + 0.0), Vector3(0, nr + 0.32, nz + 0.26), 0.03, 0.03, DARK_METAL, 6)
+	k.cyl(Vector3(0, nr + 0.32, nz + 0.26), Vector3(0, nr + 0.1, nz + 0.1), 0.03, 0.03, DARK_METAL, 6)
+	k.cyl(Vector3(-0.32, nr, nz + 0.1), Vector3(0.32, nr, nz + 0.1), 0.05, 0.05, DARK_METAL, 8)
+	k.box(Vector3(-0.16, nr + 0.86, nz - 0.32), Vector3(0.16, nr + 1.02, nz - 0.14), DARK_METAL)
+	for lx: float in [-0.08, 0.08]:
+		k.cyl(Vector3(lx, nr + 0.94, nz - 0.33), Vector3(lx, nr + 0.94, nz - 0.36), 0.055, 0.055, Color(1.0, 0.97, 0.85, 0.3), 8)
+	k.box(Vector3(-0.42, nb + 0.03, nz - 1.3), Vector3(0.42, nb + 0.07, nz + 0.5), Color(0.28, 0.29, 0.31))
 	for side: float in [-1.0, 1.0]:
-		_wheel(k, Vector3(side * 0.21, nr, nz + 0.12), nr, 0.24, side, METAL, 0)
-		k.box(Vector3(side * 0.42, nb - 0.9, nz - 0.9), Vector3(side * 0.46, nb + 0.1, nz + 0.4), WHITE)
+		_wheel(k, Vector3(side * 0.21, nr, nz + 0.1), nr, 0.24, side, METAL, 0)
+		var door := Transform3D(Basis(Vector3(0, 0, 1), side * 0.22), Vector3(side * 0.47, nb - 0.26, nz - 0.4))
+		k.box(Vector3(-0.02, -0.3, -0.85), Vector3(0.02, 0.3, 0.85), WHITE.darkened(0.04), door)
 	var mz: float = s["main_gear_z"]
 	var mx: float = s["main_gear_x"]
 	var mr: float = s["main_wheel_r"]

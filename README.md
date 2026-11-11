@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.24: Schönere Flugzeuge**
+  - **Cockpit wie beim Vorbild:** Große Frontscheiben mit Mittelholm, je zwei Seitenscheiben mit schrägem hinteren Fenster, schwarze Gummirahmen, Scheibenwischer und Himmelsspiegelung. Airbus und Boeing unterscheiden sich in Form und Höhe, der A350 trägt seine dunkle „Maske“.
+  - **Nasenformen nach Hersteller:** Die Boeing 737 hat die spitze Nase, die A320-Familie die stumpfe, dazwischen 787, 767, A350 und die Regionaljets. Dazu kommen die Fuge am Radom, Anstellwinkel-Sensoren und statische Druckplatten.
+  - **Bugfahrwerk:** Federbein mit verchromtem Kolben, Drehmomentstütze, Achse, Rollscheinwerfer, dunkler Schacht und schmale, schräg hängende Klappen.
 - **Update 0.23: Leistung und Geräusche**
   - **Detailstufe:** Weit herausgezoomt blendet das Spiel Menschen, laufende Koffer und die Einrichtung unter den Hallendächern aus. Große Flughäfen laufen so flüssiger. Wer möchte, lässt sich die Bilder pro Sekunde in der Kopfzeile anzeigen (Einstellung).
   - **Geräusche** (im Spiel erzeugt, ohne Tondateien): Gong, wenn das Boarding beginnt, Triebwerksrauschen rollender, startender und landender Flugzeuge in der Nähe, Stimmengewirr in der Innenansicht, Regen, Donner nach Blitzen, Martinshorn am Rettungswagen und Warnpiepen fahrender Rolltore. Lautstärke in den Einstellungen.
