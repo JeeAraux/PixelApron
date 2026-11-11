@@ -418,6 +418,13 @@ func _after_load() -> void:
 	betrieb.load_data(ex.get("betrieb", {}))
 	flights.load_data(ex.get("flotte", {}))
 	hud.set_atc(game.atc_manual)
+	# Gebäude, die sich nach einer Größenänderung (z. B. Hallen nach Torzahl) überschneiden: melden
+	var ov: Array = game.overlaps()
+	if not ov.is_empty():
+		var a: Dictionary = ov[0][0]
+		var b: Dictionary = ov[0][1]
+		game.toast.emit("Achtung: %d Überschneidung(en) im Spielstand, z. B. %s und %s. Mit „Verschieben“ auseinanderrücken." % [
+			ov.size(), game.describe(a), game.describe(b)])
 
 
 func _collect_extra() -> void:
@@ -799,6 +806,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_set_speed(3)
 			KEY_F5:
 				game.save_game()
+			KEY_F1:
+				hud.toggle_help()
 			KEY_F2:
 				hud.toggle_ops()
 			KEY_F9:
@@ -1422,6 +1431,18 @@ func _update_heat() -> void:
 
 ## Verschieben: belegte Stände bleiben, wo sie sind.
 func _move_guard(rec: Dictionary) -> String:
+	if rec.get("type", "") == "line":
+		# Wege der Luftseite nur verschieben, wenn gerade kein Flugzeug darauf steht oder rollt
+		if String(rec["kind"]) in ["piste", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "schnellabrollweg"]:
+			var sm: PackedVector3Array = rec["samples"]
+			for p: Dictionary in flights.planes:
+				if String(p["state"]) in ["anflug", "warteschleife", "start"] and float(p.get("alt", 0.0)) > 5.0:
+					continue
+				var pp: Vector3 = p["pos"]
+				for v: Vector3 in sm:
+					if Vector2(v.x - pp.x, v.z - pp.z).length() < 45.0:
+						return "Auf diesem Weg steht oder rollt ein Flugzeug: später verschieben"
+		return ""
 	if String(rec["id"]) in GameState.STAND_IDS:
 		for p: Dictionary in flights.planes:
 			if is_same(p["stand"], rec):

@@ -418,7 +418,7 @@ func on_escape() -> void:
 
 
 func rotate() -> void:
-	if not carry.is_empty() and String(carry["id"]) == "halle":
+	if not carry.is_empty() and (carry.get("type", "") == "line" or String(carry.get("id", "")) == "halle"):
 		return
 	rot = (rot + 1) % 4
 	if has_hover:
@@ -582,6 +582,8 @@ func _snap(p: Vector3) -> Vector3:
 	if tool == "verschieben":
 		if carry.is_empty():
 			return Vector3(p.x, 0.0, p.z)
+		if carry.get("type", "") == "line":
+			return Vector3(roundf(p.x), 0.0, roundf(p.z))
 		var cid := String(carry["id"])
 		var q := p + carry_off
 		if cid == "halle":
@@ -885,7 +887,27 @@ func _lift() -> float:
 	return 0.0
 
 
+## Was das Bauen verhindert, wird rot eingefärbt (Gebäude, Einrichtung oder Weg im Weg).
+func _mark_blocker(why: String) -> void:
+	if not blocked_mark.is_empty() and not is_same(blocked_mark, target):
+		var n0: Variant = blocked_mark.get("node")
+		if is_instance_valid(n0):
+			_overlay(n0 as Node, null)
+	blocked_mark = {}
+	if why == "" or game.blocker.is_empty():
+		return
+	var n1: Variant = game.blocker.get("node")
+	if is_instance_valid(n1):
+		_overlay(n1 as Node, mat_overlay)
+		blocked_mark = game.blocker
+
+
+var blocked_mark: Dictionary = {}
+
+
 func _refresh() -> void:
+	_mark_blocker("")
+	hint.emit("")
 	preview.mesh = null
 	preview.position = Vector3.ZERO
 	marker_root.position = Vector3(0, _lift(), 0)
@@ -971,6 +993,7 @@ func _refresh_line() -> void:
 		hint.emit("")
 		return
 	var st := _line_state(pts)
+	_mark_blocker(String(st["why"]))
 	var w: float = def["width"]
 	var y: float = def["y"]
 	if Catalog.is_wall(tool):
@@ -997,7 +1020,7 @@ func _refresh_line() -> void:
 	var length: float = st["length"]
 	var body := "Länge %d m · %s" % [int(length), GameState.fmt_money(int(st["cost"]))]
 	var minr: float = st["minr"]
-	var tip := "%s m" % _num(snappedf(length, 0.5))
+	var tip := "%s m · %s" % [_num(snappedf(length, 0.5)), GameState.fmt_money(int(st["cost"]))]
 	if minr < 100000.0:
 		body += "\nEngster Radius %d m (nötig %d m)" % [int(minr), int(def["min_r"])]
 		if minr < 3000.0:
@@ -1134,6 +1157,7 @@ func _refresh_rect() -> void:
 		preview.material_override = mat_ok if awhy == "" else mat_bad
 		info.emit(title, "%d × %d m · %s\n%s" % [int(ar.size.x), int(ar.size.y), GameState.fmt_money(game.apron_cost(ar)),
 			awhy if awhy != "" else "Loslassen oder gegenüberliegende Ecke klicken"], 1 if awhy == "" else 2)
+		hint.emit("%d × %d m · %s" % [int(ar.size.x), int(ar.size.y), GameState.fmt_money(game.apron_cost(ar))])
 		return
 	if points.is_empty() or not has_hover:
 		info.emit(title, "Klicke die erste Ecke der Halle.\n" + per, 0)
@@ -1150,6 +1174,7 @@ func _refresh_rect() -> void:
 	body += "\nBraucht Strom (Licht und Lüftung %d kW) plus die Einrichtung" % roundi(r.get_area() * Catalog.HALL_POWER_M2)
 	body += "\n" + (why if why != "" else "Klicke die gegenüberliegende Ecke")
 	info.emit(title, body, 1 if why == "" else 2)
+	hint.emit("%d × %d m · %s" % [int(r.size.x), int(r.size.y), GameState.fmt_money(game.hall_cost(r))] + ("" if why == "" else " · " + why))
 
 
 func _refresh_zone(def: Dictionary) -> void:
@@ -1172,6 +1197,7 @@ func _refresh_zone(def: Dictionary) -> void:
 	var body := "%d × %d m · %s" % [int(r.size.x), int(r.size.y), GameState.fmt_money(game.zone_cost(tool, r))]
 	body += "\n" + (why if why != "" else "Klicke die gegenüberliegende Ecke. Spätere Bereiche liegen über früheren.")
 	info.emit(title, body, 1 if why == "" else 2)
+	hint.emit("%d × %d m · %s" % [int(r.size.x), int(r.size.y), GameState.fmt_money(game.zone_cost(tool, r))])
 
 
 func _refresh_item() -> void:
@@ -1186,6 +1212,7 @@ func _refresh_item() -> void:
 	ghost.position = hover + Vector3(0, _lift(), 0)
 	ghost.rotation.y = float(rot) * PI * 0.5
 	reason = game.can_place(tool, hover, rot)
+	_mark_blocker(reason)
 	_paint(ghost, mat_ok if reason == "" else mat_bad)
 	var body := head + _supply_text(def) + "\nR dreht um 90 Grad"
 	if snap_kind == "bucht":
@@ -1193,6 +1220,7 @@ func _refresh_item() -> void:
 	if reason != "":
 		body += "\n" + reason
 	info.emit(title, body, 1 if reason == "" else 2)
+	hint.emit(GameState.fmt_money(int(def["cost"])) + ("" if reason == "" else " · " + reason))
 
 
 ## Vorschau des Raums: Boden, neue Wände, Tür, Kosten.
@@ -1252,8 +1280,11 @@ func _refresh_demolish() -> void:
 		preview.position = Vector3(r.get_center().x, float(game.view_floor if game.interior_view else 0) * Catalog.FLOOR_H + 0.2, r.get_center().y)
 		preview.material_override = mat_bad
 		var vic := game.area_victims(r)
+		var back := 0
+		for rec: Dictionary in vic:
+			back += int(float(rec.get("cost", 0)) * 0.5)
 		info.emit("Fläche abreißen", "%d Teile im Rechteck · Loslassen reißt ab, Rechtsklick bricht ab" % vic.size(), 2)
-		hint.emit("%d Teile" % vic.size())
+		hint.emit("%d Teile · +%s zurück" % [vic.size(), GameState.fmt_money(back)])
 		return
 	if not has_hover:
 		info.emit("Abriss", "Klicke auf ein Gebäude oder einen Weg, oder ziehe auf freiem Boden eine Fläche auf.", 0)
@@ -1620,8 +1651,20 @@ static func _self_snapping(id: String) -> bool:
 func _click_move(p: Vector3) -> void:
 	if carry.is_empty():
 		var rec := game.pick(p)
+		if not rec.is_empty() and rec.get("type", "") == "line":
+			# Weg verschieben: der ganze Weg wandert mit dem Mauszeiger (auf 1 m gerastert)
+			_clear_highlight()
+			carry = rec
+			carry_from = [Vector3(roundf(p.x), 0.0, roundf(p.z)), rot]
+			carry_nodes = []
+			if is_instance_valid(rec.get("node")):
+				var ln := rec["node"] as Node3D
+				carry_nodes.append([ln, ln.position, ln.rotation.y])
+			hover = Vector3(roundf(p.x), 0.0, roundf(p.z))
+			_refresh()
+			return
 		if rec.is_empty() or rec.get("type", "") != "item":
-			game.toast.emit("Klicke auf ein Gebäude, eine Halle oder Einrichtung")
+			game.toast.emit("Klicke auf ein Gebäude, eine Halle, eine Einrichtung oder einen Weg")
 			return
 		var why := game.movable_why(rec)
 		if why != "":
@@ -1647,6 +1690,20 @@ func _click_move(p: Vector3) -> void:
 				var n3 := n as Node3D
 				carry_nodes.append([n3, n3.position, n3.rotation.y])
 		hover = _snap(p)
+		_refresh()
+		return
+	if carry.get("type", "") == "line":
+		var dl: Vector3 = hover - (carry_from[0] as Vector3)
+		dl.y = 0.0
+		var rl := carry
+		var whyl := game.line_move_problem(rl, dl)
+		if whyl != "":
+			game.toast.emit(whyl)
+			return
+		_restore_carry()
+		carry = {}
+		whyl = game.move_line(rl, dl)
+		game.toast.emit("Weg verschoben" if whyl == "" else whyl)
 		_refresh()
 		return
 	var why2 := game.move_problem(carry, hover, rot)
@@ -1687,8 +1744,11 @@ func _refresh_move() -> void:
 			info.emit("Verschieben", "Klicke auf ein Gebäude, eine Halle oder Einrichtung, um es aufzunehmen.", 0)
 			return
 		var rec := game.pick(hover)
+		if not rec.is_empty() and rec.get("type", "") == "line":
+			info.emit("Verschieben", game.describe(rec) + "\nKlick nimmt den ganzen Weg auf", 1)
+			return
 		if rec.is_empty() or rec.get("type", "") != "item":
-			info.emit("Verschieben", "Klicke auf ein Gebäude, eine Halle oder Einrichtung, um es aufzunehmen. Hallen wandern mit Einrichtung, Wänden und Fluggastbrücken.", 0)
+			info.emit("Verschieben", "Klicke auf ein Gebäude, eine Halle, eine Einrichtung oder einen Weg, um es aufzunehmen. Hallen wandern mit Einrichtung, Wänden und Fluggastbrücken.", 0)
 			return
 		target = rec
 		var why := game.movable_why(rec)
@@ -1696,6 +1756,16 @@ func _refresh_move() -> void:
 		info.emit("Verschieben", game.describe(rec) + "\n" + ("Klick nimmt es auf" if why == "" else why), 1 if why == "" else 2)
 		return
 	if not has_hover:
+		return
+	if carry.get("type", "") == "line":
+		var dl: Vector3 = hover - (carry_from[0] as Vector3)
+		dl.y = 0.0
+		var whyl := game.line_move_problem(carry, dl)
+		for e: Array in carry_nodes:
+			if is_instance_valid(e[0]):
+				(e[0] as Node3D).position = (e[1] as Vector3) + dl
+				_overlay(e[0] as Node3D, mat_move_ok if whyl == "" else mat_tint_bad)
+		info.emit("Verschieben", game.describe(carry) + "\nKlick setzt ab (kostenlos), Rechtsklick legt zurück" + ("" if whyl == "" else "\n" + whyl), 1 if whyl == "" else 2)
 		return
 	var id := String(carry["id"])
 	var why2 := game.move_problem(carry, hover, rot)

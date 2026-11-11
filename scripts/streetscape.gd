@@ -104,13 +104,13 @@ static func build(sub: PackedVector3Array, w: float, side: String, y: float, bay
 			if outer[i] - inner[i] > 0.04 or outer[j] - inner[j] > 0.04:
 				var q := [[ii, inner[i] - hw, 0.0, outer[i] - inner[i], cum[i]], [oi, outer[i] - hw, outer[i] - inner[i], 0.0, cum[i]],
 					[ij, inner[j] - hw, 0.0, outer[j] - inner[j], cum[j]], [oj, outer[j] - hw, outer[j] - inner[j], 0.0, cum[j]]]
-				for idx: int in [0, 1, 2, 1, 3, 2]:
-					var e: Array = q[idx]
-					var p: Vector3 = e[0]
-					st.set_normal(Vector3.UP)
-					st.set_uv(Vector2(float(e[1]), float(e[4])))
-					st.set_uv2(Vector2(float(e[2]), float(e[3])))
-					st.add_vertex(Vector3(p.x, top + sub[i].y, p.z))
+				for tri: Array in [[0, 1, 2], [1, 3, 2]]:
+					var ev := []
+					for idx: int in tri:
+						var e: Array = q[idx]
+						var p: Vector3 = e[0]
+						ev.append([Vector3(p.x, top + sub[i].y, p.z), Vector2(float(e[1]), float(e[4])), Vector2(float(e[2]), float(e[3]))])
+					flat_tri(st, ev)
 				verts += 6
 				# Bordsteinkante zur Fahrbahn, Böschungskante außen
 				k.quad(Vector3(ii.x, road_y, ii.z), Vector3(ij.x, road_y, ij.z), Vector3(ij.x, top + sub[i].y, ij.z), Vector3(ii.x, top + sub[i].y, ii.z),
@@ -285,6 +285,23 @@ static func _tree(k: Kit, base: Vector3, rng: RandomNumberGenerator) -> void:
 		k.sphere(base + off, rng.randf_range(1.0, 1.4) * s, Color(leaf.r, leaf.g, leaf.b, 0.8).lightened(rng.randf() * 0.07), 9, 5)
 
 
+## Waagrechtes Dreieck immer mit der Vorderseite nach oben (sonst zeigt der Shader ohne Rückseiten-
+## Ausblendung die Rückseite mit umgedrehter Normale: dunkle Flecken). ev: [[Punkt, UV, UV2] × 3]
+static func flat_tri(st: SurfaceTool, ev: Array) -> void:
+	var a: Vector3 = ev[0][0]
+	var b: Vector3 = ev[1][0]
+	var c: Vector3 = ev[2][0]
+	var cr := (b - a).cross(c - a)
+	if absf(cr.y) < 0.000001:
+		return   # entartet (Breite 0)
+	var order := [0, 1, 2] if cr.y < 0.0 else [0, 2, 1]
+	for o: int in order:
+		st.set_normal(Vector3.UP)
+		st.set_uv(ev[o][1])
+		st.set_uv2(ev[o][2])
+		st.add_vertex(ev[o][0])
+
+
 ## Ecke an einer Kreuzung: Gehwegband entlang des Bordsteinbogens (arc, nrm_out zeigen nach außen),
 ## Breite gleitet von wa auf wb. side bestimmt die Schichten.
 static func corner(arc: Array, outs: Array, wa: float, wb: float, side: String, y: float) -> MeshInstance3D:
@@ -336,14 +353,14 @@ static func corner(arc: Array, outs: Array, wa: float, wb: float, side: String, 
 			continue
 		var q := [[a + na * 0.3, 0.3, 0.3, wa_i - 0.3, run], [a + na * wa_i, wa_i, wa_i, 0.0, run],
 			[b + nb * 0.3, 0.3, 0.3, wb_i - 0.3, run + seg], [b + nb * wb_i, wb_i, wb_i, 0.0, run + seg]]
-		for idx: int in [0, 1, 2, 1, 3, 2]:
-			var e: Array = q[idx]
-			var p: Vector3 = e[0]
-			st.set_normal(Vector3.UP)
-			st.set_uv(Vector2(float(e[1]), float(e[4])))
-			st.set_uv2(Vector2(float(e[2]), float(e[3])))
-			# etwas über den Seitenbändern der Straßen, sonst flimmert die Ecke (gleiche Höhe)
-			st.add_vertex(Vector3(p.x, y + 0.008, p.z))
+		for tri: Array in [[0, 1, 2], [1, 3, 2]]:
+			var ev := []
+			for idx: int in tri:
+				var e: Array = q[idx]
+				var p: Vector3 = e[0]
+				# etwas über den Seitenbändern der Straßen, sonst flimmert die Ecke (gleiche Höhe)
+				ev.append([Vector3(p.x, y + 0.008, p.z), Vector2(float(e[1]), float(e[4])), Vector2(float(e[2]), float(e[3]))])
+			flat_tri(st, ev)
 		verts += 6
 		var oa := a + na * wa_i
 		var ob := b + nb * wb_i
@@ -355,11 +372,24 @@ static func corner(arc: Array, outs: Array, wa: float, wb: float, side: String, 
 	var mi := MeshInstance3D.new()
 	mi.name = "Ecke"
 	mi.mesh = st.commit()
-	mi.material_override = material(side)
+	mi.material_override = corner_material(side)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if k.count > 0:
 		mi.add_child(k.instance("Kante"))
 	return mi
+
+
+static var _corner_mats: Dictionary = {}
+
+
+## Wie material(), aber mit Pflaster in Weltkoordinaten (keine fächerförmigen Fugen an Ecken).
+static func corner_material(side: String) -> ShaderMaterial:
+	var k: int = KINDS.get(side, 1)
+	if not _corner_mats.has(k):
+		var sm := material(side).duplicate() as ShaderMaterial
+		sm.set_shader_parameter("world_pave", true)
+		_corner_mats[k] = sm
+	return _corner_mats[k]
 
 
 ## Fahrrad mit Rahmen, Speichenrädern, Lenker und Sattel (Fahrtrichtung -Z, Mitte zwischen den Achsen).

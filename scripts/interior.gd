@@ -29,7 +29,7 @@ const BAG_COLS := [Color(0.62, 0.18, 0.16), Color(0.18, 0.28, 0.5), Color(0.14, 
 	Color(0.25, 0.45, 0.3), Color(0.78, 0.75, 0.7), Color(0.85, 0.6, 0.15), Color(0.4, 0.22, 0.45)]
 
 const IDS := ["eingang", "rolltor", "checkin", "gepaecklift", "gepaeckanlage", "sicherheit", "gate", "busgate", "gepaeckband", "wc", "sb_ausgang",
-	"heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "tuer", "personalraum"]
+	"heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "wegweiser", "kunst", "tuer", "personalraum"]
 
 static var _glass: StandardMaterial3D
 
@@ -87,6 +87,8 @@ static func build(n: Node3D, id: String, opts: Dictionary) -> bool:
 			_plant(k)
 		"anzeige":
 			_board(n, k)
+		"wegweiser":
+			_guide_sign(k)
 		"kunst":
 			_art(n, k)
 			anim = true
@@ -240,10 +242,16 @@ static func _roll_gate(n: Node3D, k: Kit) -> void:
 	k.box(Vector3(-2.6, 1.0, -0.62), Vector3(-2.15, 1.25, -0.28), Color(0.85, 0.85, 0.82))
 	k.cyl(Vector3(-2.45, 1.25, -0.45), Vector3(-2.45, 1.29, -0.45), 0.04, 0.04, Color(0.2, 0.75, 0.3), 8)
 	k.cyl(Vector3(-2.3, 1.25, -0.45), Vector3(-2.3, 1.29, -0.45), 0.04, 0.04, Color(0.85, 0.15, 0.12), 8)
-	# Fahrspur der Gepäckzüge nach innen: gelbe Randlinien
-	for sx: float in [-1.9, 1.5]:
-		k.box(Vector3(sx, 0.0, -9.0), Vector3(sx + 0.12, 0.03, -1.0), YELLOW)
 	PixelFont.draw_ground(k, "TOR", Vector3(-0.2, 0.035, -2.0), Vector3(0, 0, -1), 0.07, Color(0.95, 0.95, 0.9))
+	# draußen: Andockfläche für den Gepäckzug (längs der Wand, Schlepper vorn, Wagen vor dem Tor)
+	var y := 0.05
+	for e: Array in [[Vector3(-8.5, 0, 4.2), Vector3(8.5, 0, 4.36)], [Vector3(-8.5, 0, 6.64), Vector3(8.5, 0, 6.8)],
+			[Vector3(-8.5, 0, 4.2), Vector3(-8.34, 0, 6.8)], [Vector3(8.34, 0, 4.2), Vector3(8.5, 0, 6.8)]]:
+		k.box((e[0] as Vector3) + Vector3(0, 0.0, 0), (e[1] as Vector3) + Vector3(0, y, 0), YELLOW)
+	for i in range(8):
+		var hx := -7.6 + float(i) * 0.5
+		k.box(Vector3(hx, 0.0, 1.3), Vector3(hx + 0.25, y, 3.9), YELLOW)
+	PixelFont.draw_ground(k, "GEPAECK", Vector3(4.5, y + 0.005, 5.5), Vector3(0, 0, -1), 0.07, Color(0.95, 0.95, 0.9))
 
 
 static func _entrance(n: Node3D, k: Kit, tuer: String) -> void:
@@ -1018,6 +1026,18 @@ static func _plant(k: Kit) -> void:
 		k.tri(base, tip, mid - side, c, mid + Vector3(0, -1, 0))
 		k.tri(base, tip, mid + side, c, mid + Vector3(0, 1, 0))
 		k.tri(base, mid - side, tip, c, mid + Vector3(0, 1, 0))
+
+
+## Hängender Wegweiser: gelbe Tafel mit Piktogrammen und Pfeilen, an zwei Stangen von der Decke.
+static func _guide_sign(k: Kit) -> void:
+	var top := 3.6
+	for x: float in [-1.1, 1.1]:
+		k.box(Vector3(x - 0.03, 2.75, -0.03), Vector3(x + 0.03, top, 0.03), STEEL)
+	k.box(Vector3(-1.45, 2.25, -0.08), Vector3(1.45, 2.78, 0.08), Color(0.12, 0.12, 0.14))
+	for sz: float in [-1.0, 1.0]:
+		var z := sz * 0.085
+		k.box(Vector3(-1.4, 2.29, z - 0.005), Vector3(1.4, 2.74, z + 0.005), Color(0.98, 0.8, 0.12))
+		PixelFont.draw(k, "<GATES  WC  EXIT>", Vector3(0, 2.515, z + sz * 0.01), Vector3(sz, 0, 0), Vector3.UP, Vector3(0, 0, sz), 0.025, Color(0.08, 0.08, 0.1))
 
 
 static func _board(n: Node3D, k: Kit) -> void:

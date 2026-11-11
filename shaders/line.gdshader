@@ -11,6 +11,7 @@ uniform int num_a = 9;    // Pistenkennzahl am Anfang (Richtung Anfang → Ende)
 uniform int num_b = 27;   // Kennzahl am Ende
 uniform float core = 0.0; // Schulter: Breite der tragfähigen Fläche in der Mitte
 uniform int side_kind = 1;
+uniform bool world_pave = false;   // Seitenraum: Pflasterfugen nach Weltkoordinaten (Kreuzungsecken)
 uniform int kerb = 0;      // Straßen mit Hochbord: Rinne aus Granitpflaster statt weißer Randlinie (europäisch) // Seitenraum (mark 12): 1 Gehweg, 2 Radweg + Gehweg, 3 Allee
 
 // Ziffern 5 × 7, je Zeile 5 Bit (links = höchstes Bit)
@@ -234,11 +235,14 @@ void fragment() {
 		float d = UV.x;
 		float din = UV2.x;
 		float dout = UV2.y;
-		// Gehwegpflaster 30 × 30 cm, im Läuferverband
-		float row = floor(v / 0.3);
-		float cx = fract((d + mod(row, 2.0) * 0.15) / 0.3);
-		col = base_color * (0.94 + 0.1 * hash(vec2(row, floor((d + mod(row, 2.0) * 0.15) / 0.3))));
-		if (fract(v / 0.3) < 0.08 || cx < 0.08) {
+		// Gehwegpflaster 30 × 30 cm, im Läuferverband (Ecken an Kreuzungen in Weltkoordinaten, sonst
+		// laufen die Fugen fächerförmig auseinander)
+		float pv = world_pave ? wpos.z : v;
+		float pd = world_pave ? wpos.x : d;
+		float row = floor(pv / 0.3);
+		float cx = fract((pd + mod(row, 2.0) * 0.15) / 0.3);
+		col = base_color * (0.94 + 0.1 * hash(vec2(row, floor((pd + mod(row, 2.0) * 0.15) / 0.3))));
+		if (fract(pv / 0.3) < 0.08 || cx < 0.08) {
 			col *= 0.86;
 		}
 		if (side_kind == 2) {

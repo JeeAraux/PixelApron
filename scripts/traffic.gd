@@ -61,7 +61,8 @@ func compute_target() -> int:
 		total += float((l["samples"] as PackedVector3Array).size() - 1)
 	if total <= 0.0:
 		return 0
-	var per := float(CARS_PER_MOVEMENT) * (0.75 if station_ok() else 1.0)
+	# S-Bahn: je dichter der Takt, desto mehr Reisende kommen mit dem Zug statt mit dem Auto
+	var per := float(CARS_PER_MOVEMENT) * (1.0 - rail_share() if station_ok() else 1.0)
 	return mini(160, int(total / 70.0) + int(float(game.traffic_demand) * per))
 
 
@@ -566,7 +567,10 @@ func _spawn_tick() -> void:
 			continue
 		var r := randf()
 		var purpose := "durch"
-		if r < 0.45:
+		# teures Parken: mehr Reisende lassen sich bringen (Vorfahrt) statt zu parken
+		var share := 0.45 / clampf(float(game.fees.get("park", 1.0)), 0.5, 2.0) ** 0.6
+		share = clampf(share, 0.2, 0.6)
+		if r < share:
 			purpose = "parkhaus"
 		elif r < 0.75:
 			purpose = "terminal"
@@ -604,7 +608,10 @@ func _parking_tick(dt: float) -> void:
 			_lane_leg(lane["line"], int(lane["d"]), int(lane["k"]), float(lane["pos"]) + 6.0)]
 		var m := _spawn_with_legs(legs, "raus")
 		m["v"] = 2.0
-		game.earn_quiet(roundi(float(PARK_FEE) * float(game.fees["park"])), "Parken")
+		var fee := roundi(float(PARK_FEE) * float(game.fees["park"]))
+		game.earn_quiet(fee, "Parken")
+		park_income += fee
+		park_cars += 1
 
 
 func _drive(m: Dictionary, dt: float) -> void:
@@ -865,7 +872,7 @@ func _reach_goal(m: Dictionary) -> void:
 			var path := _bezier(here, dir, a, dir)
 			path.append(b)
 			_release(m, leg)
-			var bay := _make_leg("drive", path, "D%d" % randi(), {"halt_end": true,
+			var bay := _make_leg("drive", path, "D%d" % randi(), {"halt_end": true, "acc": goal.get("acc", {}),
 				"rejoin": [leg["line"], int(leg["d"]), int(leg["k"]), float(leg["off"]) + float(m["s"]) + 26.0]})
 			m["legs"] = [bay]
 			m["s"] = 0.0
@@ -908,7 +915,18 @@ func _reach_goal(m: Dictionary) -> void:
 
 func _end_of_path(m: Dictionary, leg: Dictionary) -> void:
 	if leg.has("halt_end"):
-		m["halt"] = randf_range(3.5, 6.5)
+		# Haltezeit: Kiss & Fly ist begrenzt (kurz rein, kurz raus), am Taxistand wird eingeladen, an der
+		# offenen Vorfahrt warten manche lange auf jemanden und blockieren die Haltebucht
+		var acc: Dictionary = leg.get("acc", {})
+		if acc.has("kissandfly"):
+			m["halt"] = randf_range(3.0, 5.5)
+		elif acc.has("taxistand"):
+			m["halt"] = randf_range(5.0, 9.0)
+		elif randf() < 0.25:
+			m["halt"] = randf_range(18.0, 40.0)
+			long_halts += 1
+		else:
+			m["halt"] = randf_range(3.5, 6.5)
 		m["s"] = float(leg["len"])
 		m["v"] = 0.0
 		if leg.has("bus_stop"):
@@ -1276,6 +1294,10 @@ func _staff_shift(dt: float) -> void:
 # ---------------------------------------------------------------- S-Bahn, Taxis, Kiss & Fly, Mietwagen
 
 var train_t: Dictionary = {}       # Bahnhof (Instanz-ID) -> Zeit im Zugumlauf
+var park_income := 0                # Parkgebühren seit Spielstart (für das Betriebsfenster)
+var park_cars := 0
+var long_halts := 0                # Autos, die an der offenen Vorfahrt lange gewartet haben
+var curb_queue := 0.0              # geglättete Zahl stehender Autos vor dem Terminal
 
 
 func _has(id: String) -> bool:
@@ -1303,13 +1325,23 @@ func landside_factors() -> Array:
 		_find_access()
 	var out := []
 	if station_ok():
-		out.append(["S-Bahn-Anschluss", 4])
+		var rs := rail_share()
+		out.append(["S-Bahn-Anschluss (%s)" % ("dichter Takt" if rs >= 0.35 else ("seltener Takt" if rs < 0.2 else "Takt 20 Min")), 3 + roundi(rs * 6.0)])
 	elif not game.items_of("bahnhof").is_empty():
 		out.append(["S-Bahnhof ohne Strom oder zu weit vom Terminal", -1])
 	if _has("taxistand"):
 		out.append(["Taxistand am Terminal", 2])
 	if _has("kissandfly"):
 		out.append(["Kiss & Fly: Bringen und Abholen ohne Gedränge", 2])
+	else:
+		# offene Vorfahrt ohne Haltezeitbegrenzung: Autos stauen sich vor dem Terminal
+		var queued := 0
+		for m: Dictionary in movers:
+			if m["purpose"] == "terminal" and float(m.get("v", 1.0)) < 0.2 and float(m.get("halt", 0.0)) <= 0.0:
+				queued += 1
+		curb_queue = lerpf(curb_queue, float(queued), 0.3)
+		if curb_queue >= 3.0:
+			out.append(["Stau in der Vorfahrt: Kiss & Fly mit kurzer Haltezeit fehlt", -2])
 	for it: Dictionary in game.items_of("mietwagen"):
 		if game.supplied(it, "strom") and access.has((it["node"] as Node).get_instance_id()):
 			out.append(["Mietwagenzentrum", 2])
@@ -1328,6 +1360,21 @@ func landside_factors() -> Array:
 
 
 ## Züge: alle zwei Minuten fährt eine S-Bahn ein, hält 25 Sekunden (Fahrgäste gehen zum Terminal) und fährt weiter.
+## Anteil der Reisenden, die mit der S-Bahn kommen (nach dem dichtesten Takt eines angeschlossenen Bahnhofs).
+func rail_share() -> float:
+	var best := 0.0
+	for it: Dictionary in game.items_of("bahnhof"):
+		if game.supplied(it, "strom"):
+			best = maxf(best, float({"30": 0.15, "20": 0.25, "10": 0.35, "5": 0.45}.get(String(game.opt(it, "takt")), 0.25)))
+	return best
+
+
+## Abstand der Züge in Simulationssekunden (dichter Takt = öfter ein Zug; Ein- und Ausfahrt mit Halt
+## brauchen zusammen 53 s).
+func _cycle(it: Dictionary) -> float:
+	return float({"5": 60.0, "10": 90.0, "20": 120.0, "30": 180.0}.get(String(game.opt(it, "takt")), 120.0))
+
+
 func _trains(dt: float) -> void:
 	for it: Dictionary in game.items_of("bahnhof"):
 		var node: Node3D = it["node"]
@@ -1343,9 +1390,9 @@ func _trains(dt: float) -> void:
 		const ARRIVE := 14.0
 		const STOP := 25.0
 		const LEAVE := 14.0
-		const CYCLE := 120.0
-		if t > CYCLE:
-			t -= CYCLE
+		var cycle := _cycle(it)
+		if t > cycle:
+			t -= cycle
 		train_t[key] = t
 		var x := 0.0
 		if t < ARRIVE:

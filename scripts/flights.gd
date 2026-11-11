@@ -151,6 +151,7 @@ func step(sim: float) -> void:
 	if sim <= 0.0:
 		return
 	inspect_t = maxf(0.0, inspect_t - sim)
+	sim_t += sim
 	if events != null:
 		events.step(sim)
 	if dirty:
@@ -445,6 +446,13 @@ func _try_spawn() -> void:
 		taxi_len += graph.pos[probe[i - 1]].distance_to(graph.pos[probe[i]])
 	var vapp := float(Catalog.PLANES[kind]["vapp"])
 	var est_s := (5200.0 + 2600.0) / vapp + 40.0 + taxi_len / 7.5 + 25.0
+	# Verspätungskette: dasselbe Flugzeug (Airline und Muster) kam verspätet weg und kommt verspätet wieder
+	var ck := "%s/%s" % [String(airline[0]), kind]
+	if chain_delay.has(ck):
+		var cd := float(chain_delay[ck])
+		chain_delay.erase(ck)
+		late += cd
+		p["chain"] = cd
 	p["sta"] = game.minutes + est_s * CLOCK - late
 	p["std"] = float(p["sta"]) + float(Catalog.PLANES[kind]["turn"]) * 1.15 + 15.0
 	# Wartung: Nach einigen Flügen ist ein Check fällig
@@ -930,6 +938,7 @@ func _update(p: Dictionary, sim: float) -> void:
 				p["speed"] = 0.0
 				p["lineup"] = 3.0
 				p["stand"] = {}
+				wake_t[dep_ri] = [sim_t, wake_cat(String(p["kind"]))]
 		"start":
 			var h: Vector3 = p["heading"]
 			if float(p["alt"]) < 150.0:
@@ -937,14 +946,15 @@ func _update(p: Dictionary, sim: float) -> void:
 			if float(p.get("lineup", 0.0)) > 0.0:
 				p["lineup"] = float(p["lineup"]) - sim
 			else:
-				var v: float = float(p["speed"]) + TAKEOFF_ACC * sim
+				var pf := perf(String(p["kind"]))
+				var v: float = float(p["speed"]) + TAKEOFF_ACC * pf.y * sim
 				p["speed"] = v
 				p["pos"] = (p["pos"] as Vector3) + (p["heading"] as Vector3) * v * sim
 				var vr := float(Catalog.PLANES[p["kind"]]["vr"])
 				if v > vr:
 					p["pitch"] = move_toward(float(p["pitch"]), deg_to_rad(9.0), deg_to_rad(3.0) * sim)
 				if v > vr + 4.0:
-					p["alt"] = float(p["alt"]) + v * 0.11 * sim
+					p["alt"] = float(p["alt"]) + v * 0.11 * pf.z * sim
 				p["speed"] = minf(v, vr * 1.6)
 				# ab 150 m eine Standardkurve in Richtung Ziel, mit Querneigung
 				if float(p["alt"]) > 150.0:
@@ -970,6 +980,9 @@ func _update(p: Dictionary, sim: float) -> void:
 				var plane: Dictionary = Catalog.PLANES[p["kind"]]
 				done += 1
 				var late := maxf(0.0, float(p.get("off", game.minutes)) - float(p.get("std", game.minutes)))
+				# ein Teil der Verspätung bleibt am Flugzeug hängen und kommt mit dem nächsten Umlauf zurück
+				if late > 12.0:
+					chain_delay["%s/%s" % [String(p["airline"]), String(p["kind"])]] = (late - 12.0) * 0.8
 				var cargo := bool(p.get("cargo", false))
 				if cargo:
 					var tonnes := int(Catalog.FREIGHTERS.get(String(p["kind"]), 20))
@@ -1051,7 +1064,59 @@ func _may_take_runway(id: int, ri: int = -1) -> bool:
 	var p := _plane_by_id(id)
 	if game.atc_manual and not p.is_empty() and p["state"] in ["rollt_aus", "wartet"] and int(p.get("ri", -1)) == ri and not bool(p.get("frei_start", false)):
 		return false
+	# Wirbelschleppen: hinter einem schwereren Start wartet der nächste am Rollhalt
+	if not p.is_empty() and p["state"] in ["rollt_aus", "wartet"] and ri == dep_ri and wake_t.has(ri):
+		var last: Array = wake_t[ri]
+		var gap := wake_gap(int(last[1]), wake_cat(String(p["kind"])))
+		if sim_t - float(last[0]) < gap:
+			p["wake_hold"] = gap - (sim_t - float(last[0]))
+			return false
+	if not p.is_empty():
+		p.erase("wake_hold")
 	return true
+
+
+## Flugleistung je Muster: x = Rolltempo, y = Beschleunigung beim Start, z = Steigrate (je relativ).
+## Großraumflugzeuge rollen gemächlicher, beschleunigen langsamer und steigen flacher, Regionalflugzeuge
+## sind flinker.
+static func perf(kind: String) -> Vector3:
+	match kind:
+		"a380":
+			return Vector3(0.75, 0.72, 0.72)
+		"a330", "a350", "b787", "b767", "b777f":
+			return Vector3(0.85, 0.82, 0.82)
+		"atr72":
+			return Vector3(1.0, 0.95, 1.1)
+		"e190", "crj900":
+			return Vector3(1.05, 1.05, 1.15)
+	return Vector3.ONE
+
+
+var chain_delay: Dictionary = {}   # "Airline/Muster" -> Verspätung (Spielminuten), die der nächste Umlauf mitbringt
+var sim_t := 0.0             # Simulationssekunden seit Start (für Staffelungen)
+var wake_t: Dictionary = {}  # Pistenindex -> [Sim-Zeit des letzten Starts, Wirbelschleppenkategorie]
+
+
+## Wirbelschleppenkategorie: 3 Super (A380), 2 schwer (Großraum), 1 mittel, 0 leicht (Turboprop).
+static func wake_cat(kind: String) -> int:
+	if kind == "a380":
+		return 3
+	if Catalog.code_rank(String(Catalog.PLANES.get(kind, {}).get("code", "C"))) >= Catalog.code_rank("D"):
+		return 2
+	if kind == "atr72":
+		return 0
+	return 1
+
+
+## Mindestabstand (Simulationssekunden) eines Starts hinter dem vorigen nach Kategorie.
+static func wake_gap(lead: int, follow: int) -> float:
+	if lead == 3 and follow < 3:
+		return 120.0
+	if lead >= 2 and follow < 2:
+		return 90.0
+	if lead >= 1 and follow == 0:
+		return 60.0
+	return 0.0
 
 
 ## Pisten, die das Flugzeug nur gekreuzt hat (oder nach der Landung verlassen hat), wieder freigeben.
@@ -1381,6 +1446,8 @@ func _drive(p: Dictionary, sim: float) -> String:
 	var total: float = r["total"]
 	var nodes: Array = p["path"]
 	var rs: float = p["rs"]
+	if p.has("tow"):
+		return _tow_step(p, sim)
 	var ghost := float(p["ghost"]) > 0.0
 	if ghost:
 		var g := float(p["ghost"]) - sim
@@ -1454,7 +1521,7 @@ func _drive(p: Dictionary, sim: float) -> String:
 				p["blocked_by"] = int(gd[1])
 	# Tempo: Bremskurve der Linie und Halt vor dem Hindernis
 	var ri: int = p["ri"]
-	var want := cap[ri]
+	var want := cap[ri] * float(perf(String(p["kind"])).x)
 	if limit < total:
 		want = minf(want, sqrt(2.0 * DEC * maxf(0.0, limit - rs - 0.5)))
 	var v: float = p["speed"]
@@ -1517,9 +1584,17 @@ func _drive(p: Dictionary, sim: float) -> String:
 			# Steht der andere vor uns, wir aber nicht vor ihm, fährt er zuerst (nicht durch ihn hindurch)
 			if not q.is_empty() and float(q.get("ghost", 0.0)) <= 0.0 and _in_front(p, q) != _in_front(q, p):
 				go = not _in_front(p, q)
-			if go:
+			# Wer nachgibt, wird ein Stück auf seiner Route zurückgeschleppt und wartet, bis der andere
+			# vorbei ist. Nur wenn beide eingeklemmt sind (nichts frei hinter ihnen), fährt einer durch.
+			var yl: Dictionary = q if go else p
+			var ot: Dictionary = p if go else q
+			if _start_tow(yl, ot) or _start_tow(ot, yl):
+				p["wait"] = 0.0
+				tows += 1
+			elif go:
 				p["ghost"] = 15.0
 				p["wait"] = 0.0
+				ghosts += 1
 		return "belegt"
 	if v > 0.5:
 		p["wait"] = 0.0
@@ -1663,6 +1738,10 @@ func _block_ahead(nodes: Array, node_s: PackedFloat32Array, kk: int, id: int, ig
 
 ## Verklemmt: Der Blockierer kommt selbst nicht weiter und wartet (auf uns oder lange).
 ## Wer hinter einem Pushback oder einem rollenden Flugzeug steht, wartet einfach.
+var tows := 0     # aufgelöste Blockaden (Zurückschleppen)
+var ghosts := 0   # allerletzte Notlösung (Durchfahren), sollte 0 bleiben
+
+
 func _deadlocked(p: Dictionary) -> bool:
 	var q := _plane_by_id(int(p.get("blocked_by", -1)))
 	if q.is_empty():
@@ -1672,6 +1751,106 @@ func _deadlocked(p: Dictionary) -> bool:
 	if float(q["speed"]) > 0.2:
 		return false
 	return int(q.get("blocked_by", -1)) == int(p["id"]) or float(q["wait"]) > 30.0
+
+
+## Punkt der Route bei Bogenlänge sv (Bugrad).
+func _route_point(p: Dictionary, sv: float) -> Vector3:
+	var r: Dictionary = p["route"]
+	var pts: PackedVector3Array = r["pts"]
+	var cum: PackedFloat32Array = r["s"]
+	var i := 0
+	while i < cum.size() - 2 and cum[i + 1] <= sv:
+		i += 1
+	var seg := maxf(cum[i + 1] - cum[i], 0.0001) if i + 1 < cum.size() else 1.0
+	return pts[i].lerp(pts[mini(i + 1, pts.size() - 1)], clampf((sv - cum[i]) / seg, 0.0, 1.0))
+
+
+## Gegenseitige Blockade auflösen: Flugzeug y wird bis zu 80 m auf seiner Route zurückgeschleppt, wenn
+## dahinter frei ist (kein anderes Flugzeug näher als 48 m, nicht auf den anderen zu). false = geht nicht.
+func _start_tow(y: Dictionary, o: Dictionary) -> bool:
+	if y.is_empty() or y.has("tow") or not (String(y["state"]) in ["rollt_ein", "rollt_aus"]) or not y.has("route"):
+		return false
+	var rs: float = y["rs"]
+	var best := 0.0
+	var d := 10.0
+	if graph.runway_distance(y["pos"]) < Airside.HOLD_DIST + 15.0:
+		return false   # nie auf oder an der Piste zurückschleppen
+	while d <= 80.0 and rs - d >= 0.0:
+		var q := _route_point(y, rs - d)
+		if graph.runway_distance(q) < Airside.HOLD_DIST + 15.0:
+			break
+		var free := true
+		for x: Dictionary in planes:
+			if is_same(x, y) or not (String(x["state"]) in ["rollt_ein", "rollt_aus", "wartet", "pushback", "abfertigung"]):
+				continue
+			var xp: Vector3 = x["pos"]
+			if is_same(x, o):
+				if xp.distance_to(q) < xp.distance_to(y["pos"]) + d * 0.5:
+					free = false
+					break
+			elif xp.distance_to(q) < 48.0:
+				free = false
+				break
+		if not free:
+			break
+		best = d
+		d += 5.0
+	if best < 25.0:
+		return false
+	y["tow"] = {"to": rs - best, "phase": "back", "t": 0.0, "other": int(o.get("id", -1))}
+	y["pk"] = 0
+	return true
+
+
+## Schritt beim Zurückschleppen (langsam rückwärts auf der eigenen Route), danach warten, bis der andere
+## vorbei ist. Voraus wird alles freigegeben, wo das Flugzeug steht, bleibt belegt.
+func _tow_step(p: Dictionary, sim: float) -> String:
+	var tow: Dictionary = p["tow"]
+	var id: int = p["id"]
+	var r: Dictionary = p["route"]
+	var pts: PackedVector3Array = r["pts"]
+	var cum: PackedFloat32Array = r["s"]
+	var nodes: Array = p["path"]
+	var node_s: PackedFloat32Array = r["node_s"]
+	var rs: float = p["rs"]
+	p["speed"] = 0.0
+	if String(tow["phase"]) == "back":
+		rs = maxf(rs - 2.0 * sim, float(tow["to"]))
+		p["rs"] = rs
+		var ri := 0
+		while ri < cum.size() - 2 and cum[ri + 1] <= rs:
+			ri += 1
+		p["ri"] = ri
+		var nose := _route_point(p, rs)
+		var hd := pts[mini(ri + 1, pts.size() - 1)] - pts[ri]
+		hd.y = 0.0
+		if hd.length() > 0.01:
+			p["heading"] = hd.normalized()
+		p["pos"] = nose - (p["heading"] as Vector3) * float(p["ng"])
+		p["mg_pos"] = (p["pos"] as Vector3) - (p["heading"] as Vector3) * float(p["mg"])
+		if rs <= float(tow["to"]) + 0.01:
+			tow["phase"] = "halt"
+	else:
+		tow["t"] = float(tow["t"]) + sim
+	for j in range(nodes.size()):
+		var n: int = nodes[j]
+		if int(reserved.get(n, -1)) == id and absf(node_s[j] - rs) > 20.0:
+			reserved.erase(n)
+	var here := graph.nearest(p["pos"])
+	if here >= 0 and int(reserved.get(here, -1)) in [-1, id]:
+		_reserve(here, id)
+		p["occ"] = here
+		p["occ_at"] = p["pos"]
+	if String(tow["phase"]) == "halt":
+		var o := _plane_by_id(int(tow["other"]))
+		var t := float(tow["t"])
+		var gone := o.is_empty() or not (String(o["state"]) in ["rollt_ein", "rollt_aus", "wartet"]) \
+				or (o["pos"] as Vector3).distance_to(p["pos"]) > 140.0 or (float(o["speed"]) > 1.0 and t > 25.0)
+		if (gone and t > 6.0) or t > 100.0:
+			p.erase("tow")
+			p["wait"] = 0.0
+			p["rerouted"] = false
+	return "belegt"
 
 
 ## Bogenlänge, an der das Bugrad vor dem Rollhalteort hält (Cockpit hinter der Markierung).
@@ -2403,6 +2582,8 @@ func _status(p: Dictionary) -> Array:
 		"warteschleife":
 			return ["Warteschleife %d Min" % int(p.get("hold_t", 0.0)), Color(1.0, 0.55, 0.45)]
 		"anflug":
+			if int(p.get("gas", 0)) == 0 and float(p.get("chain", 0.0)) >= 5.0:
+				return ["Anflug (Vorflug verspätet)", Color(1.0, 0.7, 0.45)]
 			return ["Anflug" if int(p.get("gas", 0)) == 0 else "Neuer Anflug", Color(0.56, 0.75, 0.94)]
 		"durchstarten":
 			return ["Durchstarten", Color(1.0, 0.55, 0.45)]
@@ -2421,10 +2602,14 @@ func _status(p: Dictionary) -> Array:
 				return ["Wartet auf Pushback" if float(p["wait"]) > 1.0 else "Türen zu, Schlepper dockt an", Color(0.94, 0.76, 0.31)]
 			return ["Pushback", Color(0.94, 0.76, 0.31)]
 		"rollt_aus":
+			if p.has("tow"):
+				return ["Wird zurückgeschleppt", Color(1.0, 0.55, 0.45)]
 			if float(p["wait"]) > 1.0:
 				return ["Wartet auf Rollweg", Color(1.0, 0.55, 0.45)]
 			return ["Rollt zur Piste", Color(0.94, 0.76, 0.31)]
 		"wartet":
+			if p.has("wake_hold"):
+				return ["Wirbelschleppe: %d s" % ceili(float(p["wake_hold"])), Color(1.0, 0.55, 0.45)]
 			return ["Wartet am Rollhalt", Color(1.0, 0.55, 0.45)]
 		"start":
 			return ["Start", Color(0.56, 0.75, 0.94)]

@@ -16,6 +16,9 @@ const Models = preload("res://scripts/models.gd")
 
 
 func run(main: Node) -> void:
+	# Gleicher Ablauf bei jedem Lauf: Pause, damit kein Bild mit echter Bilddauer simuliert (Verkehr,
+	# Flüge, Wetter). Alles Weitere treibt der Test selbst mit festen Schritten an.
+	main.game.set_speed(0)
 	await get_tree().process_frame
 	main.set_process(false)
 	main.weather.force("klar")
@@ -1270,6 +1273,7 @@ func run(main: Node) -> void:
 
 	# Fahrzeuge bewegen sich (das am weitesten gefahrene zählt, manche warten hinter anderen)
 	main.set_process(true)
+	game.set_speed(1)
 	var cars := []
 	var starts := []
 	for m: Dictionary in main.traffic.movers:

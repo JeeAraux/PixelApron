@@ -115,6 +115,7 @@ func _analyze() -> void:
 	dirty = false
 	halls = []
 	grids = {}
+	path_cache.clear()
 	game.refresh_belts()
 	for h: Dictionary in game.items_of("halle"):
 		var counts := {}
@@ -539,6 +540,11 @@ func factors() -> Array:
 		out.append(["Gedränge am Gepäckband", -mini(15, roundi(10.0 * (la - 1.0)) + 2)])
 		if hint == "":
 			hint = "Gepäckband überlastet: ein weiteres bauen"
+	var sm := signs_missing()
+	if sm != "":
+		out.append([sm, -3])
+		if hint == "":
+			hint = "Wegweiser in die Hallen hängen (Ausstattung)"
 	var bonus := mini(10, roundi(float(decor) / maxf(area / 100.0, 1.0) * 4.0))
 	if bonus > 0:
 		out.append(["Ausstattung im Terminal (Pflanzen, Sitze, Café, Kunst)", bonus])
@@ -686,6 +692,9 @@ func assign_gate(p: Dictionary) -> Dictionary:
 			var ns := String(game.opt(it, "bereich")) == "non_schengen"
 			if ns != (not bool(p.get("schengen", true))):
 				score += 300.0
+			# Airlines bekommen nach Möglichkeit wieder ihre gewohnten Gates (Schalter, Lounge, Personal)
+			if String(gate_airline.get(gid, "")) == String(p.get("airline", "?")):
+				score -= 45.0
 			if remote:
 				score += 0.0 if it["id"] == "busgate" else 400.0
 			elif it["id"] == "gate" and bridge_reaches(it, p):
@@ -698,7 +707,11 @@ func assign_gate(p: Dictionary) -> Dictionary:
 	p["bus"] = remote or best.is_empty() or not (best["id"] == "gate" and bridge_reaches(best, p))
 	if not best.is_empty():
 		gate_use[(best["node"] as Node).get_instance_id()] = int(p["id"])
+		gate_airline[(best["node"] as Node).get_instance_id()] = String(p.get("airline", ""))
 	return best
+
+
+var gate_airline: Dictionary = {}   # Gate (Instanz-ID) -> Airline, die es zuletzt benutzt hat
 
 
 ## Erreicht die Brücke dieses Gates Tür L1 des Flugzeugs (in seiner Parkposition)?
@@ -807,6 +820,7 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 			plan.append(["go", _front(desk, 2.4, 1.6)])
 			plan.append(["wait", randf_range(2.5, 4.5)])
 			plan.append(["drop_bag", desk])
+		_lost(plan, hall, ["checkin", "infoschalter", "anzeige", "shop", "cafe"])
 		var sec := _any(hall, "sicherheit")
 		if not sec.is_empty():
 			var lane := (-1.6 if randf() < 0.5 else 1.6) - 0.6
@@ -825,15 +839,47 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 			if not _maybe(plan, hall, "kiosk", 0.15):
 				_maybe(plan, hall, "snackautomat", 0.1)
 		_maybe(plan, hall, "wc", 0.18)
-		var row: float = [-1.0, 0.6, 2.4][randi() % 3]
-		var flip := 1.0 if row > 0.0 else -1.0
-		var seat_x := -3.25 + float(randi() % 8) * 0.93
-		plan.append(["go", _pt(gate, Vector3(seat_x, 0, row + 0.55 * -flip))])
-		plan.append(["go", _pt(gate, Vector3(seat_x, 0, row - 0.05 * flip))])
-		var face := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, -flip)
-		plan.append(["sit", face])
+		# freien Sitzplatz am Gate belegen (3 Reihen à 8); sind alle besetzt, wird gestanden
+		var seat := _free_seat(gate, int(p["id"]))
+		if seat >= 0:
+			var row: float = [-1.0, 0.6, 2.4][seat / 8]
+			var flip := 1.0 if row > 0.0 else -1.0
+			var seat_x := -3.25 + float(seat % 8) * 0.93
+			plan.append(["go", _pt(gate, Vector3(seat_x, 0, row + 0.55 * -flip))])
+			plan.append(["go", _pt(gate, Vector3(seat_x, 0, row - 0.05 * flip))])
+			var face := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, -flip)
+			plan.append(["sit", face])
+		else:
+			plan.append(["go", _pt(gate, Vector3(randf_range(-4.2, 4.2), 0, randf_range(3.4, 5.2)))])
 		plan.append(["stay"])
 		_spawn(p, hall, true, _pt(door, Vector3(randf_range(-2.0, 2.0), 0, 0.3)), plan)
+
+
+## Terminalhalle zur Instanz-ID ihres Knotens (leer, wenn es sie nicht mehr gibt).
+func _hall_by_id(hid: int) -> Dictionary:
+	for h: Dictionary in game.items_of("halle"):
+		if is_instance_valid(h.get("node")) and (h["node"] as Node).get_instance_id() == hid:
+			return h
+	return {}
+
+
+var path_cache: Dictionary = {}   # "Halle|Ebene|Modus|Zelle A|Zelle B" -> Eckpunkte (Vector2)
+var path_hits := 0
+var path_misses := 0
+var seats: Dictionary = {}   # "Gate-ID:Platz" -> Flug-ID (belegte Sitzplätze am Gate)
+
+
+## Nächster freier Sitzplatz (0..23) am Gate für einen Flug, sonst -1.
+func _free_seat(gate: Dictionary, fid: int) -> int:
+	var gid := (gate["node"] as Node).get_instance_id()
+	var order := range(24)
+	order.shuffle()
+	for i: int in order:
+		var key := "%d:%d" % [gid, i]
+		if not seats.has(key):
+			seats[key] = fid
+			return i
+	return -1
 
 
 ## Gates werden je Halle von links nach rechts durchnummeriert (Gate 1, 2, …); Bänder lassen sich
@@ -981,6 +1027,22 @@ func gate_bag(gate_node: Node, outward: bool = false) -> void:
 	moving_bags.append(bag)
 
 
+## Koffer läuft sichtbar einen festen Weg entlang (z. B. Entladeband im Gepäckumschlag), ohne Sortier-Effekt.
+func route_bag(route: PackedVector3Array, delay: float = 0.0) -> void:
+	if route.size() < 2 or moving_bags.size() > 220:
+		return
+	var cum := PackedFloat32Array([0.0])
+	for i in range(1, route.size()):
+		cum.append(cum[i - 1] + route[i].distance_to(route[i - 1]))
+	var mi := MeshInstance3D.new()
+	mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[moving_bags.size() % Interior.BAG_COLS.size()])
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.visible = false
+	crowd.add_child(mi)
+	mi.position = route[0]
+	moving_bags.append({"node": mi, "route": route, "cum": cum, "s": -delay * CLAIM_SPEED, "v": CLAIM_SPEED, "claim": true})
+
+
 var transfer_pool := 0   # Transferkoffer, die in der Sortierung auf ihren Anschlussflug warten
 
 
@@ -1032,6 +1094,7 @@ func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing:
 			# Koffer kam nicht an: zur Gepäckermittlung
 			plan.append(["go", _front(desk, 1.4, 1.0)])
 			plan.append(["wait", randf_range(4.0, 7.0)])
+		_lost(plan, hall, ["gepaeckband"])
 		if not bool(p.get("schengen", true)):
 			_through(plan, hall, "zoll", false, 0.6)
 		_maybe(plan, hall, "wc", 0.2)
@@ -1093,6 +1156,45 @@ func _through(plan: Array, hall: Dictionary, id: String, forward: bool, stop: fl
 	plan.append(["go", b if forward else a])
 
 
+## Ohne genug Wegweiser verlaufen sich manche: ein Umweg zu einer falschen Stelle, kurz umschauen.
+func _lost(plan: Array, hall: Dictionary, ids: Array) -> void:
+	var r: Rect2 = hall["rect"]
+	var need := maxi(1, ceili(r.get_area() / 1200.0))
+	var have := 0
+	for it: Dictionary in game.inside_of(hall):
+		if it["id"] == "wegweiser":
+			have += 1
+	if have >= need or randf() > 0.35 * (1.0 - float(have) / float(need)):
+		return
+	var cand := []
+	for it: Dictionary in game.inside_of(hall):
+		if it["id"] in ids and GameState.floor_of(it) == 0:
+			cand.append(it)
+	if cand.is_empty():
+		return
+	var it2: Dictionary = cand[randi() % cand.size()]
+	plan.append(["go", _front(it2, _size(it2).x * 0.4, 2.0)])
+	plan.append(["wait", randf_range(3.0, 7.0)])
+	lost_walks += 1
+
+
+var lost_walks := 0   # Umwege mangels Wegweiser (für Hinweise und Proben)
+
+
+## Hinweis: Hallen, in denen Wegweiser fehlen (leer = alles gut).
+func signs_missing() -> String:
+	for info: Dictionary in _complete():
+		var h: Dictionary = info["hall"]
+		var need := maxi(1, ceili((h["rect"] as Rect2).get_area() / 1200.0))
+		var have := 0
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] == "wegweiser":
+				have += 1
+		if have < need:
+			return "Wegweiser fehlen (%d von %d): Fluggäste verlaufen sich" % [have, need]
+	return ""
+
+
 func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> bool:
 	if randf() >= chance:
 		return false
@@ -1107,8 +1209,13 @@ func _maybe(plan: Array, hall: Dictionary, id: String, chance: float) -> bool:
 
 func _spawn(p: Dictionary, hall: Dictionary, dep: bool, start: Vector3, plan: Array) -> void:
 	var node := Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
-	if randf() < 0.1:
+	var roll := randf()
+	var child := roll < 0.1
+	if child:
 		node.scale = Vector3.ONE * randf_range(0.58, 0.7)   # Kinder
+	elif roll < 0.2:
+		# Gepäckwagen mit zwei Koffern, vor sich hergeschoben (gilt beim Abgeben/Abholen als "Koffer")
+		node.add_child(_trolley_node())
 	elif randf() < 0.65:
 		# Rollkoffer mit ausgezogenem Griff, an der rechten Hand
 		var bag := Node3D.new()
@@ -1124,8 +1231,82 @@ func _spawn(p: Dictionary, hall: Dictionary, dep: bool, start: Vector3, plan: Ar
 	node.visible = false
 	node.position = start
 	crowd.add_child(node)
-	people.append({"node": node, "flight": int(p["id"]), "dep": dep, "hall_id": (hall["node"] as Node).get_instance_id(),
-		"plan": plan, "si": 0, "path": [], "pi": 0, "timer": 0.0, "pos": start})
+	var lead := {"node": node, "flight": int(p["id"]), "dep": dep, "hall_id": (hall["node"] as Node).get_instance_id(),
+		"plan": plan, "si": 0, "path": [], "pi": 0, "timer": 0.0, "pos": start}
+	people.append(lead)
+	# Familien und Paare: Begleiter gehen neben bzw. hinter der Person her
+	if not child and randf() < 0.22:
+		var n2 := 1 if randf() < 0.7 else 2
+		for k in range(n2):
+			var fn := Factory.make_person(Factory.SHIRTS[randi() % Factory.SHIRTS.size()])
+			if k == 1 or randf() < 0.45:
+				fn.scale = Vector3.ONE * randf_range(0.58, 0.72)
+			fn.visible = false
+			fn.position = start
+			crowd.add_child(fn)
+			people.append({"node": fn, "flight": -1, "dep": dep, "hall_id": lead["hall_id"], "plan": [], "si": 0,
+				"path": [], "pi": 0, "timer": 0.0, "pos": start, "follow": lead,
+				"side": [0.62, -0.62][k % 2] * (1.0 if randf() < 0.5 else -1.0), "back": 0.35 + 0.5 * float(k), "walk": 0.0})
+
+
+## Gepäckwagen (Flughafen-Trolley) vor der Person: Rahmen, Griff, Räder, zwei Koffer und eine Tasche.
+static func _trolley_node() -> Node3D:
+	var t := Node3D.new()
+	t.name = "Koffer"
+	t.position = Vector3(0, 0, -0.75)
+	var steel := Color(0.72, 0.74, 0.77)
+	Factory.blk(t, Vector3(-0.28, 0.16, -0.45), Vector3(0.28, 0.2, 0.4), steel)
+	Factory.blk(t, Vector3(-0.28, 0.2, 0.36), Vector3(0.28, 0.85, 0.4), steel)
+	Factory.blk(t, Vector3(-0.3, 0.85, 0.4), Vector3(0.3, 0.9, 0.5), Color(0.85, 0.2, 0.15))
+	for e: Vector2 in [Vector2(-0.24, -0.38), Vector2(0.24, -0.38), Vector2(-0.24, 0.33), Vector2(0.24, 0.33)]:
+		Factory.blk(t, Vector3(e.x - 0.03, 0.0, e.y - 0.06), Vector3(e.x + 0.03, 0.12, e.y + 0.06), Color(0.08, 0.08, 0.08))
+	var c1: Color = Factory.SHIRTS[randi() % Factory.SHIRTS.size()].darkened(0.4)
+	var c2: Color = Factory.SHIRTS[randi() % Factory.SHIRTS.size()].darkened(0.3)
+	Factory.blk(t, Vector3(-0.24, 0.2, -0.4), Vector3(0.24, 0.42, 0.3), c1)
+	Factory.blk(t, Vector3(-0.2, 0.42, -0.3), Vector3(0.18, 0.62, 0.2), c2)
+	Factory.blk(t, Vector3(-0.12, 0.62, -0.15), Vector3(0.12, 0.74, 0.1), Color(0.25, 0.2, 0.15))
+	return t
+
+
+## Begleiter: folgt seiner Bezugsperson mit etwas Abstand (seitlich daneben oder dahinter).
+func _update_follower(per: Dictionary, sim: float) -> void:
+	var lead: Dictionary = per["follow"]
+	var node: Node3D = per["node"]
+	if bool(lead.get("gone", false)) or not is_instance_valid(lead.get("node")):
+		_drop(per)
+		return
+	var ln: Node3D = lead["node"]
+	if ln.get_parent() != node.get_parent() or not ln.visible:
+		node.visible = false
+		per["pos"] = lead["pos"]
+		node.position = per["pos"]
+		per["lp"] = lead["pos"]
+		return
+	node.visible = true
+	var lp: Vector3 = lead["pos"]
+	var mv: Vector3 = lp - (per.get("lp", lp) as Vector3)
+	mv.y = 0.0
+	per["lp"] = lp
+	if mv.length() > 0.005:
+		per["dir"] = mv.normalized()
+	var dir: Vector3 = per.get("dir", Vector3(0, 0, 1))
+	var target := lp - dir * float(per["back"]) + dir.cross(Vector3.UP) * float(per["side"])
+	var here: Vector3 = per["pos"]
+	var d := target - here
+	d.y = target.y - here.y
+	var dist := d.length()
+	if dist > 6.0:
+		here = target    # abgehängt (Rolltreppe, Tür): wieder aufschließen
+	elif dist > 0.04:
+		var spd := clampf(dist * 2.5, 0.0, 2.6)
+		here += d / dist * minf(dist, spd * sim)
+		per["walk"] = float(per["walk"]) + spd * sim
+		Factory.walk(node, float(per["walk"]), dir, sim)
+	else:
+		Factory.set_pose(node, 0)
+		Factory.face(node, dir, sim)
+	per["pos"] = here
+	node.position = here
 
 
 ## Das Flugzeug rollt los: wer am Gate wartet (oder noch unterwegs ist), ist eingestiegen.
@@ -1136,12 +1317,16 @@ func flight_left(p: Dictionary) -> void:
 		if not (b["plane"] as Dictionary).is_empty() and int(b["plane"]["id"]) == fid:
 			b["plane"] = {}
 	_release_gate(fid)
+	for key: String in seats.keys():
+		if int(seats[key]) == fid:
+			seats.erase(key)
 	for per: Dictionary in people.duplicate():
 		if int(per["flight"]) == fid and bool(per["dep"]):
 			_drop(per)
 
 
 func _drop(per: Dictionary) -> void:
+	per["gone"] = true
 	var node: Variant = per["node"]
 	if is_instance_valid(node):
 		(node as Node).queue_free()
@@ -1450,6 +1635,7 @@ func clear_people() -> void:
 	for per: Dictionary in people.duplicate():
 		_drop(per)
 	gate_use.clear()
+	seats.clear()
 
 
 var clock := 0.0
@@ -1474,7 +1660,10 @@ func step(sim: float) -> void:
 	_animate_doors(sim)
 	_staff_tick(sim)
 	for per: Dictionary in people.duplicate():
-		_update_person(per, sim)
+		if per.has("follow"):
+			_update_follower(per, sim)
+		else:
+			_update_person(per, sim)
 
 
 func _update_person(per: Dictionary, sim: float) -> void:
@@ -1569,6 +1758,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 		"sit":
 			Factory.set_pose(node, 5)
 			node.basis = Basis.looking_at(st[1], Vector3.UP)
+			per["sit_face"] = st[1]
 			var luggage := node.get_node_or_null("Koffer") as Node3D
 			if luggage != null:
 				luggage.position = Vector3(0.45, 0, -0.3)
@@ -1594,7 +1784,23 @@ func _update_person(per: Dictionary, sim: float) -> void:
 				per["timer"] = 0.0
 				per["si"] = si + 1
 		"stay":
-			pass
+			# lange Wartezeit am Gate: manche müssen zwischendurch zur Toilette und kommen zurück
+			per["stay_t"] = float(per.get("stay_t", 0.0)) + sim
+			if not per.has("wc_at"):
+				per["wc_at"] = randf_range(40.0, 260.0) if randf() < 0.35 else INF
+			if float(per["stay_t"]) > float(per["wc_at"]) and bool(per["dep"]):
+				per["wc_at"] = INF
+				var hall := _hall_by_id(int(per["hall_id"]))
+				var wc := {} if hall.is_empty() else _any(hall, "wc")
+				if not wc.is_empty() and _floor_at(wc["pos"]) == _floor_at(per["pos"]):
+					var back: Vector3 = per["pos"]
+					var ins := [["go", _front(wc, _size(wc).x * 0.35, 1.2)], ["wait", randf_range(8.0, 18.0)], ["go", back]]
+					if per.has("sit_face"):
+						ins.append(["sit", per["sit_face"]])
+					for k in range(ins.size() - 1, -1, -1):
+						plan.insert(si, ins[k])
+					per["path"] = []
+					per["timer"] = 0.0
 		"bus":
 			if bus_cb.is_valid():
 				bus_cb.call(int(per["flight"]))
@@ -1860,28 +2066,46 @@ func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true, mode: String 
 	var cb := _cell(g, b)
 	var sa := g.is_point_solid(ca)
 	var sb := g.is_point_solid(cb)
+	var y := float(f) * Catalog.FLOOR_H
+	# Viele Menschen haben dasselbe Ziel (Eingang → Schalter, Kontrolle → Gate): die geglättete Eckpunkt-
+	# Folge je Zellenpaar wird zwischengespeichert, bis sich das Raster ändert. Die eigene Bahn und das
+	# Schlendern kommen danach für jeden einzeln dazu.
+	var ckey := "%d|%d|%s|%d,%d|%d,%d" % [hall_id, f, mode if mode != "" else ("dep" if dep else "arr"), ca.x, ca.y, cb.x, cb.y]
+	var keep: Array
+	if path_cache.has(ckey):
+		keep = (path_cache[ckey] as Array).duplicate()
+		keep[0] = Vector2(a.x, a.z)
+		keep[keep.size() - 1] = Vector2(b.x, b.z)
+		path_hits += 1
+	else:
+		g.set_point_solid(ca, false)
+		g.set_point_solid(cb, false)
+		var ids := g.get_id_path(ca, cb, true)
+		g.set_point_solid(ca, sa)
+		g.set_point_solid(cb, sb)
+		# Treppenstufen des Rasters glätten: nur Eckpunkte behalten, zwischen denen die Sicht frei ist
+		var raw := [Vector2(a.x, a.z)]
+		for i in range(1, ids.size() - 1):
+			raw.append(Vector2(float(ids[i].x) + 0.5, float(ids[i].y) + 0.5))
+		raw.append(Vector2(b.x, b.z))
+		keep = [raw[0]]
+		var anchor := 0
+		var i2 := 1
+		while i2 < raw.size():
+			var far := i2
+			var j := i2 + 1
+			while j < raw.size() and j - anchor < 40 and _clear_line(g, raw[anchor], raw[j]):
+				far = j
+				j += 1
+			keep.append(raw[far])
+			anchor = far
+			i2 = far + 1
+		if path_cache.size() > 6000:
+			path_cache.clear()
+		path_cache[ckey] = keep.duplicate()
+		path_misses += 1
 	g.set_point_solid(ca, false)
 	g.set_point_solid(cb, false)
-	var ids := g.get_id_path(ca, cb, true)
-	var y := float(f) * Catalog.FLOOR_H
-	# Treppenstufen des Rasters glätten: nur Eckpunkte behalten, zwischen denen die Sicht frei ist,
-	# und jedem Menschen einen kleinen Versatz geben, damit nicht alle auf derselben Linie laufen
-	var raw := [Vector2(a.x, a.z)]
-	for i in range(1, ids.size() - 1):
-		raw.append(Vector2(float(ids[i].x) + 0.5, float(ids[i].y) + 0.5))
-	raw.append(Vector2(b.x, b.z))
-	var keep := [raw[0]]
-	var anchor := 0
-	var i2 := 1
-	while i2 < raw.size():
-		var far := i2
-		var j := i2 + 1
-		while j < raw.size() and j - anchor < 40 and _clear_line(g, raw[anchor], raw[j]):
-			far = j
-			j += 1
-		keep.append(raw[far])
-		anchor = far
-		i2 = far + 1
 	# freier gehen: auf langen Geraden schlendern (seitliche Zwischenziele), dann zu einer weichen Kurve glätten
 	var wander := [keep[0]]
 	var amp := randf_range(0.4, 1.0)

@@ -1768,6 +1768,78 @@ func toggle_ops() -> void:
 	show_ops(not ops_window.visible)
 
 
+var help_panel: PanelContainer = null
+
+const HELP_KEYS := [
+	["Kamera", ""],
+	["WASD / Pfeiltasten", "Ansicht verschieben (auch mittlere Maustaste)"],
+	["Q / E", "Ansicht drehen"],
+	["Mausrad", "Zoom"],
+	["M", "ganze Karte zeigen und zurück"],
+	["Bauen", ""],
+	["B", "Bauleiste ein/aus"],
+	["Alt + 1 … 9", "Kategorie der Bauleiste öffnen"],
+	["Strg + F", "Bauteil suchen"],
+	["R", "drehen (Gebäude, Einrichtung)"],
+	["Tab", "Zeichenart: gerade, Kurve, frei, ersetzen"],
+	["G", "Einrasten an/aus"],
+	["V", "Straßenquerschnitt (Gehweg, Radweg, Allee)"],
+	["Enter", "Weg fertig zeichnen"],
+	["Rechtsklick / Esc", "abbrechen, Werkzeug ablegen"],
+	["Entf", "Abriss (auf freiem Boden ziehen: ganze Fläche)"],
+	["Strg + Z", "Zurück (Bauen, Verschieben, Flächenabriss)"],
+	["Ansichten", ""],
+	["I", "Innenansicht der Terminals"],
+	["Bild auf / ab", "Ebene wechseln (über der obersten: neues Geschoss)"],
+	["H", "Wände: hoch, halb, aus"],
+	["J", "Schnittansicht"],
+	["L", "Leitungen (Strom, Wasser, Heizung)"],
+	["O", "Overlays: Gedränge, Wartezeit, Fluglärm, Koffer"],
+	["Spiel", ""],
+	["Leertaste", "Pause / weiter"],
+	["1 / 2 / 3", "Spieltempo"],
+	["F1", "diese Übersicht"],
+	["F2", "Betrieb: Statistik, Verträge, Gebühren, Ziele"],
+	["F5 / F9", "Speichern / Laden"],
+]
+
+
+## Tastenübersicht (F1): klein in der Bildmitte, Klick oder F1 schließt.
+func toggle_help() -> void:
+	if help_panel == null:
+		help_panel = PanelContainer.new()
+		help_panel.add_theme_stylebox_override("panel", _box(Color(0.08, 0.075, 0.055, 0.97), C_GOLD, 3, 16))
+		help_panel.z_index = 100
+		var vb := VBoxContainer.new()
+		vb.add_theme_constant_override("separation", 3)
+		help_panel.add_child(vb)
+		vb.add_child(_label("Tastenkürzel", 20, Color(0.94, 0.76, 0.31)))
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 18)
+		grid.add_theme_constant_override("v_separation", 2)
+		vb.add_child(grid)
+		for e: Array in HELP_KEYS:
+			if String(e[1]) == "":
+				grid.add_child(_label(String(e[0]), 15, Color(0.94, 0.76, 0.31)))
+				grid.add_child(_label("", 14, C_DIM))
+			else:
+				grid.add_child(_label(String(e[0]), 14, C_TEXT))
+				grid.add_child(_label(String(e[1]), 14, C_DIM))
+		vb.add_child(_label("F1 oder Klick schließt", 13, C_DIM))
+		help_panel.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+				help_panel.visible = false)
+		add_child(help_panel)
+		help_panel.visible = false
+	help_panel.visible = not help_panel.visible
+	if help_panel.visible:
+		move_child(help_panel, get_child_count() - 1)
+		help_panel.reset_size()
+		var vs := get_viewport().get_visible_rect().size
+		help_panel.position = (vs - help_panel.get_combined_minimum_size()) * 0.5
+
+
 ## Inhalt der Betriebsseite als Liste von Einträgen; neu gebaut nur, wenn sich etwas geändert hat.
 func _ops_refresh() -> void:
 	if ops_ref == null:
@@ -1981,6 +2053,16 @@ func _ops_fees() -> Array:
 	for e: Array in [["lande", "Landeentgelt", "mehr Geld je Landung, Airlines kommen seltener"],
 			["park", "Parkgebühr", "über 120 %: Reisende ärgern sich"], ["miete", "Ladenmiete (Preise)", "über 120 %: hohe Preise kosten Zufriedenheit"]]:
 		rows.append(["fee", String(e[1]), String(e[0]), "%d %%" % roundi(float(g.fees[e[0]]) * 100.0), String(e[2])])
+	var tr = ops_ref.traffic if ops_ref != null and "traffic" in ops_ref else null
+	if tr != null:
+		var spots := 0
+		var used := 0
+		for id: String in ["parkhaus", "parkplatz", "mietwagen"]:
+			for it: Dictionary in g.items_of(id):
+				spots += 22 if id != "parkhaus" else 120
+				used += int(tr.parked_count(it))
+		rows.append(["kv", "Parken: belegt", "%d von etwa %d Plätzen" % [used, spots]])
+		rows.append(["kv", "Parkgebühren seit Spielbeginn", "%d € (%d Autos)" % [int(tr.park_income), int(tr.park_cars)]])
 	rows.append(["sep"])
 	rows.append(["title", "Fluglärm und Nachtflug"])
 	var fl = ops_ref.flights if ops_ref != null else null

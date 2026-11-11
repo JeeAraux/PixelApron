@@ -1480,9 +1480,19 @@ static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
 			var bp := Vector3(c.x + sx * (dw * 0.5 + 0.45), 0, z1 + 0.45)
 			k.cyl(bp, bp + Vector3(0, 1.0, 0), 0.13, 0.13, YELLOW, 10)
 			k.box(Vector3(c.x + sx * (float(sz["sp"]) * 0.5) - 0.07, 0.08, z1 - dd - 0.5), Vector3(c.x + sx * (float(sz["sp"]) * 0.5) + 0.07, 0.09, z1 - 0.4), YELLOW)
-		# Licht über jedem Stellplatz
+		# Licht über jedem Stellplatz; nachts fällt es hell auf den Boden und durchs Tor auf den Vorplatz
 		for lz: float in [z1 - dd * 0.3, z1 - dd * 0.75]:
 			k.box(Vector3(c.x - 0.9, hh - 0.6, lz), Vector3(c.x + 0.9, hh - 0.52, lz + 0.3), LAMP)
+		var FactoryS = load("res://scripts/factory.gd")
+		var inner: MeshInstance3D = FactoryS.light_pool(dd * 0.95, dw * 1.2, dw * 1.5, 0.32)
+		inner.name = "Hallenlicht%d" % i
+		inner.position = Vector3(c.x, 0.12, z1 - 0.2)
+		n.add_child(inner)
+		var outer: MeshInstance3D = FactoryS.light_pool(9.0, dw * 0.95, dw * 1.9, 0.38)
+		outer.name = "Torlicht%d" % i
+		outer.position = Vector3(c.x, 0.06, z1 + 0.1)
+		outer.rotation.y = PI
+		n.add_child(outer)
 		match id:
 			"feuerwache":
 				var lf := MeshInstance3D.new()
@@ -1528,8 +1538,12 @@ static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
 				k.box(Vector3(bx - 0.55, 0.0, bz0 - 1.1), Vector3(bx + 0.55, 4.3, bz0), Color(0.42, 0.44, 0.47))
 				k.box(Vector3(bx - 0.45, 0.8, bz0 - 0.02), Vector3(bx + 0.45, 4.2, bz0 + 0.02), Color(0.13, 0.13, 0.14))
 				k.box(Vector3(bx - 0.6, 1.6, bz0 - 1.15), Vector3(bx + 0.6, 1.75, bz0 + 0.05), YELLOW)
-				# Gehweg zwischen Spur und Band
+				# Gehweg zwischen Spur und Band, ein Lader mit Warnweste
 				k.box(Vector3(c.x + dw * 0.5 + 0.3, 0.08, bz0 + 1.2), Vector3(bx - 0.6, 0.18, bz1), Color(0.62, 0.62, 0.6))
+				var wk: Node3D = load("res://scripts/factory.gd").make_staff(Color(0.95, 0.55, 0.1), Color(0.15, 0.18, 0.28), i % 3, true)
+				wk.position = Vector3(c.x + dw * 0.5 + 0.75, 0.18, z1 - dd * (0.45 + 0.1 * float(i % 3)))
+				wk.rotation.y = PI * 0.5
+				n.add_child(wk)
 				# Leitlinie in der Spurmitte
 				var lz := z1 - 1.0
 				while lz > z1 - dd + 0.5:
@@ -1642,21 +1656,30 @@ static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
 	n.add_child(k.instance("Halle"))
 
 
-## Wendeschleife im Gepäckumschlag von einer Spur in die Nachbarspur (seitlicher Abstand dx), ab Tiefe d0
-## hinter dem Tor: erst 1,5 m zur Gegenseite ausholen, dann im Halbkreis (Radius |dx|/2 + 1,5 m) hinüber
-## und zurück in die Spur. Punkte als (seitlich, Tiefe hinter dem Tor).
+## Wendeschleife im Gepäckumschlag von einer Spur in eine andere (seitlicher Abstand dx), ab Tiefe d0
+## hinter dem Tor: erst 1,5 m zur Gegenseite ausholen, dann im Viertelkreis (Radius höchstens 6 m) in den
+## Quergang, geradeaus quer hinüber (nur bei weiter entfernten Spuren) und im Viertelkreis zurück.
+## Punkte als (seitlich, Tiefe hinter dem Tor). Tiefster Punkt: d0 + 4 + Radius.
 static func uturn_shape(dx: float, d0: float) -> Array:
 	var sg := signf(dx)
 	var sw := 1.5
-	var r := absf(dx) * 0.5 + sw
+	var r := minf(absf(dx) * 0.5 + sw, 6.0)
 	var dc := d0 + 4.0
 	var out := []
 	for k in range(7):
 		var t := float(k) / 6.0
 		out.append(Vector2(-sg * sw * smoothstep(0.0, 1.0, t), d0 + 4.0 * t))
-	for k in range(1, 16):
-		var a := PI * float(k) / 16.0
-		out.append(Vector2(dx * 0.5 - sg * r * cos(a), dc + r * sin(a)))
+	var ca := Vector2(-sg * sw + sg * r, dc)
+	for k in range(1, 9):
+		var a := PI * 0.5 * float(k) / 8.0
+		out.append(ca + Vector2(-sg * r * cos(a), r * sin(a)))
+	var cb := Vector2(dx + sg * sw - sg * r, dc)
+	for k in range(0, 9):
+		var a2 := PI * 0.5 * float(k) / 8.0
+		var q := cb + Vector2(sg * r * sin(a2), r * cos(a2))
+		if k == 0 and q.distance_to(out[out.size() - 1]) < 0.05:
+			continue
+		out.append(q)
 	for k in range(1, 7):
 		var t2 := float(k) / 6.0
 		out.append(Vector2(dx + sg * sw * (1.0 - smoothstep(0.0, 1.0, t2)), dc - 4.0 * t2))

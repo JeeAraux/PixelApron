@@ -63,8 +63,9 @@ const OPTIONS := {
 	"stand_aussen": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
 	"stand_gross": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
 	"stand_f": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
+	"bahnhof": [["takt", "Takt", ["20", "10", "5", "30"]]],
 }
-const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
+const OPTION_TEXT := {"30": "alle 30 Min", "20": "alle 20 Min", "10": "alle 10 Min", "5": "alle 5 Min", "glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
 	"flach": "Flachdach", "gewoelbt": "Tonnendach", "shed": "Sheddach", "schengen": "Schengen", "non_schengen": "Non-Schengen",
 	"grau": "Grau", "rot": "Rot", "blau": "Blau", "weiss": "Weiß", "klassisch": "klassisch", "modern": "modern",
 	"cafe": "Café", "baeckerei": "Bäckerei", "bar": "Bar", "restaurant": "Restaurant", "kiosk": "Kiosk", "dutyfree": "Duty Free",
@@ -187,6 +188,9 @@ func upkeep_per_day() -> int:
 	var total := 0.0
 	for it: Dictionary in items:
 		total += float(item_value(it)) * Catalog.UPKEEP_ITEMS
+		if it["id"] == "bahnhof":
+			# Bestellerentgelt für die S-Bahn: je dichter der Takt, desto teurer
+			total += {"30": 1500.0, "20": 2500.0, "10": 5000.0, "5": 9000.0}.get(String(opt(it, "takt")), 2500.0)
 	for l: Dictionary in lines:
 		total += float(line_cost(String(l["kind"]), l["samples"], String(l.get("side", "")))) * Catalog.UPKEEP_LINES
 	return roundi(total / 10.0) * 10
@@ -466,6 +470,7 @@ func _ensure_grid() -> void:
 ## Prüft einen geplanten Weg.
 ## Ergebnis: why (leer = erlaubt), decor (wird weggeräumt), junctions ([Straße, Kreuzungspunkt, Index im neuen Weg]).
 func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
+	blocker = {}
 	var out := {"why": "", "decor": [], "junctions": []}
 	for v: Vector3 in samples:
 		if not on_map(v):
@@ -501,6 +506,7 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 					(out["decor"] as Array).append(it)
 				else:
 					out["why"] = "Geht durch: " + Catalog.label(id)
+					blocker = it
 					return out
 				break
 	# Andere Wege
@@ -537,6 +543,7 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 		var k2: String = l["kind"]
 		if not (k2 in CROSS_OK.get(kind, [])):
 			out["why"] = "Überschneidet " + Catalog.label(k2)
+			blocker = l
 			return out
 		if not (Catalog.is_road(kind) and Catalog.is_road(k2)):
 			continue
@@ -557,6 +564,7 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 		for run: Array in runs:
 			if float(int(run[run.size() - 1]) - int(run[0])) > (w + w2) * 1.6 + 3.0:
 				out["why"] = "Liegt auf einer Straße oder kreuzt zu flach"
+				blocker = l
 				return out
 			# Tunnelrampen: nur an ihren Enden anschließen
 			if kind == "tunnel" or k2 == "tunnel":
@@ -1621,7 +1629,30 @@ static func rot_for_normal(n: Vector3) -> int:
 
 
 ## Leerer Text = darf gebaut werden, sonst der Grund.
+## Gebäude draußen, die sich überschneiden (alte Spielstände nach Größenänderungen): [[a, b], …]
+func overlaps() -> Array:
+	var out := []
+	var outdoor := []
+	for it: Dictionary in items:
+		var id := String(it["id"])
+		if Catalog.is_inside(id) or Catalog.is_zone(id) or Catalog.is_marker(id) or id == "vorfeldflaeche" or id in DECOR:
+			continue
+		if bool(Catalog.ITEMS[id].get("bridge", false)):
+			continue
+		outdoor.append(it)
+	for i in range(outdoor.size()):
+		var ra: Rect2 = (outdoor[i]["rect"] as Rect2).grow(-0.3)
+		for j in range(i + 1, outdoor.size()):
+			if ra.intersects((outdoor[j]["rect"] as Rect2).grow(-0.3)):
+				out.append([outdoor[i], outdoor[j]])
+	return out
+
+
+var blocker: Dictionary = {}   # was die letzte Bauprüfung verhindert hat (wird in der Vorschau rot markiert)
+
+
 func can_place(id: String, pos: Vector3, rot: int) -> String:
+	blocker = {}
 	if bool(Catalog.ITEMS[id].get("bridge", false)):
 		var bs := bridge_snap(pos)
 		if bs.is_empty():
@@ -1697,13 +1728,15 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 			var covers := itf == f or (_two_floors(String(it["id"])) and itf + 1 == f) \
 				or (_two_floors(id) and itf == f + 1)
 			if covers and inner.intersects(it["rect"]):
-				return "Hier steht schon etwas"
+				blocker = it
+				return "Hier steht schon etwas: " + Catalog.label(String(it["id"]))
 		var probe := r.grow(-0.1)
 		for l: Dictionary in walls_of(hall):
 			if floor_of(l) != f or Catalog.is_door(id):
 				continue
 			for v: Vector3 in wall_probe(l):
 				if probe.has_point(Vector2(v.x, v.z)):
+					blocker = l
 					return "Steht auf einer Wand"
 	else:
 		for it: Dictionary in items:
@@ -1713,7 +1746,8 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 			if it["id"] == "vorfeldflaeche" and (on == "vorfeld" or id in APRON_OK):
 				continue
 			if inner.intersects(it["rect"]):
-				return "Hier steht schon etwas"
+				blocker = it
+				return "Hier steht schon etwas: " + Catalog.label(String(it["id"]))
 		var bay := false
 		if id == "bushalt" and not apron_bay_snap(id, pos).is_empty() and not _on_kind(pos, on):
 			bay = true   # Haltebucht am Rand einer Betriebsstraße
@@ -1911,11 +1945,67 @@ func _shift_line(l: Dictionary, d: Vector3) -> void:
 	_grid_dirty = true
 
 
+## Kann dieser Weg (Straße, Rollweg, Band, Leitung …) um d verschoben werden? "" = ja, sonst der Grund.
+func line_move_problem(l: Dictionary, d: Vector3) -> String:
+	if not (l in lines):
+		return "Weg gibt es nicht mehr"
+	if move_guard.is_valid():
+		var g: String = move_guard.call(l)
+		if g != "":
+			return g
+	if Vector2(d.x, d.z).length() < 0.5:
+		return "Ein Stück weiter ziehen"
+	var kind := String(l["kind"])
+	var pts := []
+	for q: Vector3 in l["points"]:
+		pts.append(q + d)
+	var sm := line_samples(kind, pts)
+	if sm.size() < 2:
+		return "Weg passt dort nicht"
+	var at := lines.find(l)
+	lines.remove_at(at)
+	_grid_dirty = true
+	var c := check_line(kind, sm)
+	lines.insert(at, l)
+	_grid_dirty = true
+	return String(c.get("why", ""))
+
+
+## Verschiebt einen Weg kostenlos (abreißen ohne Erstattung, an der neuen Stelle neu bauen). "" = ok.
+func move_line(l: Dictionary, d: Vector3) -> String:
+	var why := line_move_problem(l, d)
+	if why != "":
+		return why
+	var kind := String(l["kind"])
+	var side := String(l.get("side", ""))
+	var old_pts: Array = (l["points"] as Array).duplicate()
+	var pts := []
+	for q: Vector3 in old_pts:
+		pts.append(q + d)
+	var vf := view_floor
+	view_floor = floor_of(l)
+	remove(l, 0.0)
+	var nl := build_line(kind, pts, true, false, side)
+	if nl.is_empty():
+		build_line(kind, old_pts, true, false, side)
+		view_floor = vf
+		return "Weg passt dort nicht"
+	view_floor = vf
+	# das Bauen hat einen Eintrag "neu gebaut" hinterlassen: durch einen Verschiebe-Eintrag ersetzen
+	if not history.is_empty() and is_same(history[history.size() - 1], nl):
+		history.pop_back()
+	if not _undoing:
+		history.append({"undo": "move_line", "rec": nl, "d": d})
+	return ""
+
+
 ## Verschiebt ein Gebäude (Halle: mit Einrichtung, Wänden, Bändern und Brücken). Kostenlos. "" = ok.
 func move_item(rec: Dictionary, pos: Vector3, rot: int) -> String:
 	var why := move_problem(rec, pos, rot)
 	if why != "":
 		return why
+	if not _undoing:
+		history.append({"undo": "move", "rec": rec, "pos": rec["pos"], "rot": int(rec["rot"])})
 	var id := String(rec["id"])
 	if id == "halle":
 		var d := Vector3(pos.x, 0, pos.z) - Vector3(rec["pos"].x, 0, rec["pos"].z)
@@ -2268,10 +2358,71 @@ func area_victims(r: Rect2) -> Array:
 
 func demolish_area(r: Rect2) -> int:
 	var n := 0
-	for rec: Dictionary in area_victims(r):
+	var victims := area_victims(r)
+	# Schnappschuss für "Zurück": Hallen mit Einrichtung und Wänden, dann der Rest
+	var snap := []
+	var seen := {}
+	for rec: Dictionary in victims:
+		if rec.get("id", "") == "halle":
+			for inner: Dictionary in [rec] + inside_of(rec) + walls_of(rec):
+				if not seen.has(inner):
+					seen[inner] = true
+					snap.append(_snap_rec(inner))
+	for rec: Dictionary in victims:
+		if not seen.has(rec):
+			seen[rec] = true
+			snap.append(_snap_rec(rec))
+	var m0 := money
+	for rec: Dictionary in victims:
 		if rec in items or rec in lines:
 			remove(rec, 0.5)
 			n += 1
+	if n > 0 and not _undoing:
+		history.append({"undo": "demolish", "snap": snap, "refund": money - m0})
+	return n
+
+
+var _undoing := false   # während "Zurück" läuft: keine neuen Einträge in der Liste
+
+
+## Bauplan eines Objekts, um es nach dem Abriss wieder aufzubauen.
+func _snap_rec(rec: Dictionary) -> Dictionary:
+	if rec["type"] == "line":
+		return {"t": "line", "kind": rec["kind"], "points": (rec["points"] as Array).duplicate(), "side": String(rec.get("side", "")),
+			"floor": floor_of(rec)}
+	return {"t": "item", "id": rec["id"], "pos": rec["pos"], "rot": int(rec["rot"]), "opts": (rec.get("opts", {}) as Dictionary).duplicate(true),
+		"rect": rec.get("rect", Rect2()), "floor": floor_of(rec)}
+
+
+## Baut nach einem Schnappschuss wieder auf (kostenlos): Hallen zuerst, dann Bereiche, Einrichtung, Wege.
+func _restore_snaps(snap: Array) -> int:
+	var order := []
+	for pass_i in range(4):
+		for sn: Dictionary in snap:
+			var k := 3
+			if sn["t"] == "item":
+				k = 0 if sn["id"] == "halle" else (1 if Catalog.is_zone(String(sn["id"])) else 2)
+			if k == pass_i:
+				order.append(sn)
+	var vf := view_floor
+	var n := 0
+	for sn: Dictionary in order:
+		view_floor = int(sn["floor"])
+		var res: Dictionary = {}
+		if sn["t"] == "line":
+			res = build_line(String(sn["kind"]), sn["points"], true, false, String(sn["side"]))
+		elif sn["id"] == "halle":
+			res = build_hall(sn["rect"], true, sn["opts"])
+		elif Catalog.is_zone(String(sn["id"])) and (sn["opts"] as Dictionary).is_empty():
+			res = build_zone(String(sn["id"]), sn["rect"], true, int(sn["floor"]))
+		else:
+			res = build_item(String(sn["id"]), sn["pos"], int(sn["rot"]), true, sn["opts"], int(sn["floor"]))
+		if not res.is_empty():
+			n += 1
+			# Wiederaufgebautes zählt nicht als neuer Bauschritt
+			if not history.is_empty() and is_same(history[history.size() - 1], res):
+				history.pop_back()
+	view_floor = vf
 	return n
 
 
@@ -3496,6 +3647,35 @@ func undo_last() -> void:
 		toast.emit("Nichts zum Rückgängigmachen")
 		return
 	var entry: Variant = history[history.size() - 1]
+	if entry is Dictionary and (entry as Dictionary).has("undo"):
+		var e: Dictionary = entry
+		history.pop_back()
+		_undoing = true
+		match String(e["undo"]):
+			"move":
+				var rec0: Dictionary = e["rec"]
+				if rec0 in items:
+					var why := move_item(rec0, e["pos"], int(e["rot"]))
+					toast.emit("Rückgängig: %s zurück an den alten Platz" % describe(rec0) if why == "" else "Zurück geht nicht: " + why)
+				else:
+					toast.emit("Zurück geht nicht mehr: das Objekt gibt es nicht mehr")
+			"move_line":
+				var l0: Dictionary = e["rec"]
+				if l0 in lines:
+					var why2 := move_line(l0, -(e["d"] as Vector3))
+					toast.emit("Rückgängig: Weg zurückgeschoben" if why2 == "" else "Zurück geht nicht: " + why2)
+				else:
+					toast.emit("Zurück geht nicht mehr: den Weg gibt es nicht mehr")
+			"demolish":
+				var n := _restore_snaps(e["snap"])
+				if not sandbox:
+					_spend(int(e["refund"]))
+				evaluate_supply()
+				network_changed.emit()
+				items_changed.emit()
+				toast.emit("Rückgängig: Abriss (%d Teile wieder aufgebaut)" % n)
+		_undoing = false
+		return
 	if entry is Array:
 		var group: Array = (entry as Array).duplicate()
 		history.pop_back()
@@ -3860,6 +4040,11 @@ func _starter_terminal(V: Callable) -> void:
 	for x: float in [-70.0, 24.0]:
 		put.call("anzeige", x, 14.5)
 	put.call("anzeige", -64, -5.5)
+	# Wegweiser unter der Decke (begehbar)
+	for x: float in [-112.0, -58.0, -2.0, 52.0, 88.0]:
+		put.call("wegweiser", x, 9.0)
+	for x: float in [-85.0, -60.0, -30.0, 15.0, 55.0]:
+		put.call("wegweiser", x, -12.5)
 	for p: Vector2 in [Vector2(-66, 7), Vector2(-60, 7), Vector2(26, 7), Vector2(32, 7)]:
 		put.call("sitzreihe", p.x, p.y)
 	for x: float in [-118.0, -78.0, -56.0, -20.0, 30.0, 66.0]:

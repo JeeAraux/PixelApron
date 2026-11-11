@@ -1083,8 +1083,11 @@ func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
 		# Nummer auf der Andockanzeige (leuchtend)
 		var disp := sp + bas * Vector3(0, 5.55, hd - 1.07)
 		PixelFont.draw(_lk(lamps, AMBER), label, disp, bas * Vector3(1, 0, 0), Vector3.UP, -fwd, 0.13, AMBER)
+		var mk := String((st.get("opts", {}) as Dictionary).get("markierung", "eigene"))
+		if mk != "aus":
+			_stand_safety(km, st, sp, bas, hd)
 		# Einrolllinien (nicht bei Markierung "eigene" oder "aus": dort zeichnet der Spieler die Linien selbst)
-		if String((st.get("opts", {}) as Dictionary).get("markierung", "eigene")) != "voll":
+		if mk != "voll":
 			continue
 		var sid: int = graph.stand_node.get(node.get_instance_id(), -1)
 		if sid < 0 or not graph.lead_of.has(sid):
@@ -1124,6 +1127,45 @@ func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
 				pts.append(s1 * ((1.0 - tt) * (1.0 - tt)) + bp * (2.0 * (1.0 - tt) * tt) + e * (tt * tt))
 			pts.append(end)
 			_strip(km, pts, 0.18, MARK_YELLOW)
+
+
+## Sicherheitsmarkierungen am Stand: rot gestrichelte Sicherheitslinie um das Flugzeug samt Flügeln
+## (innerhalb nur Abfertigungsgerät), weiß schraffierte Geräteabstellflächen vor dem Kopf des Stands und
+## eine durchgehende weiße Linie, die den Stand von der Kopfstraße trennt.
+func _stand_safety(km: Kit, st: Dictionary, sp: Vector3, bas: Basis, hd: float) -> void:
+	var size: Vector2 = Catalog.ITEMS[st["id"]]["size"]
+	var hx := size.x * 0.5
+	var ex := hx - 1.0
+	var z0 := -hd + 3.0
+	var z1 := hd - 5.0
+	var red := Color(0.78, 0.14, 0.1)
+	var corners := [Vector3(-ex, 0, z0), Vector3(ex, 0, z0), Vector3(ex, 0, z1), Vector3(-ex, 0, z1)]
+	for i in range(4):
+		var a: Vector3 = corners[i]
+		var b: Vector3 = corners[(i + 1) % 4]
+		var ln := a.distance_to(b)
+		var t := 0.0
+		while t < ln:
+			var t2 := minf(t + 3.0, ln)
+			_strip(km, PackedVector3Array([sp + bas * a.lerp(b, t / ln), sp + bas * a.lerp(b, t2 / ln)]), 0.1, red)
+			t += 4.5
+	# Kopfstraße: durchgehende Begrenzung
+	_strip(km, PackedVector3Array([sp + bas * Vector3(-hx + 0.6, 0, hd - 1.2), sp + bas * Vector3(hx - 0.6, 0, hd - 1.2)]), 0.1, MARK_WHITE)
+	# Geräteabstellflächen links und rechts am Kopf des Stands (zwischen Sicherheitslinie und Kopfstraße)
+	for sx: float in [-1.0, 1.0]:
+		var xa := sx * (hx - 12.0)
+		var xb := sx * (hx - 1.5)
+		var za := hd - 4.6
+		var zb := hd - 1.8
+		var box := [Vector3(xa, 0, za), Vector3(xb, 0, za), Vector3(xb, 0, zb), Vector3(xa, 0, zb), Vector3(xa, 0, za)]
+		var pts := PackedVector3Array()
+		for q: Vector3 in box:
+			pts.append(sp + bas * q)
+		_strip(km, pts, 0.07, MARK_WHITE)
+		var hxx := minf(xa, xb) + 0.6
+		while hxx < maxf(xa, xb) - 1.0:
+			_strip(km, PackedVector3Array([sp + bas * Vector3(hxx, 0, za + 0.3), sp + bas * Vector3(hxx + 1.6, 0, zb - 0.3)]), 0.05, MARK_WHITE)
+			hxx += 1.2
 
 
 static func _stand_order(a: Dictionary, b: Dictionary) -> bool:
