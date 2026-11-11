@@ -2,8 +2,9 @@ extends Node3D
 ## Karten-Overlays: Gedränge und Wartezeit in den Hallen (aus terminal.heat), Fluglärm um die Pisten
 ## (flights.noise_at). Farbverlauf durchsichtig → gelb → rot, einmal je Sekunde neu.
 
-const MODES := ["aus", "gedraenge", "warten", "laerm"]
-const NAMES := {"aus": "Overlay aus", "gedraenge": "Gedränge", "warten": "Wartezeit", "laerm": "Fluglärm"}
+const MODES := ["aus", "gedraenge", "warten", "laerm", "koffer"]
+const NAMES := {"aus": "Overlay aus", "gedraenge": "Gedränge", "warten": "Wartezeit", "laerm": "Fluglärm", "koffer": "Kofferwege"}
+const Kit = preload("res://scripts/mesh_kit.gd")
 
 var game: Variant = null
 var terminal: Variant = null
@@ -69,7 +70,12 @@ func _quad(key: String, rect: Rect2, y: float, img: Image) -> void:
 func _refresh() -> void:
 	for k: String in quads:
 		(quads[k] as Node3D).visible = false
+	if bag_mesh != null:
+		bag_mesh.visible = false
 	if mode == "aus" or game == null:
+		return
+	if mode == "koffer":
+		_bags()
 		return
 	if mode == "laerm":
 		_noise()
@@ -115,3 +121,67 @@ func _noise() -> void:
 			var p := Vector3(r.position.x + (float(x) + 0.5) / float(w) * r.size.x, 0, r.position.y + (float(z) + 0.5) / float(h) * r.size.y)
 			img.set_pixel(x, z, ramp((float(flights.noise_at(p)) - 45.0) / 28.0))
 	_quad("laerm", r, 0.6, img)
+
+
+var bag_mesh: MeshInstance3D
+
+
+## Kofferwege: Pfeile in Laufrichtung über den Bändern. Orange vom Check-in zur Sortierung, blau von der
+## Sortierung zum Gepäckband, violett vom Rolltor (Gepäckzüge) zur Sortierung. Rotes Kreuz: nicht angeschlossen.
+func _bags() -> void:
+	var routes: Dictionary = game.bag_routes()
+	var k := Kit.new()
+	var cols := {"checkin": Color(1.0, 0.55, 0.1), "gepaeckband": Color(0.2, 0.55, 1.0), "rolltor": Color(0.7, 0.35, 1.0)}
+	var fh := 5.0
+	var t := Time.get_ticks_msec() * 0.001
+	for it: Dictionary in game.items:
+		var id := String(it["id"])
+		if not cols.has(id):
+			continue
+		var node: Variant = it["node"]
+		if not is_instance_valid(node):
+			continue
+		var f := int(it.get("floor", 0))
+		if game.interior_view and f != game.view_floor:
+			continue
+		var key := (node as Node).get_instance_id()
+		var col: Color = cols[id]
+		if not routes.has(key) or (routes[key] as PackedVector3Array).size() < 2:
+			var c: Vector3 = (it["pos"] as Vector3) + Vector3(0, float(f) * fh + 2.6, 0)
+			for sg: float in [-1.0, 1.0]:
+				k.box(Vector3(-1.2, -0.12, -0.12), Vector3(1.2, 0.12, 0.12), Color(0.95, 0.1, 0.1),
+					Transform3D(Basis(Vector3.UP, PI * 0.25 * sg), c))
+			continue
+		var r: PackedVector3Array = routes[key]
+		var run := 0.0
+		var next := fmod(t * 1.5, 3.0)
+		for i in range(r.size() - 1):
+			var a := r[i]
+			var b := r[i + 1]
+			var seg := a.distance_to(b)
+			if seg < 0.01:
+				continue
+			var d := (b - a) / seg
+			while next <= run + seg:
+				var p := a + d * (next - run) + Vector3(0, 0.55, 0)
+				var flat := Vector3(d.x, 0, d.z)
+				if flat.length() > 0.05:
+					flat = flat.normalized()
+					var side := flat.cross(Vector3.UP) * 0.7
+					k.tri(p + flat * 0.9, p - flat * 0.5 + side, p - flat * 0.5 - side, col, p + Vector3(0, -5, 0))
+				next += 3.0
+			run += seg
+	if bag_mesh == null:
+		bag_mesh = MeshInstance3D.new()
+		bag_mesh.name = "Kofferwege"
+		bag_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(bag_mesh)
+	bag_mesh.mesh = k.commit() if k.count > 0 else null
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.vertex_color_use_as_albedo = true
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.no_depth_test = true
+	bag_mesh.material_override = m
+	bag_mesh.visible = true
+

@@ -334,7 +334,7 @@ func _build_top() -> void:
 	row.add_child(utility_button)
 	view_buttons.append([utility_button, "Leitungen", "Netz"])
 	overlay_button = _button("Overlay", false)
-	overlay_button.tooltip_text = "Karten-Overlay umschalten: Gedränge, Wartezeit, Fluglärm (O)"
+	overlay_button.tooltip_text = "Karten-Overlay umschalten: Gedränge, Wartezeit, Fluglärm, Kofferwege (O)"
 	overlay_button.pressed.connect(func() -> void: overlay_requested.emit())
 	row.add_child(overlay_button)
 	view_buttons.append([overlay_button, "Overlay", "Ovl."])

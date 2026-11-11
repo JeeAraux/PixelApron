@@ -380,6 +380,10 @@ func run(main: Node) -> void:
 	check(is_equal_approx(tb.staff_slowdown(), 1.0), "Personalgebäude wieder da")
 	# Feuerwehr rückt aus: Tor geht auf, Fahrzeug fährt hinaus
 	main.ops.fire_t = 9999.0
+	# laufende Einsätze aus dem Flugbetrieb beenden, damit ein Tor frei ist
+	for fm0: Dictionary in main.ops.missions.duplicate():
+		main.ops._free(fm0["v"])
+	main.ops.missions.clear()
 	check(main.ops._fire_mission("kontrolle", null, 0.0), "Kontrollfahrt der Feuerwehr gestartet")
 	var fm: Dictionary = main.ops.missions[main.ops.missions.size() - 1]
 	var fv: Dictionary = fm["v"]

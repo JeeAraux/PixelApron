@@ -1540,7 +1540,9 @@ func _update_person(per: Dictionary, sim: float) -> void:
 				per["path"] = path
 				per["pi"] = 0
 			var pos: Vector3 = per["pos"]
-			var budget := WALK * sim
+			if not per.has("spd"):
+				per["spd"] = WALK * randf_range(0.8, 1.2)
+			var budget := float(per["spd"]) * sim
 			var pi: int = per["pi"]
 			var look := Vector3.ZERO
 			while budget > 0.0 and pi < path.size():
@@ -1555,7 +1557,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 					look = target - pos
 					pos += look / d * budget
 					budget = 0.0
-			per["walk"] = float(per.get("walk", 0.0)) + WALK * sim - budget
+			per["walk"] = float(per.get("walk", 0.0)) + float(per["spd"]) * sim - budget
 			per["pos"] = pos
 			per["pi"] = pi
 			node.position = pos
@@ -1880,18 +1882,61 @@ func _path(hall_id: int, a: Vector3, b: Vector3, dep: bool = true, mode: String 
 		keep.append(raw[far])
 		anchor = far
 		i2 = far + 1
+	# freier gehen: auf langen Geraden schlendern (seitliche Zwischenziele), dann zu einer weichen Kurve glätten
+	var wander := [keep[0]]
+	var amp := randf_range(0.4, 1.0)
+	for k in range(keep.size() - 1):
+		var p0: Vector2 = keep[k]
+		var p1: Vector2 = keep[k + 1]
+		var dd := p1 - p0
+		var ln := dd.length()
+		if ln > 8.0:
+			# eigene Bahn je Mensch (bis 3 m neben der kürzesten Linie, zu den Enden hin auslaufend) plus Schlendern
+			var parts := maxi(2, int(ln / randf_range(4.5, 7.0)))
+			var side := Vector2(-dd.y, dd.x) / ln
+			var lane := randf_range(-3.0, 3.0) * clampf(ln / 25.0, 0.3, 1.0)
+			for m in range(1, parts):
+				var fr := float(m) / float(parts)
+				var off := lane * sin(PI * fr) + randf_range(-amp, amp)
+				for tries in range(3):
+					var q := p0 + dd * fr + side * off
+					if _clear_line(g, wander[wander.size() - 1], q) and _clear_line(g, q, p1):
+						wander.append(q)
+						break
+					off *= 0.5
+		if (wander[wander.size() - 1] as Vector2).distance_to(p1) > 0.05:
+			wander.append(p1)
+	var smooth := []
+	var n := wander.size()
+	for k in range(n - 1):
+		var c0: Vector2 = wander[maxi(k - 1, 0)]
+		var c1: Vector2 = wander[k]
+		var c2: Vector2 = wander[k + 1]
+		var c3: Vector2 = wander[mini(k + 2, n - 1)]
+		var steps := maxi(1, int(c1.distance_to(c2) / 0.7))
+		for st in range(1, steps + 1):
+			var t := float(st) / float(steps)
+			var q := _catmull(c0, c1, c2, c3, t)
+			var cell := _cell(g, Vector3(q.x, 0, q.y))
+			if not g.is_in_boundsv(cell) or (g.is_point_solid(cell) and cell != cb):
+				q = c1.lerp(c2, t)
+			smooth.append(q)
 	g.set_point_solid(ca, sa)
 	g.set_point_solid(cb, sb)
-	var jitter := Vector2(randf_range(-0.3, 0.3), randf_range(-0.3, 0.3))
 	var out := []
-	for k in range(1, keep.size()):
-		var q: Vector2 = keep[k]
-		if k < keep.size() - 1 and not g.is_point_solid(_cell(g, Vector3(q.x + jitter.x, 0, q.y + jitter.y))):
-			q += jitter
+	for q: Vector2 in smooth:
 		out.append(Vector3(q.x, y, q.y))
 	if out.is_empty():
 		out.append(Vector3(b.x, y, b.z))
+	else:
+		out[out.size() - 1] = Vector3(b.x, y, b.z)
 	return out
+
+
+static func _catmull(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: float) -> Vector2:
+	var t2 := t * t
+	var t3 := t2 * t
+	return 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
 
 
 ## Freie Sicht im Raster zwischen zwei Punkten (alle Zellen entlang der Linie begehbar, Abstand 0,3 m zum Rand)?

@@ -1,5 +1,5 @@
 extends Node
-## Probe Wetter und Licht: --wetter= --zeit=STUNDE --at=x,z --zoom= --yaw= BILD (startet sofort, ohne Demo-Vorlauf)
+## Probe Wetter und Licht: [--innen] [--overlay=koffer] --wetter= --zeit=STUNDE --at=x,z --zoom= --yaw= BILD (startet sofort, ohne Demo-Vorlauf)
 func run(main: Node) -> void:
 	await get_tree().process_frame
 	var args := OS.get_cmdline_user_args()
@@ -24,6 +24,11 @@ func run(main: Node) -> void:
 	var g = main.game
 	g.minutes = floorf(g.minutes / 1440.0) * 1440.0 + hour * 60.0
 	main.weather.force(w)
+	if "--innen" in args:
+		g.set_interior_view(true)
+	for a2: String in args:
+		if a2.begins_with("--overlay="):
+			main.overlay.set_mode(a2.substr(10))
 	main.weather.strength = 1.0
 	main.hud.set_build_open(false)
 	main.cam_rig.target = at

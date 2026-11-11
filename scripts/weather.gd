@@ -35,6 +35,7 @@ var _mist: Array = []           # Nebelschwaden: drei waagrechte Schichten um di
 func setup(g: GameState, camera: Node3D) -> void:
 	game = g
 	cam = camera
+	g.items_changed.connect(func() -> void: _mask_n = -1)
 	_rain = _particles(Vector2(0.035, 1.2), Color(0.75, 0.82, 0.92, 0.45), 2600, 1.1)
 	_rain.direction = Vector3(0.12, -1, 0.05)
 	_rain.spread = 2.0
@@ -65,11 +66,10 @@ func _particles(size: Vector2, col: Color, amount: int, life: float) -> CPUParti
 	var p := CPUParticles3D.new()
 	var q := QuadMesh.new()
 	q.size = size
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.albedo_color = col
-	m.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y if size.y > size.x * 2.0 else BaseMaterial3D.BILLBOARD_ENABLED
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/precip.gdshader")
+	m.set_shader_parameter("col", col)
+	m.set_shader_parameter("fixed_y", 1 if size.y > size.x * 2.0 else 0)
 	q.material = m
 	p.mesh = q
 	p.amount = amount
@@ -206,6 +206,7 @@ func _process(_delta: float) -> void:
 	for p: CPUParticles3D in [_rain, _flakes]:
 		p.global_position = t + Vector3(0, 60.0 if p == _rain else 30.0, 0)
 		p.emission_box_extents = Vector3(w, 25.0, w)
+	_mask_halls()
 	_rain.emitting = show and state == "regen" and strength > 0.2
 	_flakes.emitting = show and state == "schnee" and strength > 0.2
 	# Nebelschwaden in 1,5 / 4 / 8 m Höhe, nachts dunkler
@@ -214,7 +215,7 @@ func _process(_delta: float) -> void:
 	var wd := deg_to_rad(float(game.wind_dir)) if game != null else 0.0
 	for i in range(_mist.size()):
 		var mi: MeshInstance3D = _mist[i]
-		mi.visible = fogamt > 0.02 and show and not (game.interior_view and game.view_floor < 0)
+		mi.visible = fogamt > 0.02 and show and not game.interior_view
 		if mi.visible:
 			mi.global_position = Vector3(t.x, [1.5, 4.0, 8.0][i], t.z)
 			mi.scale = Vector3(w * 1.6, 1.0, w * 1.6)
@@ -223,6 +224,44 @@ func _process(_delta: float) -> void:
 			mat.set_shader_parameter("col", Color(0.86, 0.88, 0.9).lerp(Color(0.2, 0.22, 0.27), night))
 			mat.set_shader_parameter("drift", Vector2(sin(wd), -cos(wd)) * -1.0)
 	_move_plows()
+
+
+## Hallen (und Garagen mit abnehmbarem Dach) als Rechtecke an den Niederschlag: in der Innenansicht
+## fällt darin nichts, sonst nur nicht unter die Dachkante.
+var _mask_n := -1
+var _mask_view := false
+
+
+func _mask_halls() -> void:
+	var n: int = game.items.size()
+	if n == _mask_n and _mask_view == game.interior_view:
+		return
+	_mask_n = n
+	_mask_view = game.interior_view
+	var rects: Array = []
+	var tops: Array = []
+	for it: Dictionary in game.items:
+		var id := String(it["id"])
+		var top := -1.0
+		if id == "halle":
+			top = 4.6 + float(game.hall_levels(it)) * 5.0 + 1.0
+		elif (it["node"] as Node).get_node_or_null("Dach") != null:
+			top = 9.0
+		if top < 0.0 or rects.size() >= 24:
+			continue
+		var r: Rect2 = it["rect"]
+		rects.append(Vector4(r.position.x, r.position.y, r.end.x, r.end.y))
+		# außen: Tropfen enden auf dem Dach; innen (Dach ab): bis zum Boden weg
+		tops.append(top + 60.0 if game.interior_view else top)
+	var real := rects.size()
+	while rects.size() < 24:
+		rects.append(Vector4.ZERO)
+		tops.append(0.0)
+	for p: CPUParticles3D in [_rain, _flakes]:
+		var m := (p.mesh as QuadMesh).material as ShaderMaterial
+		m.set_shader_parameter("rects", rects)
+		m.set_shader_parameter("tops", PackedFloat32Array(tops))
+		m.set_shader_parameter("count", real)
 
 
 ## Räumkonvoi: drei Fahrzeuge versetzt über die Pistenlänge, hin und zurück.
@@ -276,6 +315,8 @@ func apply_light(sun: DirectionalLight3D, env: Environment) -> void:
 		env.fog_sky_affect = 0.0
 		env.fog_height = 9.0 if state == "nebel" else 40.0
 		env.fog_height_density = (0.012 if state == "nebel" else (0.008 if state == "schnee" else 0.004)) * strength
+		if game.interior_view:
+			env.fog_height_density *= 0.2   # in der Halle kein Grauschleier
 
 
 func status_text() -> String:

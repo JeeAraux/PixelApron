@@ -18,6 +18,8 @@ const WALK := 1.5
 const PAX_PER_FIGURE := 8
 const GSE_V := 6.0            # Bodenfahrzeuge auf dem Stand (m/s)
 const BeltAnim = preload("res://scripts/belt_anim.gd")
+const Kit = preload("res://scripts/mesh_kit.gd")
+const GARAGE_IDS := ["vorfelddepot", "tanklager", "busgarage", "catering", "feuerwache", "rettungswache", "gepaeckumschlag"]
 const ServiceNet = preload("res://scripts/servicenet.gd")
 const Landmarks = preload("res://scripts/landmarks.gd")
 const FIRE_V := 11.0           # Löschfahrzeuge
@@ -37,6 +39,7 @@ var net_dirty := true
 var clock := 0.0
 var door_want: Dictionary = {}   # "Gebäude:Tor" -> Uhrzeit, bis zu der das Tor offen sein soll
 var door_open: Dictionary = {}   # "Gebäude:Tor" -> 0 (zu) … 1 (offen)
+var door_next: Dictionary = {}   # "Gebäude:Tor" -> frühester Zeitpunkt für das nächste ausfahrende Fahrzeug
 var door_rec: Dictionary = {}    # "Gebäude:Tor" -> [Gebäude, Torindex]
 var returning: Array = []        # Fahrzeuge auf dem Weg zurück in ihre Garage
 var missions: Array = []         # Einsätze der Feuerwehr
@@ -548,9 +551,50 @@ func _bus_to_plane(p: Dictionary, stop: Array) -> Dictionary:
 	var at: Vector3 = stop[0]
 	var dir: Vector3 = stop[1]
 	var bus := _vehicle("bus", at, dir)
-	var park := _bus_park(p)
-	_go(bus, curve(at, dir, park[0], park[1]), BUS_V)
+	_bus_to_park(bus, p, [])
 	return bus
+
+
+## Bus fährt übers Netz (Betriebsstraßen, Vorfeld) zum Flugzeug und von vorn an die Tür L1 heran.
+func _bus_to_park(bus: Dictionary, p: Dictionary, pre: Array) -> void:
+	var park := _bus_park(p)
+	var pdir: Vector3 = park[1]
+	var approach: Vector3 = (park[0] as Vector3) - pdir * 16.0
+	_bus_drive(bus, pre, approach, [park[0]], pdir)
+
+
+## Weg vom Flugzeug: Wendebogen nach außen und nach vorn (nicht unter den Flügel).
+func _bus_exit(p: Dictionary, bus: Dictionary) -> Array:
+	var pos: Vector3 = bus["pos"]
+	var h: Vector3 = bus["heading"]
+	h.y = 0.0
+	h = h.normalized()
+	var away := plane_dir(p, Vector3(-1, 0, 0))
+	return [pos + h * 4.0 + away * 4.5, pos + h * 1.0 + away * 11.0, pos - h * 8.0 + away * 13.0]
+
+
+## Fahrt über das Netz: erst die Punkte in pre, dann über Wege bis to, dann post; Endrichtung end_dir.
+func _bus_drive(bus: Dictionary, pre: Array, to: Vector3, post: Array, end_dir: Vector3) -> void:
+	if net_dirty:
+		_rebuild_net()
+	var way: Array = [bus["pos"]]
+	way.append_array(pre)
+	var start: Vector3 = way[way.size() - 1]
+	var road := net.route(start, to, 80.0)
+	if road.size() >= 2:
+		for i in range(1, road.size()):
+			way.append(road[i])
+	else:
+		way.append(to)
+	way.append_array(post)
+	# doppelte Punkte (unter 1,5 m) entfernen, sonst knickt die Kurve
+	var clean: Array = [way[0]]
+	for q: Vector3 in way.slice(1):
+		if (clean[clean.size() - 1] as Vector3).distance_to(q) > 1.5:
+			clean.append(q)
+	if clean.size() < 2:
+		return
+	_go(bus, _route(clean, bus["heading"], end_dir), BUS_V)
 
 
 ## Abflug: zweiter Bus holt die Passagiere am Bus-Gate ab.
@@ -598,8 +642,9 @@ func remote_leave(p: Dictionary) -> void:
 	for key: String in ["bus", "dep_bus"]:
 		if j.has(key):
 			var bus: Dictionary = j[key]
-			var away: Vector3 = (bus["pos"] as Vector3) + (bus["heading"] as Vector3) * 40.0
-			_go(bus, PackedVector3Array([bus["pos"], away]), BUS_V)
+			var ex := _bus_exit(p, bus)
+			var hl: Vector3 = (ex[2] as Vector3) - (ex[1] as Vector3)
+			_go(bus, _route([bus["pos"]] + ex, bus["heading"], hl.normalized()), BUS_V)
 			leaving.append(bus)
 			j.erase(key)
 
@@ -930,7 +975,7 @@ func _step_job(j: Dictionary, sim: float) -> void:
 		if bool(j.get("unloading", false)) and int(j["in_bus"]) >= n and not bool(j.get("bus_back", false)):
 			j["bus_back"] = true
 			var stop: Array = j["stop"]
-			_go(bus, curve(bus["pos"], bus["heading"], stop[0], stop[1]), BUS_V)
+			_bus_drive(bus, _bus_exit(p, bus), (stop[0] as Vector3) - (stop[1] as Vector3) * 14.0, [stop[0]], stop[1])
 		if bool(j.get("bus_back", false)) and not bool(bus["moving"]) and not bool(j.get("bus_empty", false)):
 			j["bus_empty"] = true
 			var door2: Vector3 = j["door"]
@@ -940,7 +985,7 @@ func _step_job(j: Dictionary, sim: float) -> void:
 				var exitp: Vector3 = ex[0]
 				_walker(int(p["id"]), PackedVector3Array([ex[1], exitp, exitp.lerp(door2, 0.5) + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5)), door2]), "to_terminal")
 				walkers[walkers.size() - 1]["delay"] = float(i) * 0.35
-			var away: Vector3 = (bus["pos"] as Vector3) + (bus["heading"] as Vector3) * 45.0
+			var away: Vector3 = (bus["pos"] as Vector3) + (bus["heading"] as Vector3) * 10.0
 			bus["after"] = away
 		if bool(j.get("bus_empty", false)) and bus.has("after"):
 			var any := false
@@ -971,8 +1016,7 @@ func _step_job(j: Dictionary, sim: float) -> void:
 				waiting = terminal.bus_pax_pending(p)
 			if not waiting:
 				j["dep_driving"] = true
-				var park := _bus_park(p)
-				_go(db, curve(db["pos"], db["heading"], park[0], park[1]), BUS_V)
+				_bus_to_park(db, p, [])
 		if bool(j.get("dep_driving", false)) and not bool(db["moving"]) and docked and not bool(j.get("dep_unload", false)):
 			j["dep_unload"] = true
 			var cnt: int = j["dep_in"]
@@ -1643,6 +1687,63 @@ func _rebuild_net() -> void:
 			var nn := (fire_net if id == "feuerwache" else net).nearest(outside, 60.0)
 			if nn < 0:
 				unconnected.append(rec)
+	_draw_driveways()
+
+
+var _drive_node: MeshInstance3D
+
+
+## Vorplatz vor den Toren und Zufahrt zum nächsten Weg (Asphalt): die Fahrzeuge fahren nicht über die Wiese.
+func _draw_driveways() -> void:
+	if _drive_node != null and is_instance_valid(_drive_node):
+		_drive_node.queue_free()
+	_drive_node = null
+	var k := Kit.new()
+	var col := Color(0.2, 0.2, 0.205)
+	var y := 0.022
+	var any := false
+	for id: String in GARAGE_IDS:
+		for rec: Dictionary in game.items_of(id):
+			var spots: Array = _spots(rec)
+			if spots.is_empty() or not is_instance_valid(rec.get("node")):
+				continue
+			var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
+			var p: Vector3 = rec["pos"]
+			var x0 := INF
+			var x1 := -INF
+			var zd := -INF
+			for sp: Array in spots:
+				var lo: Vector3 = b.inverse() * ((sp[1] as Vector3) - p)
+				x0 = minf(x0, lo.x)
+				x1 = maxf(x1, lo.x)
+				zd = maxf(zd, lo.z - 7.0)   # Torfront
+			x0 -= 4.0
+			x1 += 4.0
+			var depth := 11.0
+			var c := [Vector3(x0, y, zd), Vector3(x1, y, zd), Vector3(x1, y, zd + depth), Vector3(x0, y, zd + depth)]
+			var wc := []
+			for q: Vector3 in c:
+				wc.append(p + b * q)
+			k.quad(wc[0], wc[1], wc[2], wc[3], col, (p + b * Vector3((x0 + x1) * 0.5, -10.0, zd + depth * 0.5)))
+			any = true
+			var front: Vector3 = p + b * Vector3((x0 + x1) * 0.5, 0, zd + depth - 1.0)
+			var nw = fire_net if id == "feuerwache" else net
+			var nn: int = nw.nearest(front, 60.0)
+			if nn < 0:
+				continue
+			var q2: Vector3 = nw.pos[nn]
+			var dv := Vector3(q2.x - front.x, 0, q2.z - front.z)
+			if dv.length() < 3.0:
+				continue
+			var side := dv.normalized().cross(Vector3.UP) * 3.5
+			var a := Vector3(front.x, y, front.z)
+			var e := Vector3(q2.x, y, q2.z) + dv.normalized() * 2.0
+			k.quad(a - side, a + side, e + side, e - side, col, (a + e) * 0.5 + Vector3(0, -10.0, 0))
+	if not any:
+		return
+	_drive_node = k.instance("Zufahrten")
+	_drive_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_drive_node)
 
 
 ## Tore oder Stellplätze eines Gebäudes: je [innen, außen, Tor?, Index] in Weltkoordinaten.
@@ -1711,6 +1812,13 @@ func _door_step(v: Dictionary) -> bool:
 	if d < 16.0 or v.has("await_door"):
 		door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.2)
 	if v.has("await_door"):
+		var inside := clock < float(v.get("door_slot", 0.0))
+		for n: Variant in [v.get("node")] + (v.get("cars", []) as Array):
+			if is_instance_valid(n):
+				(n as Node3D).visible = not inside   # wartet noch drinnen
+		if inside:
+			return false
+		door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.2)
 		if float(door_open.get(key, 0.0)) >= 0.97:
 			v.erase("await_door")
 			if v.has("route"):
@@ -1730,8 +1838,108 @@ func prestage(p: Dictionary, park_pos: Vector3, fwd: Vector3) -> void:
 	var ghost := {"pos": park_pos, "heading": fwd, "kind": p["kind"], "id": p["id"]}
 	var plan := service_plan(String(p["kind"]))
 	j["svc"] = _make_svc(plan)
+	_assign_homes(ghost, j["svc"])
 	for sv: Dictionary in j["svc"]:
 		_dispatch(ghost, sv)
+
+
+## Liegt der Punkt auf Belag (Vorfeld, Betriebsstraße, Standfläche)? Sonst stünde ein Fahrzeug auf der Wiese.
+func _paved(q: Vector3, road_ok: bool = true) -> bool:
+	if _on_strip(q, "vorfeld", 2.0) or (road_ok and _on_strip(q, "betriebsstrasse", 1.0)):
+		return true
+	for a: Dictionary in game.items_of("vorfeldflaeche"):
+		if (a["rect"] as Rect2).grow(-2.0).has_point(Vector2(q.x, q.z)):
+			return true
+	for st: Dictionary in game.stands():
+		if (st["rect"] as Rect2).has_point(Vector2(q.x, q.z)):
+			return true
+	return false
+
+
+## Liegt q auf dem Band eines Weges dieser Art (ohne die runden Enden, mit Abstand margin zum Rand)?
+func _on_strip(q: Vector3, kind: String, margin: float) -> bool:
+	var hw := float(Catalog.LINES[kind]["width"]) * 0.5 - margin
+	var q2 := Vector2(q.x, q.z)
+	for l: Dictionary in game.lines:
+		if l["kind"] != kind or not (l["bounds"] as Rect2).has_point(q2):
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		var best := INF
+		var at_end := false
+		for i in range(sm.size() - 1):
+			var a := Vector2(sm[i].x, sm[i].z)
+			var b := Vector2(sm[i + 1].x, sm[i + 1].z)
+			var ab := b - a
+			var ll := ab.length_squared()
+			if ll < 0.0001:
+				continue
+			var t := (q2 - a).dot(ab) / ll
+			var d := q2.distance_to(a + ab * clampf(t, 0.0, 1.0))
+			if d < best:
+				best = d
+				at_end = (i == 0 and t < 0.0) or (i == sm.size() - 2 and t > 1.0)
+		# am Ende des Weges zählt nur das Band selbst, nicht die runde Kappe
+		if best < hw and not at_end:
+			return true
+	return false
+
+
+## Warteplätze aller Dienste auf Belag verteilen: nebeneinander (4,5 m quer), ohne sich zu überdecken
+## (Gepäckzüge sind lang), nicht auf fremden Ständen.
+func _assign_homes(pp: Dictionary, svc: Array) -> void:
+	var taken: Array = []
+	var own := Vector2(float(pp["pos"].x), float(pp["pos"].z))
+	for sv: Dictionary in svc:
+		var base: Vector3 = sv["home"]
+		var long := String(sv["kind"]) in ["zug", "tank", "catering", "bus"]
+		var found := false
+		var cands: Array = []
+		# vom gewünschten Platz aus: erst zum Rumpf hin, dann nach außen, dann längs versetzt, zuletzt gespiegelt
+		for dz: float in [0.0, 8.0, -8.0, 16.0]:
+			for dx: float in [0.0, -4.5, -9.0, -13.5, 4.5, 9.0]:
+				cands.append(Vector3(base.x + dx * signf(base.x), 0, base.z + dz))
+		for dz2: float in [0.0, 8.0]:
+			for dx2: float in [0.0, 4.5, 9.0, 13.5]:
+				cands.append(Vector3(-base.x - dx2 * signf(base.x), 0, base.z + dz2))
+		for c: Vector3 in cands:
+			if absf(c.x) < 9.0:
+				continue   # nicht unter den Rumpf
+			var q := plane_point(pp, c)
+			# Warteplatz nicht auf der Betriebsstraße (blockiert den Verkehr), auch die Wagen dahinter auf Belag
+			if not _paved(q, false) or not _paved(plane_point(pp, c + Vector3(0, 0, 12.0 if long else 4.0)), false):
+				continue
+			var foreign := false
+			for st: Dictionary in game.stands():
+				var r: Rect2 = st["rect"]
+				if r.has_point(Vector2(q.x, q.z)) and not r.has_point(own):
+					foreign = true
+					break
+			if foreign:
+				continue
+			# nicht in Haltestellen, Masten oder anderen Bauten
+			for it: Dictionary in game.items:
+				var iid := String(it["id"])
+				if iid in GameState.STAND_IDS or iid == "vorfeldflaeche" or Catalog.is_inside(iid) or Catalog.is_marker(iid):
+					continue
+				if (it["rect"] as Rect2).grow(1.5).has_point(Vector2(q.x, q.z)):
+					foreign = true
+					break
+			if foreign:
+				continue
+			var clash := false
+			for t: Array in taken:
+				var o: Vector3 = t[0]
+				if absf(o.x - c.x) < 4.2 and absf(o.z - c.z) < (15.0 if long or bool(t[1]) else 7.0):
+					clash = true
+					break
+			if clash:
+				continue
+			sv["home"] = c
+			taken.append([c, long])
+			found = true
+			break
+		if not found:
+			taken.append([base, long])
 
 
 func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
@@ -1753,6 +1961,11 @@ func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
 	var prev: Vector3 = way[way.size() - 2]
 	var hend := last - prev
 	hend.y = 0.0
+	# am Warteplatz alle gleich ausgerichtet, längs zum Flugzeug (Züge stehen so nebeneinander, nicht ineinander)
+	var along := plane_dir(pp, Vector3(0, 0, -1))
+	if hend.length() > 0.1 and hend.normalized().dot(along) < -0.2:
+		along = -along
+	hend = along * 10.0
 	var v := _spawn_kind(sv, g[1], h0)
 	v["flight"] = int(pp["id"])
 	v["vmax"] = GSE_V * 1.4
@@ -1799,7 +2012,11 @@ func _leave_garage(v: Dictionary, g: Array, pts: PackedVector3Array) -> void:
 		v["door_pt"] = g[2]
 		v["await_door"] = true
 		v["route"] = pts
-		door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 2.0)
+		# je Tor nacheinander ausfahren (Gepäckzüge mit Wagen brauchen länger)
+		var slot := maxf(float(door_next.get(key, 0.0)), clock)
+		door_next[key] = slot + (9.0 if String(v.get("kind", "")) == "zug" else 5.0)
+		v["door_slot"] = slot
+		door_want[key] = maxf(float(door_want.get(key, 0.0)), slot + 2.0)
 	else:
 		_go(v, pts, float(v.get("vmax", GSE_V)))
 
@@ -2418,6 +2635,7 @@ func _fire_mission(kind: String, p: Variant, along: float) -> bool:
 			var dirv: Vector3 = hd["dir"]
 			var side := dirv.cross(Vector3.UP).normalized()
 			var cand := hp - dirv * 6.0 + side * 17.0
+			cand = fire_net.shoulder(cand, 60.0)
 			var d := cand.distance_to(sp[1])
 			if d < best:
 				best = d
@@ -2433,7 +2651,7 @@ func _fire_mission(kind: String, p: Variant, along: float) -> bool:
 		var n := (b - a).cross(Vector3.UP).normalized()
 		if (sp[1] as Vector3 - q).dot(n) < 0.0:
 			n = -n
-		target = q + n * 92.0
+		target = fire_net.shoulder(q + n * 92.0, 160.0)
 	if target == Vector3.INF:
 		return false
 	var road := fire_net.route(sp[1], target, 160.0)

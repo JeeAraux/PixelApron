@@ -45,7 +45,15 @@ func build(lines: Array, with_taxi: bool, stands: Array = [], aprons: Array = []
 			prev = id
 			if i == s.size() - 1:
 				break
-			i = mini(i + STEP, s.size() - 1)
+			# in Kurven dichter: Sehnen schneiden sonst über die Wiese
+			var nxt := mini(i + STEP, s.size() - 1)
+			var d0 := s[mini(i + 1, s.size() - 1)] - s[i]
+			for j in range(i + 2, nxt + 1):
+				var dj := s[j] - s[j - 1]
+				if d0.length() > 0.01 and dj.length() > 0.01 and d0.normalized().dot(dj.normalized()) < 0.985:
+					nxt = j
+					break
+			i = nxt
 	# Vorfeldflächen: Raster alle 10 m, Nachbarn verbunden (jede Fläche zählt als eigener "Weg")
 	for ai in range(aprons.size()):
 		var ar: Rect2 = aprons[ai]["rect"]
@@ -73,7 +81,7 @@ func build(lines: Array, with_taxi: bool, stands: Array = [], aprons: Array = []
 				for j: int in grid[key]:
 					if line_of[j] == line_of[i]:
 						continue
-					var limit := (_width(kinds[i]) + _width(kinds[j])) * 0.5 + 3.0
+					var limit := (_width(kinds[i]) + _width(kinds[j])) * 0.5 + 1.0
 					var d := pos[i].distance_to(pos[j])
 					if d > limit:
 						continue
@@ -203,3 +211,24 @@ static func _trim(pts: PackedVector3Array) -> PackedVector3Array:
 		out.append(pts[i])
 	out.append(pts[pts.size() - 1])
 	return out
+
+
+## Punkt am Rand des nächsten Weges (Seitenstreifen statt Wiese): seitlich zur Seite von p hin, 3 m vor der Kante.
+func shoulder(p: Vector3, max_d: float = 200.0) -> Vector3:
+	var j := nearest(p, max_d)
+	if j < 0:
+		return p
+	var q := pos[j]
+	var t := Vector3.ZERO
+	for c: int in astar.get_point_connections(j):
+		if line_of[c] == line_of[j]:
+			t = pos[c] - q
+			break
+	t.y = 0.0
+	if t.length() < 0.1:
+		return q
+	var side := t.normalized().cross(Vector3.UP)
+	if side.dot(p - q) < 0.0:
+		side = -side
+	return q + side * maxf(_width(kinds[j]) * 0.5 - 3.0, 0.0)
+

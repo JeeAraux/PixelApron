@@ -22,6 +22,14 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.29: Fahrwege, Laufwege, Wetter drinnen**
+  - **Kein Regen und Schnee in den Hallen:** In der Innenansicht fällt im Gebäude nichts mehr, draußen schon. Der graue Schleier bleibt draußen.
+  - **Fahrzeuge bleiben auf Belag:** Vor Garagen, Gerätehalle, Tanklager, Catering, Feuerwache und Rettungswache gibt es einen Vorplatz mit Zufahrt zum nächsten Weg. Die Fahrwege folgen Kurven enger (keine Abkürzung über die Wiese), Verbindungen gibt es nur, wo Wege sich wirklich berühren. Die Feuerwehr stellt sich bei Kontrollfahrten und Bereitschaft an den Rand des Rollwegs statt auf die Wiese.
+  - **Warteplätze am Stand:** Die Fahrzeuge warten nebeneinander auf dem Vorfeld oder der Standfläche, nicht auf der Wiese, nicht auf fremden Ständen, nicht auf der Betriebsstraße und nicht ineinander. Aus der Gerätehalle fahren sie nacheinander aus.
+  - **Vorfeldbusse:** Sie fahren über Betriebsstraße und Vorfeld zum Flugzeug und setzen mit einem Wendebogen nach vorn ab, nicht mehr quer durch Flugzeuge und Flügel.
+  - **Menschen gehen freier:** Jeder nimmt seine eigene Bahn durch die Halle, schlendert und geht in weichen Kurven, in eigenem Tempo.
+  - **Einmündungen von Betriebsstraßen** mit gerundeten Ecken, die Randlinie ist an der Mündung offen. Straßenecken ohne Zacken.
+  - **Overlay „Kofferwege“ (Taste O):** Pfeile zeigen, wohin die Koffer laufen: orange vom Check-in über die Durchleuchtung zur Sortierung, blau von der Sortierung zu den Gepäckbändern, violett vom Rolltor der Gepäckzüge zur Sortierung. Ein rotes Kreuz zeigt Schalter oder Bänder ohne Anschluss.
 - **Update 0.28: Verschieben**
   - Neues Werkzeug „Verschieben“ in der Bauleiste (neben Abriss): Gebäude, Hallen und Einrichtung anklicken, woandershin ziehen, mit Klick absetzen. R dreht, Rechtsklick legt zurück. Verschieben kostet nichts.
   - Terminalhallen nehmen Einrichtung, Wände, Kofferbänder und Fluggastbrücken mit, die Menschen darin wandern mit. Stände nehmen ihre Einrolllinien mit.

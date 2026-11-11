@@ -294,15 +294,42 @@ static func corner(arc: Array, outs: Array, wa: float, wb: float, side: String, 
 	var run := 0.0
 	var verts := 0
 	var k := Kit.new()
+	# Außenkante: die geraden Außenkanten beider Straßen bis zu ihrem Schnittpunkt P (eckiger Abschluss wie an
+	# echten Ecken). Jeder Punkt des Bordsteinbogens reicht entlang seiner Normalen bis zu dieser Kante; so
+	# überschlägt sich das Band bei engen Bögen nicht (keine Zacken).
+	var widths := PackedFloat32Array()
+	var q0: Vector3 = (arc[0] as Vector3) + (outs[0] as Vector3) * wa
+	var qn: Vector3 = (arc[n - 1] as Vector3) + (outs[n - 1] as Vector3) * wb
+	var d0: Vector3 = ((arc[mini(1, n - 1)] as Vector3) - (arc[0] as Vector3))
+	var dn: Vector3 = ((arc[n - 1] as Vector3) - (arc[maxi(n - 2, 0)] as Vector3))
+	d0.y = 0.0
+	dn.y = 0.0
+	var pc: Variant = null
+	if d0.length() > 0.001 and dn.length() > 0.001:
+		pc = Geometry2D.line_intersects_line(Vector2(q0.x, q0.z), Vector2(d0.x, d0.z).normalized(), Vector2(qn.x, qn.z), Vector2(dn.x, dn.z).normalized())
+	for i in range(n):
+		var fi := float(i) / float(maxi(n - 1, 1))
+		var wdef := lerpf(wa, wb, fi)
+		var a2 := Vector2((arc[i] as Vector3).x, (arc[i] as Vector3).z)
+		var n2 := Vector2((outs[i] as Vector3).x, (outs[i] as Vector3).z)
+		var best := wdef
+		if pc != null:
+			var p2: Vector2 = pc
+			best = INF
+			for sg: Array in [[Vector2(q0.x, q0.z), p2], [p2, Vector2(qn.x, qn.z)]]:
+				var hit: Variant = Geometry2D.segment_intersects_segment(a2, a2 + n2 * 60.0, (sg[0] as Vector2) - ((sg[1] as Vector2) - (sg[0] as Vector2)).normalized() * 0.05, (sg[1] as Vector2) + ((sg[1] as Vector2) - (sg[0] as Vector2)).normalized() * 0.05)
+				if hit != null:
+					best = minf(best, a2.distance_to(hit))
+			if best == INF or best > maxf(wa, wb) * 3.0:
+				best = wdef
+		widths.append(best)
 	for i in range(n - 1):
 		var a: Vector3 = arc[i]
 		var b: Vector3 = arc[i + 1]
 		var na: Vector3 = outs[i]
 		var nb: Vector3 = outs[i + 1]
-		var fa := float(i) / float(n - 1)
-		var fb := float(i + 1) / float(n - 1)
-		var wa_i := lerpf(wa, wb, fa)
-		var wb_i := lerpf(wa, wb, fb)
+		var wa_i := widths[i]
+		var wb_i := widths[i + 1]
 		var seg := a.distance_to(b)
 		if wa_i < 0.35 and wb_i < 0.35:
 			run += seg
@@ -315,7 +342,8 @@ static func corner(arc: Array, outs: Array, wa: float, wb: float, side: String, 
 			st.set_normal(Vector3.UP)
 			st.set_uv(Vector2(float(e[1]), float(e[4])))
 			st.set_uv2(Vector2(float(e[2]), float(e[3])))
-			st.add_vertex(Vector3(p.x, y, p.z))
+			# etwas über den Seitenbändern der Straßen, sonst flimmert die Ecke (gleiche Höhe)
+			st.add_vertex(Vector3(p.x, y + 0.008, p.z))
 		verts += 6
 		var oa := a + na * wa_i
 		var ob := b + nb * wb_i

@@ -3921,4 +3921,4 @@ func _starter_terminal(V: Callable) -> void:
 	build_line("kofferband", [V.call(54.5, -1.5), V.call(54.5, -7)], true)
 	# Rolltor hinter der Sortierung: hier halten die Gepäckzüge, die Koffer laufen über die Rollenbahn hinein
 	put.call("rolltor", 105, -23, 2)
-	build_line("kofferband", [V.call(102.9, -21.5), V.call(95, -21.5)], true)
+	build_line("kofferband", [V.call(102.9, -21.5), V.call(94.5, -21.5)], true)

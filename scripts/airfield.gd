@@ -153,6 +153,7 @@ func rebuild() -> void:
 	_junction_signs(k)
 	_taxi_junctions(km)
 	_apron_edges(km)
+	_service_junctions(km)
 	_turn_pad_marks(km)
 	_stands(k, km, lamps)
 	_add(k, "Flugfeld", false)
@@ -716,6 +717,108 @@ func _taxi_junctions(km: Kit) -> void:
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+## Einmündungen von Betriebsstraßen: Randlinie der durchgehenden Straße an der Mündung weg, die Linien der
+## einmündenden Straße enden an der Kante, gerundete Ecken (Asphalt mit weißem Bogen).
+func _service_junctions(km: Kit) -> void:
+	var pk := SurfaceTool.new()
+	pk.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var tris := 0
+	var white := Color(0.86, 0.86, 0.83)
+	var y := 0.047
+	var roads: Array = []
+	for l: Dictionary in game.lines:
+		if l["kind"] == "betriebsstrasse":
+			roads.append(l)
+	var w := float(Catalog.LINES["betriebsstrasse"]["width"])
+	var r := 4.5
+	for l: Dictionary in roads:
+		var sm: PackedVector3Array = l["samples"]
+		if sm.size() < 3:
+			continue
+		for end in range(2):
+			var e: Vector3 = sm[0] if end == 0 else sm[sm.size() - 1]
+			var inner: Vector3 = sm[mini(6, sm.size() - 1)] if end == 0 else sm[maxi(sm.size() - 7, 0)]
+			var u := Vector3(inner.x - e.x, 0, inner.z - e.z)
+			if u.length() < 0.5:
+				continue
+			u = u.normalized()
+			for l2: Dictionary in roads:
+				if l2 == l:
+					continue
+				var s2: PackedVector3Array = l2["samples"]
+				var bi := -1
+				var bd := w * 0.5 + 1.0
+				for q in range(s2.size()):
+					var dd := Vector2(s2[q].x - e.x, s2[q].z - e.z).length()
+					if dd < bd:
+						bd = dd
+						bi = q
+				# nur mitten auf der anderen Straße (nicht Ende an Ende)
+				if bi < 3 or bi > s2.size() - 4:
+					continue
+				var m := Vector3(s2[bi].x, 0, s2[bi].z)
+				var t2 := s2[mini(bi + 2, s2.size() - 1)] - s2[maxi(bi - 2, 0)]
+				t2.y = 0.0
+				t2 = t2.normalized()
+				var n2 := Vector3(-t2.z, 0, t2.x)
+				if n2.dot(u) < 0.0:
+					n2 = -n2
+				var half := w * 0.5
+				# Randlinie der durchgehenden Straße an der Mündung abdecken (Mittellinie bleibt)
+				var a0 := m + n2 * 0.3
+				var a1 := m + n2 * (half + 0.12)
+				var span := half + r
+				var qa := Vector3(a0.x - t2.x * span, y, a0.z - t2.z * span)
+				var qb := Vector3(a0.x + t2.x * span, y, a0.z + t2.z * span)
+				var qc := Vector3(a1.x + t2.x * span, y, a1.z + t2.z * span)
+				var qd := Vector3(a1.x - t2.x * span, y, a1.z - t2.z * span)
+				_flat_tri(pk, qa, qb, qc)
+				_flat_tri(pk, qa, qc, qd)
+				tris += 2
+				# gerundete Ecken
+				for sgn: float in [-1.0, 1.0]:
+					var p0 := m + n2 * half + t2 * (sgn * half)
+					var cc := p0 + t2 * (sgn * r) + n2 * r
+					var arc := PackedVector3Array()
+					for k in range(9):
+						var ang := float(k) / 8.0 * PI * 0.5
+						# von der Hauptkante (p0 + t2·r) zur Einmündungskante (p0 + n2·r)
+						var dir := -n2 * cos(ang) - t2 * (sgn * sin(ang))
+						arc.append(cc + dir * r)
+					for k in range(8):
+						_flat_tri(pk, Vector3(p0.x, y, p0.z), Vector3(arc[k].x, y, arc[k].z), Vector3(arc[k + 1].x, y, arc[k + 1].z))
+						tris += 1
+					var pts := PackedVector3Array()
+					for q2: Vector3 in arc:
+						pts.append(q2 - (q2 - cc).normalized() * 0.25)
+					_strip(km, pts, 0.09, white)
+				break
+	if tris == 0:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "Einmuendungen"
+	mi.mesh = pk.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/line.gdshader")
+	mat.set_shader_parameter("base_color", Catalog.LINES["betriebsstrasse"]["color"])
+	mat.set_shader_parameter("mark", 0)
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+## Flaches Dreieck wie die Wegbänder (gleiche Drehrichtung und Normale, damit es gleich hell erscheint).
+static func _flat_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
+	if (b - a).cross(c - a).y < 0.0:
+		var t := b
+		b = c
+		c = t
+	for v: Vector3 in [a, b, c]:
+		st.set_normal(Vector3.UP)
+		st.set_uv(Vector2(0.5, 0.0))
+		st.add_vertex(v)
 
 
 ## Vorfeldflächen: doppelte gelbe Randlinie am Außenrand der zusammenhängenden Fläche (Kanten, an die eine
