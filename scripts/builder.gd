@@ -55,6 +55,7 @@ var start_tan := Vector3.ZERO # Richtung, in der der neue Weg am Startpunkt weit
 var ref_dir := Vector3.ZERO   # Richtung der Straße unter dem Startpunkt (für rechte Winkel)
 var mat_tint_ok: StandardMaterial3D
 var mat_tint_bad: StandardMaterial3D
+var mat_move_ok: StandardMaterial3D
 var mat_guide: StandardMaterial3D
 var mat_upgrade: StandardMaterial3D
 var snapping := true          # Winkel und Länge einrasten (Shift kehrt es um)
@@ -62,6 +63,10 @@ var room_zone := ""           # Raum-Werkzeug: Bereich, der mit angelegt wird ("
 var room_door := "automatik"  # Raum-Werkzeug: Türart
 var room_kind := ""           # Raum-Werkzeug: Raumart (lager, kueche, sanitaet, pause, technik)
 var area_from := Vector3.INF  # Flächenabriss: Startecke beim Ziehen
+var carry: Dictionary = {}    # Verschieben: aufgenommenes Gebäude
+var carry_from: Array = []    # [Position, Drehung] beim Aufnehmen
+var carry_off := Vector3.ZERO # Mitte minus Zeiger beim Aufnehmen
+var carry_nodes: Array = []   # [Knoten, Ausgangsposition, Ausgangsdrehung] aller Teile, die mitwandern
 
 
 func setup(g: GameState, r: Node3D) -> void:
@@ -74,6 +79,7 @@ func setup(g: GameState, r: Node3D) -> void:
 	mat_snap = _tmat(Color(1.0, 0.85, 0.2, 0.95))
 	mat_tint_ok = _tmat(Color(0.45, 0.9, 1.0, 0.22))
 	mat_tint_bad = _tmat(Color(1.0, 0.3, 0.22, 0.5))
+	mat_move_ok = _tmat(Color(0.4, 0.95, 1.0, 0.4))
 	mat_guide = _tmat(Color(1.0, 1.0, 1.0, 0.55))
 	mat_upgrade = _tmat(Color(0.35, 0.85, 1.0, 0.5))
 	preview = MeshInstance3D.new()
@@ -167,6 +173,8 @@ func is_drawing() -> bool:
 
 
 func set_tool(id: String) -> void:
+	if not carry.is_empty():
+		_cancel_carry()
 	var self_turning := func(t: String) -> bool: return Catalog.ITEMS.has(t) and (Catalog.is_door(t) or Catalog.is_marker(t) or bool(Catalog.ITEMS[t].get("bridge", false)))
 	if self_turning.call(tool) and not self_turning.call(id):
 		rot = 0   # Türen und Brücken drehen sich selbst nach der Wand
@@ -326,6 +334,8 @@ func on_click(p: Vector3) -> void:
 		game.toast.emit(why if why != "" else "Raum %d × %d m gebaut" % [int(rr.size.x), int(rr.size.y)])
 		points.clear()
 		_refresh()
+	elif tool == "verschieben":
+		_click_move(p)
 	elif tool == "abriss":
 		_refresh()
 		if not target.is_empty():
@@ -376,6 +386,9 @@ static func room_rect(a: Vector3, b: Vector3) -> Rect2:
 
 
 func on_right() -> void:
+	if not carry.is_empty():
+		_cancel_carry()
+		return
 	if area_from != Vector3.INF:
 		area_from = Vector3.INF
 		_refresh()
@@ -395,6 +408,9 @@ func on_right() -> void:
 
 
 func on_escape() -> void:
+	if not carry.is_empty():
+		_cancel_carry()
+		return
 	if is_drawing():
 		cancel()
 	else:
@@ -402,6 +418,8 @@ func on_escape() -> void:
 
 
 func rotate() -> void:
+	if not carry.is_empty() and String(carry["id"]) == "halle":
+		return
 	rot = (rot + 1) % 4
 	if has_hover:
 		hover = _snap(raw_hover)
@@ -561,6 +579,19 @@ func finish() -> void:
 # ---------------------------------------------------------------- Raster und Einrasten
 
 func _snap(p: Vector3) -> Vector3:
+	if tool == "verschieben":
+		if carry.is_empty():
+			return Vector3(p.x, 0.0, p.z)
+		var cid := String(carry["id"])
+		var q := p + carry_off
+		if cid == "halle":
+			var hs: Vector2 = (carry["rect"] as Rect2).size
+			return Vector3(snappedf(q.x - hs.x * 0.5, 1.0) + hs.x * 0.5, 0.0, snappedf(q.z - hs.y * 0.5, 1.0) + hs.y * 0.5)
+		var saved := tool
+		tool = cid
+		var r := _snap(q)
+		tool = saved
+		return r
 	if tool == "raum":
 		return Vector3(snappedf(p.x, 1.0), 0.0, snappedf(p.z, 1.0))
 	if is_rect_tool():
@@ -876,6 +907,8 @@ func _refresh() -> void:
 		_refresh_item()
 	elif tool == "abriss":
 		_refresh_demolish()
+	elif tool == "verschieben":
+		_refresh_move()
 	elif tool == "raum":
 		_refresh_room()
 	elif tool == "kopieren":
@@ -1573,3 +1606,117 @@ func _refresh_copy() -> void:
 		var steps := maxi(1, int(a.distance_to(b) / 6.0))
 		for j in range(steps + 1):
 			_marker(a.lerp(b, float(j) / float(steps)), 1.4, mat_snap)
+
+
+# ---------------------------------------------------------------- Verschieben
+
+## Gebäude zieht sich beim Setzen selbst an Wand, Weg oder Straße: dann ohne Greifabstand.
+static func _self_snapping(id: String) -> bool:
+	var d: Dictionary = Catalog.ITEMS.get(id, {})
+	return Catalog.is_door(id) or Catalog.is_marker(id) or bool(d.get("bridge", false)) or id in ["rolltor", "bushalt"] \
+		or (d.get("access", {}) as Dictionary).has("halt")
+
+
+func _click_move(p: Vector3) -> void:
+	if carry.is_empty():
+		var rec := game.pick(p)
+		if rec.is_empty() or rec.get("type", "") != "item":
+			game.toast.emit("Klicke auf ein Gebäude, eine Halle oder Einrichtung")
+			return
+		var why := game.movable_why(rec)
+		if why != "":
+			game.toast.emit(why)
+			return
+		_clear_highlight()
+		carry = rec
+		carry_from = [rec["pos"], int(rec["rot"])]
+		rot = int(rec["rot"])
+		var id := String(rec["id"])
+		var rp: Vector3 = rec["pos"]
+		carry_off = Vector3.ZERO if _self_snapping(id) else Vector3(rp.x - p.x, 0.0, rp.z - p.z)
+		carry_nodes = []
+		var nodes: Array = [rec["node"]]
+		if id == "halle":
+			var mv: Dictionary = game.hall_movers(rec)
+			for it: Dictionary in mv["items"]:
+				nodes.append(it["node"])
+			for l: Dictionary in mv["lines"]:
+				nodes.append(l["node"])
+		for n: Variant in nodes:
+			if is_instance_valid(n):
+				var n3 := n as Node3D
+				carry_nodes.append([n3, n3.position, n3.rotation.y])
+		hover = _snap(p)
+		_refresh()
+		return
+	var why2 := game.move_problem(carry, hover, rot)
+	if why2 != "":
+		game.toast.emit(why2)
+		return
+	var rec2 := carry
+	_restore_carry()
+	carry = {}
+	game.move_item(rec2, hover, rot)
+	game.toast.emit(game.describe(rec2) + " verschoben")
+	_refresh()
+
+
+## Alle mitwandernden Teile zurück an ihre Ausgangsstelle, ohne Einfärbung.
+func _restore_carry() -> void:
+	for e: Array in carry_nodes:
+		if is_instance_valid(e[0]):
+			var n := e[0] as Node3D
+			n.position = e[1]
+			n.rotation.y = float(e[2])
+			_overlay(n, null)
+	carry_nodes = []
+
+
+func _cancel_carry() -> void:
+	_restore_carry()
+	if not carry_from.is_empty():
+		rot = int(carry_from[1])
+	carry = {}
+	_refresh()
+
+
+func _refresh_move() -> void:
+	if carry.is_empty():
+		_clear_highlight()
+		if not has_hover:
+			info.emit("Verschieben", "Klicke auf ein Gebäude, eine Halle oder Einrichtung, um es aufzunehmen.", 0)
+			return
+		var rec := game.pick(hover)
+		if rec.is_empty() or rec.get("type", "") != "item":
+			info.emit("Verschieben", "Klicke auf ein Gebäude, eine Halle oder Einrichtung, um es aufzunehmen. Hallen wandern mit Einrichtung, Wänden und Fluggastbrücken.", 0)
+			return
+		target = rec
+		var why := game.movable_why(rec)
+		_highlight(rec, mat_tint_ok if why == "" else mat_overlay)
+		info.emit("Verschieben", game.describe(rec) + "\n" + ("Klick nimmt es auf" if why == "" else why), 1 if why == "" else 2)
+		return
+	if not has_hover:
+		return
+	var id := String(carry["id"])
+	var why2 := game.move_problem(carry, hover, rot)
+	var from: Vector3 = carry_from[0]
+	var d := Vector3(hover.x - from.x, 0.0, hover.z - from.z)
+	for e: Array in carry_nodes:
+		if not is_instance_valid(e[0]):
+			continue
+		var n := e[0] as Node3D
+		if id == "halle":
+			n.position = (e[1] as Vector3) + d
+		else:
+			n.position = Vector3(hover.x, (e[1] as Vector3).y, hover.z)
+			n.rotation.y = float(rot) * PI * 0.5
+		_overlay(n, mat_move_ok if why2 == "" else mat_tint_bad)
+	var body := game.describe(carry) + "\nKlick setzt ab, Rechtsklick legt zurück"
+	if id != "halle":
+		body += ", R dreht"
+	else:
+		body += "\nEinrichtung, Wände, Kofferbänder und Fluggastbrücken wandern mit"
+	if why2 != "":
+		body += "\n" + why2
+	info.emit("Verschieben", body, 1 if why2 == "" else 2)
+

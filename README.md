@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.28: Verschieben**
+  - Neues Werkzeug „Verschieben“ in der Bauleiste (neben Abriss): Gebäude, Hallen und Einrichtung anklicken, woandershin ziehen, mit Klick absetzen. R dreht, Rechtsklick legt zurück. Verschieben kostet nichts.
+  - Terminalhallen nehmen Einrichtung, Wände, Kofferbänder und Fluggastbrücken mit, die Menschen darin wandern mit. Stände nehmen ihre Einrolllinien mit.
+  - Es gelten dieselben Regeln wie beim Bauen. Wege, auf denen ein Gebäude schon vorher stand, stören beim Verschieben nicht. Belegte Stände bleiben stehen, bis das Flugzeug weg ist. Strom, Wasser und Wärme kommen über die Leitungen: Wer ein Gebäude aus ihrer Reichweite schiebt, muss neu anschließen.
 - **Update 0.27.2: Einrolllinien an der Rollweg-Mittellinie**
   - Die Einrolllinien der Positionen schließen jetzt tangential an die Mittellinie des Rollwegs dahinter an, nicht mehr an eine Hilfslinie am Rollwegrand. Die alte Rollgasse des Startflughafens ist weg, Spielstände werden beim Laden umgestellt.
   - Einrolllinien machen einen Rollweg oder ein Vorfeld nicht mehr zur „nur auf Linien“-Fläche. Die Flugzeuge rollen auf ihnen bis in die Position.

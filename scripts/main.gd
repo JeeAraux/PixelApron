@@ -151,6 +151,7 @@ func _ready() -> void:
 		sound.enabled = false
 	terminal.betrieb = betrieb
 	game.income_cb = betrieb.book_income
+	game.move_guard = _move_guard
 	game.before_save.connect(_collect_extra)
 	hud = Hud.new()
 	add_child(hud)
@@ -1417,3 +1418,13 @@ func _update_heat() -> void:
 		mi.position = (e[0] as Vector3) + Vector3(0, 0.5, 0)
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_heat_root.add_child(mi)
+
+
+## Verschieben: belegte Stände bleiben, wo sie sind.
+func _move_guard(rec: Dictionary) -> String:
+	if String(rec["id"]) in GameState.STAND_IDS:
+		for p: Dictionary in flights.planes:
+			if is_same(p["stand"], rec):
+				return "Stand ist belegt: erst verschieben, wenn das Flugzeug weg ist"
+	return ""
+

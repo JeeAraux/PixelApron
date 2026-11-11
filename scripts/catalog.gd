@@ -461,6 +461,7 @@ const TOOLS := {
 	"spuren": {"name": "Spuren ändern", "desc": "Klicke auf eine Straße: 2-spurig, 4-spurig, Einbahnstraße und umgekehrte Einbahnstraße im Wechsel."},
 	"kreuzung": {"name": "Kreuzung regeln", "desc": "Klicke auf eine Kreuzung: rechts vor links, Vorfahrtsstraße oder Ampel im Wechsel."},
 	"raum": {"name": "Raum", "desc": "Rechteck in einer Halle aufziehen: Wände entstehen ringsum (außer an Außen- und vorhandenen Wänden), dazu eine Tür und auf Wunsch ein Bereich (öffentlich, Sicherheit, Personal)."},
+	"verschieben": {"name": "Verschieben", "desc": "Gebäude, Hallen und Einrichtung aufnehmen und woanders absetzen (kostenlos). Hallen nehmen Einrichtung, Wände, Kofferbänder und Fluggastbrücken mit. R dreht, Rechtsklick legt zurück."},
 	"kopieren": {"name": "Blaupause", "desc": "Bereich kopieren und beliebig oft einfügen: Gates, Stände, ganze Terminalmodule mit Einrichtung."},
 }
 const ROADS := ["strasse", "strasse4", "einbahn", "tunnel"]

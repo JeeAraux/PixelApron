@@ -12,6 +12,7 @@ signal interior_changed(on: bool)  # Innenansicht (Dächer aus) an/aus
 signal day_ended                   # Mitternacht (Tagesbilanz)
 signal floor_changed(f: int)       # angezeigte Ebene im Terminal (-1 Keller, 0 Erdgeschoss, 1, 2)
 signal before_save                 # Systeme legen ihren Zustand in extra ab
+signal hall_moved(h: Dictionary, delta: Vector3)   # Halle samt Einrichtung verschoben
 
 const Catalog = preload("res://scripts/catalog.gd")
 const Spline = preload("res://scripts/spline.gd")
@@ -1199,6 +1200,13 @@ static func hall_rect(a: Vector3, b: Vector3) -> Rect2:
 
 
 func _rect_on_lines(r: Rect2, on: String) -> String:
+	var hit := _lines_hit(r, on, true)
+	return "" if hit.is_empty() else "Liegt auf einem Weg: " + Catalog.label(String((hit[0] as Dictionary)["kind"]))
+
+
+## Wege, auf denen das Rechteck liegt (beim Verschieben zählen Wege nicht, auf denen es schon vorher lag).
+func _lines_hit(r: Rect2, on: String, first: bool = false) -> Array:
+	var out := []
 	for l: Dictionary in lines:
 		var kind: String = l["kind"]
 		if kind == "gehweg" or kind == on or Catalog.utility_of(kind) != "" or Catalog.is_floor_line(kind) or Catalog.is_marking(kind):
@@ -1208,13 +1216,18 @@ func _rect_on_lines(r: Rect2, on: String) -> String:
 			continue
 		var w: float = Catalog.LINES[kind]["width"]
 		var grown := r.grow(w * 0.5 - 0.3)
+		var old := _skip_rect.grow(w * 0.5 - 0.3) if _skip_rect.size != Vector2.ZERO else Rect2()
 		var s: PackedVector3Array = l["samples"]
 		for i in range(0, s.size(), 2):
 			if Catalog.covered(kind, s[i]):
 				continue
-			if grown.has_point(Vector2(s[i].x, s[i].z)):
-				return "Liegt auf einem Weg: " + Catalog.label(kind)
-	return ""
+			var q := Vector2(s[i].x, s[i].z)
+			if grown.has_point(q) and not old.has_point(q):
+				out.append(l)
+				break
+		if first and not out.is_empty():
+			return out
+	return out
 
 
 ## Berührt das Rechteck die Außenwand der Halle?
@@ -1644,14 +1657,14 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 				return "Hier ist schon eine " + Catalog.label(id)
 		if not on_map(mp):
 			return "Außerhalb der Karte"
-		if not can_afford(int(Catalog.ITEMS[id]["cost"])):
+		if not _moving and not can_afford(int(Catalog.ITEMS[id]["cost"])):
 			return "Nicht genug Geld"
 		return ""
 	if id == "befeuerungsstation" and runway_dist(pos) > 450.0:
 		return "Höchstens 450 m von einer Piste entfernt bauen"
 	var def: Dictionary = Catalog.ITEMS[id]
 	var on: String = def.get("on", "")
-	var r := footprint(id, pos, rot)
+	var r := footprint(id, pos, rot, _place_opts)
 	var inner := r.grow(-0.05)
 	if not on_map(Vector3(r.position.x, 0, r.position.y)) or not on_map(Vector3(r.end.x, 0, r.end.y)):
 		return "Außerhalb der Karte"
@@ -1660,7 +1673,7 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 		if hall.is_empty():
 			return "Nur innerhalb einer Terminalhalle"
 		var f := view_floor
-		var why_floor := floor_problem(hall, f, int(def["cost"]), r)
+		var why_floor := floor_problem(hall, f, 0 if _moving else int(def["cost"]), r)
 		if why_floor != "":
 			return why_floor
 		if _two_floors(id) and f + 1 >= hall_levels(hall):
@@ -1711,7 +1724,7 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 		if on_line != "":
 			return on_line
 	var cost: int = def["cost"]
-	if not can_afford(cost):
+	if not _moving and not can_afford(cost):
 		return "Nicht genug Geld"
 	return ""
 
@@ -1771,8 +1784,212 @@ func can_place_hall(r: Rect2) -> String:
 	var on_line := _rect_on_lines(r, "")
 	if on_line != "":
 		return on_line
-	if not can_afford(hall_cost(r)):
+	if not _moving and not can_afford(hall_cost(r)):
 		return "Nicht genug Geld"
+	return ""
+
+
+# ---------------------------------------------------------------- Verschieben
+
+var _moving := false
+var _place_opts: Dictionary = {}
+var _skip_rect := Rect2()      # Verschieben: alte Lage (Wegstücke, die schon darunter lagen, zählen nicht)
+var move_guard: Callable        # main: Grund, warum etwas gerade nicht verschoben werden kann (belegter Stand)
+
+
+## Lässt sich das überhaupt verschieben? Leer = ja.
+func movable_why(rec: Dictionary) -> String:
+	if rec.get("type", "") != "item":
+		return "Nur Gebäude und Einrichtung lassen sich verschieben"
+	var id := String(rec["id"])
+	if Catalog.is_zone(id) or id == "vorfeldflaeche":
+		return "Flächen abreißen und neu aufziehen"
+	if move_guard.is_valid():
+		var g: String = move_guard.call(rec)
+		if g != "":
+			return g
+	return ""
+
+
+## Alles, was mit einer Halle mitwandert: Einrichtung, Wände, Kofferbänder, Fluggastbrücken.
+func hall_movers(h: Dictionary) -> Dictionary:
+	var its: Array = inside_of(h)
+	for b: Dictionary in items_of("fluggastbruecke"):
+		var hs := hall_side(bridge_anchor(b))
+		if not hs.is_empty() and is_same(hs[0], h):
+			its.append(b)
+	var ls: Array = walls_of(h)
+	var hr: Rect2 = h["rect"]
+	for l: Dictionary in lines:
+		if not Catalog.is_floor_line(String(l["kind"])) or l in ls:
+			continue
+		var all_in := true
+		for v: Vector3 in (l["samples"] as PackedVector3Array):
+			if not hr.grow(0.5).has_point(Vector2(v.x, v.z)):
+				all_in = false
+				break
+		if all_in:
+			ls.append(l)
+	return {"items": its, "lines": ls}
+
+
+## Grund, warum rec nicht nach pos/rot (Halle: um pos - alte Mitte) verschoben werden kann, oder leer.
+func move_problem(rec: Dictionary, pos: Vector3, rot: int) -> String:
+	var why := movable_why(rec)
+	if why != "":
+		return why
+	var id := String(rec["id"])
+	if id == "halle":
+		return _hall_move_problem(rec, Vector3(pos.x, 0, pos.z) - Vector3(rec["pos"].x, 0, rec["pos"].z))
+	var idx := items.find(rec)
+	items.remove_at(idx)
+	var vf := view_floor
+	if Catalog.is_inside(id):
+		view_floor = floor_of(rec)
+	_moving = true
+	_place_opts = rec.get("opts", {})
+	_skip_rect = rec["rect"]
+	why = can_place(id, pos, rot)
+	_skip_rect = Rect2()
+	_moving = false
+	_place_opts = {}
+	view_floor = vf
+	items.insert(idx, rec)
+	return why
+
+
+func _hall_move_problem(h: Dictionary, d: Vector3) -> String:
+	if d.length() < 0.01:
+		return ""
+	var mv := hall_movers(h)
+	var hr: Rect2 = h["rect"]
+	var nr := Rect2(hr.position + Vector2(d.x, d.z), hr.size)
+	if not on_map(Vector3(nr.position.x, 0, nr.position.y)) or not on_map(Vector3(nr.end.x, 0, nr.end.y)):
+		return "Außerhalb der Karte"
+	var gone_i: Array = [h] + (mv["items"] as Array)
+	var gone_l: Array = mv["lines"]
+	for it: Dictionary in gone_i:
+		items.erase(it)
+	for l: Dictionary in gone_l:
+		lines.erase(l)
+	_moving = true
+	_skip_rect = hr
+	var why := can_place_hall(nr)
+	_skip_rect = Rect2()
+	_moving = false
+	for it: Dictionary in gone_i:
+		items.append(it)
+	for l: Dictionary in gone_l:
+		lines.append(l)
+	_grid_dirty = true
+	return why
+
+
+func _shift_item(it: Dictionary, d: Vector3) -> void:
+	it["pos"] = (it["pos"] as Vector3) + d
+	var r: Rect2 = it["rect"]
+	it["rect"] = Rect2(r.position + Vector2(d.x, d.z), r.size)
+	var n: Variant = it["node"]
+	if is_instance_valid(n):
+		(n as Node3D).position += d
+
+
+func _shift_line(l: Dictionary, d: Vector3) -> void:
+	var pts := []
+	for q: Vector3 in l["points"]:
+		pts.append(q + d)
+	l["points"] = pts
+	var sm: PackedVector3Array = l["samples"]
+	for i in range(sm.size()):
+		sm[i] += d
+	l["samples"] = sm
+	var b: Rect2 = l["bounds"]
+	l["bounds"] = Rect2(b.position + Vector2(d.x, d.z), b.size)
+	var n: Variant = l["node"]
+	if is_instance_valid(n):
+		(n as Node3D).position += d
+	_grid_dirty = true
+
+
+## Verschiebt ein Gebäude (Halle: mit Einrichtung, Wänden, Bändern und Brücken). Kostenlos. "" = ok.
+func move_item(rec: Dictionary, pos: Vector3, rot: int) -> String:
+	var why := move_problem(rec, pos, rot)
+	if why != "":
+		return why
+	var id := String(rec["id"])
+	if id == "halle":
+		var d := Vector3(pos.x, 0, pos.z) - Vector3(rec["pos"].x, 0, rec["pos"].z)
+		if d.length() < 0.01:
+			return ""
+		var mv := hall_movers(rec)
+		_shift_item(rec, d)
+		for it: Dictionary in mv["items"]:
+			_shift_item(it, d)
+		for l: Dictionary in mv["lines"]:
+			_shift_line(l, d)
+		hall_moved.emit(rec, d)
+		evaluate_supply()
+		items_changed.emit()
+		network_changed.emit()
+		return ""
+	if bool(Catalog.ITEMS[id].get("bridge", false)):
+		var bs := bridge_snap(pos)
+		if not bs.is_empty():
+			pos = bs[0]
+			rot = bs[1]
+	if Catalog.is_marker(id):
+		var ms := marker_snap(id, pos)
+		if not ms.is_empty():
+			pos = ms[0]
+			rot = ms[1]
+	if id == "rolltor":
+		var ws := wall_snap(id, pos)
+		if not ws.is_empty():
+			pos = ws[0]
+			rot = ws[1]
+	var old_facade: Dictionary = {}
+	if id in ["eingang", "rolltor"] or _two_floors(id):
+		old_facade = rec.get("hall", {})
+	elif bool(Catalog.ITEMS[id].get("bridge", false)):
+		var hs0 := hall_side(bridge_anchor(rec))
+		if not hs0.is_empty():
+			old_facade = hs0[0]
+	var old_hall: Dictionary = rec.get("hall", {})
+	var is_stand := id in STAND_IDS
+	var had_leads := false
+	if is_stand:
+		for sl: Dictionary in stand_lines(rec):
+			_remove_one(sl, 0.0)
+			had_leads = true
+	var node: Node3D = rec["node"]
+	node.position = Vector3(pos.x, node.position.y, pos.z)
+	node.rotation.y = float(rot) * PI * 0.5
+	rec["pos"] = node.position
+	rec["rot"] = rot
+	rec["rect"] = footprint(id, pos, rot, rec.get("opts", {}))
+	if Catalog.is_inside(id):
+		rec["hall"] = hall_for_rect(rec["rect"])
+		if Catalog.is_door(id):
+			if not old_hall.is_empty():
+				refresh_walls(old_hall, floor_of(rec))
+			if not (rec["hall"] as Dictionary).is_empty() and not is_same(rec["hall"], old_hall):
+				refresh_walls(rec["hall"], floor_of(rec))
+	if not old_facade.is_empty() and old_facade in items:
+		queue_facade(old_facade)
+	if id in ["eingang", "rolltor"] or _two_floors(id):
+		if not (rec.get("hall", {}) as Dictionary).is_empty():
+			queue_facade(rec["hall"])
+	elif bool(Catalog.ITEMS[id].get("bridge", false)):
+		var hs1 := hall_side(bridge_anchor(rec))
+		if not hs1.is_empty():
+			queue_facade(hs1[0])
+	if is_stand and (had_leads or String(opt(rec, "markierung")) == "eigene"):
+		make_leadins(rec, true)
+	_apply_floor(rec)
+	evaluate_supply()
+	items_changed.emit()
+	if is_stand or Catalog.ITEMS[id].has("garage") or Catalog.is_marker(id) or id in ["bushalt", "haltestelle", "taxistand", "kissfly", "parkhaus", "parkplatz", "mietwagen"]:
+		network_changed.emit()
 	return ""
 
 

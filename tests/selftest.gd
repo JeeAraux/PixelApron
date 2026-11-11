@@ -1042,6 +1042,16 @@ func run(main: Node) -> void:
 		"Geräusche werden erzeugt (Martinshorn, Gong), im Selbsttest stumm")
 	game.sandbox = false
 
+	# Verschieben: Tower woandershin und zurück, Strom kommt wieder
+	var twr: Dictionary = game.items_of("tower")[0]
+	var twp: Vector3 = twr["pos"]
+	var mv1: String = game.move_item(twr, twp + Vector3(-54, 0, 10), int(twr["rot"]))
+	var moved_ok: bool = mv1 == "" and (twr["pos"] as Vector3).is_equal_approx(twp + Vector3(-54, 0, 10)) \
+		and ((twr["node"] as Node3D).position as Vector3).is_equal_approx(twp + Vector3(-54, 0, 10))
+	var blocked: String = game.move_problem(twr, Vector3(-17, 0, -4), int(twr["rot"]))
+	var mv2: String = game.move_item(twr, twp, int(twr["rot"]))
+	check(moved_ok and blocked != "" and mv2 == "" and game.supplied(twr, "strom"), "Tower verschoben und zurück (%s / %s / blockiert: %s)" % [mv1, mv2, blocked])
+
 	# Rollführungslinie: nur auf Belag
 	var nl0: int = game.lines.size()
 	var grass_why := String(game.check_line("rolllinie", PackedVector3Array([Vector3(300, 0, 500), Vector3(320, 0, 500), Vector3(340, 0, 500)]))["why"])

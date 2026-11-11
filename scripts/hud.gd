@@ -779,6 +779,12 @@ func _build_menu() -> void:
 	undo.tooltip_text = "Letzten Bau zurücknehmen, volle Erstattung (Strg+Z)"
 	undo.pressed.connect(func() -> void: undo_requested.emit())
 	drow.add_child(undo)
+	var move := _dock_button("Verschieben", true, "✥", C_TEXT)
+	move.button_group = tool_group
+	move.tooltip_text = _tooltip("verschieben")
+	move.toggled.connect(_on_tool_toggled.bind("verschieben"))
+	drow.add_child(move)
+	tool_buttons["verschieben"] = move
 	var demolish := _dock_button("Abriss", true, "✕", C_BAD)
 	demolish.button_group = tool_group
 	demolish.tooltip_text = _tooltip("abriss")

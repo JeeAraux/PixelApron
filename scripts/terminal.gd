@@ -51,6 +51,7 @@ func setup(g: GameState) -> void:
 	crowd.name = "Leute"
 	add_child(crowd)
 	game.items_changed.connect(_mark)
+	game.hall_moved.connect(_on_hall_moved)
 	game.network_changed.connect(_mark)
 	game.supply_changed.connect(_mark)
 
@@ -2543,3 +2544,35 @@ func _sorter_ring(sid: int, on: bool) -> void:
 	var ring := nd.find_child("Ringkoffer", true, false) as Node3D
 	if ring != null:
 		ring.visible = on
+
+
+## Halle verschoben: Menschen darin wandern mit (Position, Weg und Planziele).
+func _on_hall_moved(h: Dictionary, d: Vector3) -> void:
+	var hid := (h["node"] as Node).get_instance_id()
+	for per: Dictionary in people:
+		if int(per.get("hall_id", -1)) != hid:
+			continue
+		per["pos"] = (per["pos"] as Vector3) + d
+		var n: Variant = per["node"]
+		if is_instance_valid(n):
+			(n as Node3D).position += d
+		per["path"] = _shifted(per["path"], d)
+		per["plan"] = _shifted(per["plan"], d)
+	_mark()
+
+
+static func _shifted(v: Variant, d: Vector3) -> Variant:
+	if v is Vector3:
+		return (v as Vector3) + d
+	if v is PackedVector3Array:
+		var pa := (v as PackedVector3Array).duplicate()
+		for i in range(pa.size()):
+			pa[i] += d
+		return pa
+	if v is Array:
+		var out := []
+		for e: Variant in (v as Array):
+			out.append(_shifted(e, d))
+		return out
+	return v
+
