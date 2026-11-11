@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.27.2: Einrolllinien an der Rollweg-Mittellinie**
+  - Die Einrolllinien der Positionen schließen jetzt tangential an die Mittellinie des Rollwegs dahinter an, nicht mehr an eine Hilfslinie am Rollwegrand. Die alte Rollgasse des Startflughafens ist weg, Spielstände werden beim Laden umgestellt.
+  - Einrolllinien machen einen Rollweg oder ein Vorfeld nicht mehr zur „nur auf Linien“-Fläche. Die Flugzeuge rollen auf ihnen bis in die Position.
+  - Vorfelder haben keine fest aufgemalte Mittellinie mehr, alle gelben Linien zeichnet man selbst (oder sie kommen als änderbare Rolllinien).
 - **Update 0.27.1: Rollführungslinien an den Positionen**
   - Die Einrolllinien an den Ständen sind keine aufgemalte Deko mehr, sondern echte Rollführungslinien: Sie lassen sich abreißen, ersetzen und neu zeichnen. Neue Stände bekommen sie automatisch, wenn hinter ihnen schon eine Rolllinie liegt. Wird ein Stand abgerissen, verschwinden seine Linien mit.
   - Alte Spielstände behalten ihre aufgemalten Linien. Stellt man im Infofeld des Stands die Markierung auf „Rolllinien (änderbar)“, werden sie zu echten Linien. Liegt hinter dem Stand nur Vorfeld, bekommt das Vorfeld dabei eine Mittellinie.

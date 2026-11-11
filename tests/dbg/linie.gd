@@ -14,6 +14,8 @@ func run(main: Node) -> void:
 		print(st["id"], " ", st["pos"], " linien ", g.stand_lines(st).size())
 	main.flights._rebuild()
 	var gr = main.flights.graph
+	for li: int in gr.guided:
+		print("geführt: ", g.lines[li]["kind"], " ", (g.lines[li]["points"] as Array).slice(0, 2))
 	var st0: Dictionary = g.stands()[1]
 	var sid: int = gr.stand_node.get((st0["node"] as Node).get_instance_id(), -1)
 	var rw: int = gr._nearest_kind(Vector3(0, 0, -272), "piste")

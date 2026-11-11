@@ -127,7 +127,8 @@ func rebuild() -> void:
 		if gm != null:
 			# Vorfeld ohne gezeichnete Linien: die Flugzeuge rollen auf der Mittellinie, also wird sie gemalt
 			if gl["kind"] == "vorfeld":
-				gm.set_shader_parameter("mark", 5 if graph.guided.has(li) else 13)
+				# Vorfeld ohne aufgemalte Mittellinie: Linien zeichnet der Spieler (Rolllinie)
+				gm.set_shader_parameter("mark", 5)
 			else:
 				gm.set_shader_parameter("mark", 11 if graph.guided.has(li) else 2)
 	names = taxi_names(game.lines)

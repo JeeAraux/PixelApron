@@ -2298,8 +2298,8 @@ func stand_leadins(st: Dictionary) -> Dictionary:
 func make_leadins(st: Dictionary, only_on_lines: bool = false) -> int:
 	var li: Dictionary = stand_leadins(st)
 	var n := 0
-	# hinter dem Stand ein Rollweg: dort keine Linien anlegen (sonst gilt der Rollweg als geführt)
-	if int(li["rank"]) == 1 or (only_on_lines and int(li["rank"]) != 0):
+	# automatisch nur an Rolllinien oder Rollwege anschließen (nicht an ein Vorfeld ohne Linien)
+	if only_on_lines and int(li["rank"]) > 1:
 		return 0
 	var base: Dictionary = li["base"]
 	if not base.is_empty():
@@ -3318,7 +3318,7 @@ func clear_all() -> void:
 
 func save_game(quiet: bool = false) -> void:
 	before_save.emit()
-	var data := {"version": 11, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
+	var data := {"version": 12, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
 		"wind": [wind_dir, wind_kt], "extra": extra, "lotse": atc_manual, "fees": fees, "nachtflug": night_ban}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
@@ -3418,13 +3418,28 @@ func load_game() -> bool:
 		if not rec.is_empty():
 			rec["cost"] = int(it.get("cost", 0))
 	view_floor = 0
-	if int(data.get("version", 0)) < 11:
+	var ver := int(data.get("version", 0))
+	if ver < 12:
+		# Rollgasse des alten Startflughafens (lag am Rand von Rollweg A): weg, die Einrolllinien
+		# schließen jetzt an die Mittellinie des Rollwegs an
+		for l: Dictionary in lines.duplicate():
+			if l["kind"] == "rolllinie" and (l["points"] as Array).size() == 2 \
+					and (l["points"][0] as Vector3).is_equal_approx(Vector3(-150, 0, -93)) \
+					and (l["points"][1] as Vector3).is_equal_approx(Vector3(210, 0, -93)):
+				_remove_one(l, 0.0)
+				if ver == 11:
+					for st: Dictionary in stands():
+						if String((st.get("opts", {}) as Dictionary).get("markierung", "eigene")) == "eigene":
+							for sl: Dictionary in stand_lines(st):
+								_remove_one(sl, 0.0)
+							make_leadins(st, true)
+	if ver < 11:
 		# alter Spielstand: liegt hinter einem Stand schon eine Rolllinie, werden seine aufgemalten
 		# Einrolllinien zu echten Rolllinien (sonst bleiben sie aufgemalt, umstellbar im Infofeld)
 		for st: Dictionary in stands():
 			if String((st.get("opts", {}) as Dictionary).get("markierung", "")) != "voll" or not stand_lines(st).is_empty():
 				continue
-			if int(stand_leadins(st)["rank"]) == 0 and make_leadins(st, true) > 0:
+			if int(stand_leadins(st)["rank"]) <= 1 and make_leadins(st, true) > 0:
 				st["opts"]["markierung"] = "eigene"
 				_rebuild_node(st)
 	history.clear()
@@ -3475,8 +3490,6 @@ func load_starter() -> void:
 	build_line("vorfeld", [V.call(-155, -56), V.call(215, -56)], true)
 	build_line("vorfeld", [V.call(-155, -92), V.call(215, -92)], true)
 	build_line("vorfeld", [V.call(118, -24), V.call(215, -24)], true)
-	# Rollführungslinie über das Vorfeld (Rollgasse hinter den Ständen)
-	build_line("rolllinie", [V.call(-150, -93), V.call(210, -93)], true)
 	build_line("rollweg_breit", [V.call(-1280, -272), V.call(-1278, -200), V.call(-1266, -140), V.call(-1230, -110),
 		V.call(-1180, -104), V.call(1180, -104), V.call(1230, -110), V.call(1266, -140), V.call(1278, -200),
 		V.call(1280, -272)], true)

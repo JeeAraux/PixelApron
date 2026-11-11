@@ -97,7 +97,10 @@ func run(main: Node) -> void:
 		if d0.length() > 0.1 and d1.length() > 0.1 and d0.normalized().dot(d1.normalized()) < -0.01:
 			sharp += 1
 	check(tpath.size() > 3 and sharp == 0, "Flugzeuge wenden ohne Kurven über 90° (%d Knoten)" % tpath.size())
-	check(not gr.guided.is_empty(), "Gezeichnete Rollführungslinie führt die Flugzeuge auf dem Vorfeld")
+	var leads := 0
+	for st: Dictionary in game.stands():
+		leads += game.stand_lines(st).size()
+	check(gr.guided.is_empty() and leads == 2 * game.stands().size(), "Einrolllinien als Rolllinien an allen Ständen (%d), sie machen keine Fläche zur geführten" % leads)
 	var belts: Array = []
 	var gates_t: Array = []
 	for it: Dictionary in game.inside_of(term):
@@ -216,6 +219,19 @@ func run(main: Node) -> void:
 					if gap < min_gap and gap < 20.0:
 						print("      zu nah: %s %s %s / %s %s %s" % [pa["code"], pa["state"], str(pa["pos"]), pc["code"], pc["state"], str(pc["pos"])])
 					min_gap = minf(min_gap, gap)
+	# Außenpositionen werden zufällig vergeben: notfalls weiterlaufen, bis eine mit Bus bedient wurde
+	var extra_steps := 0
+	while extra_steps < 9000 and not (outdoor_pax > 5 and bus_boarded and riders_seen and bus_door):
+		fl.step(0.1)
+		extra_steps += 1
+		outdoor_pax = maxi(outdoor_pax, main.ops.walkers.size())
+		for vv: Dictionary in main.ops.vehicles:
+			bus_door = bus_door or (vv["kind"] == "bus" and float(vv.get("door", 0.0)) > 0.9)
+			riders_seen = riders_seen or not (vv.get("riders", []) as Array).is_empty()
+		for j: Dictionary in main.ops.jobs.values():
+			bus_boarded = bus_boarded or bool(j.get("boarded", false))
+	if extra_steps > 0:
+		print("      Außenposition: %d Schritte länger" % extra_steps)
 	print("      Zustände: ", seen_states.keys(), "  abgeflogen: ", fl.done, "  kleinster Abstand am Boden: ", min_gap)
 	var m1: int = game.money
 	check(min_gap > 20.0, "Rollende Flugzeuge halten Abstand (Reservierung)")

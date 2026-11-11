@@ -85,8 +85,19 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 	# Flächen mit gezeichneten Rollführungslinien: dort nur auf den Linien rollen
 	guided = {}
 	var line_pts := []
+	# Einrolllinien (Linien, die in einem Stand enden) machen eine Fläche nicht zur geführten
+	var lead_lines := {}
+	for li in range(lines.size()):
+		if lines[li]["kind"] != "rolllinie":
+			continue
+		var ls: PackedVector3Array = lines[li]["samples"]
+		for st: Dictionary in stands:
+			var sr := (st["rect"] as Rect2).grow(-2.0)
+			if sr.has_point(Vector2(ls[0].x, ls[0].z)) or sr.has_point(Vector2(ls[ls.size() - 1].x, ls[ls.size() - 1].z)):
+				lead_lines[li] = true
+				break
 	for i in range(pos.size()):
-		if kind[i] == "rolllinie":
+		if kind[i] == "rolllinie" and not lead_lines.has(line_idx[i]):
 			line_pts.append(pos[i])
 	# jeder Linienpunkt gehört zu der Fläche, auf deren Mitte er relativ am nächsten liegt
 	for q: Vector3 in line_pts:
