@@ -296,7 +296,9 @@ func on_click(p: Vector3) -> void:
 	elif is_item_tool():
 		_refresh()
 		if reason == "":
-			game.build_item(tool, hover, rot)
+			var brec: Dictionary = game.build_item(tool, hover, rot)
+			if not brec.is_empty() and tool in GameState.STAND_IDS and game.make_leadins(brec, true) > 0:
+				game.network_changed.emit()
 		else:
 			game.toast.emit(reason)
 		_refresh()

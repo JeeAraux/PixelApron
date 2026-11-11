@@ -980,7 +980,7 @@ func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
 		var disp := sp + bas * Vector3(0, 5.55, hd - 1.07)
 		PixelFont.draw(_lk(lamps, AMBER), label, disp, bas * Vector3(1, 0, 0), Vector3.UP, -fwd, 0.13, AMBER)
 		# Einrolllinien (nicht bei Markierung "eigene" oder "aus": dort zeichnet der Spieler die Linien selbst)
-		if String((st.get("opts", {}) as Dictionary).get("markierung", "voll")) != "voll":
+		if String((st.get("opts", {}) as Dictionary).get("markierung", "eigene")) != "voll":
 			continue
 		var sid: int = graph.stand_node.get(node.get_instance_id(), -1)
 		if sid < 0 or not graph.lead_of.has(sid):

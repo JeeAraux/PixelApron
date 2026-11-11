@@ -55,13 +55,13 @@ const OPTIONS := {
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]], ["oberdeck", "Oberdeck (A380)", [false, true]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
-	"stand": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
+	"stand": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
 	"busgarage": [["tore", "Tore (Größe)", [4, 5, 6, 8, 3, 2]]],
 	"feuerwache": [["tore", "Tore (Größe)", [4, 5, 6, 3, 2]]],
 	"gepaeckumschlag": [["tore", "Tore (Größe)", [4, 5, 6, 8, 3]]],
-	"stand_aussen": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
-	"stand_gross": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
-	"stand_f": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
+	"stand_aussen": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
+	"stand_gross": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
+	"stand_f": [["markierung", "Markierung", ["eigene", "voll", "aus"]]],
 }
 const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
 	"flach": "Flachdach", "gewoelbt": "Tonnendach", "shed": "Sheddach", "schengen": "Schengen", "non_schengen": "Non-Schengen",
@@ -69,7 +69,7 @@ const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig":
 	"cafe": "Café", "baeckerei": "Bäckerei", "bar": "Bar", "restaurant": "Restaurant", "kiosk": "Kiosk", "dutyfree": "Duty Free",
 	"buecher": "Bücher", "elektronik": "Elektronik", "apotheke": "Apotheke", "mode": "Mode", "oval": "Oval", "karussell": "Karussell", "schiebe": "Schiebetür", "dreh": "Drehtür",
 	"automatik": "Automatik (Glas)", "fluegel": "Flügeltür", "personal": "Personaltür",
-	"voll": "mit Einrolllinie", "eigene": "Linien selbst zeichnen", "aus": "keine",
+	"voll": "aufgemalt (fest)", "eigene": "Rolllinien (änderbar)", "aus": "keine",
 	"laub": "Laubbaum", "nadel": "Nadelbaum", "birke": "Birke", "pappel": "Pappel", "obst": "Obstbaum"}
 var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0
@@ -1033,7 +1033,13 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 		(rec["node"] as Node3D).position = move_to[0]
 	if not rec.has("opts"):
 		rec["opts"] = {}
+	var was: Variant = rec["opts"].get(key, cur)
 	rec["opts"][key] = v
+	if key == "markierung" and String(was) == "voll" and String(v) != "voll" and stand_lines(rec).is_empty():
+		# die aufgemalten Einrolllinien werden zu echten Rolllinien, die man ändern kann
+		if make_leadins(rec) > 0:
+			network_changed.emit()
+			toast.emit("Einrolllinien als Rolllinien angelegt (lassen sich ändern und abreißen)")
 	if cost > 0:
 		_spend(cost)
 		rec["cost"] = int(rec["cost"]) + cost
@@ -2219,6 +2225,112 @@ func build_zone(id: String, r: Rect2, free: bool = false, f: int = -99) -> Dicti
 	return rec
 
 
+const STAND_IDS := ["stand", "stand_aussen", "stand_gross", "stand_f"]
+
+
+## Einrolllinien eines Stands als Rollführungslinien: von der Linie (oder dem Rollweg) hinter dem Stand
+## in beiden Richtungen als Bogen hinein bis zu den Haltebalken. Rückgabe {"lines": [Punktlisten],
+## "base": Vorfeld-Linie ohne eigene Rolllinie (deren Mitte bekommt dann auch eine) oder {}}.
+func stand_leadins(st: Dictionary) -> Dictionary:
+	var out := {"lines": [], "base": {}, "rank": 9}
+	var node: Node3D = st["node"]
+	if not is_instance_valid(node):
+		return out
+	var bas := Basis(Vector3.UP, float(int(st["rot"])) * PI * 0.5)
+	var fwd := bas.z
+	var lat := bas.x
+	var sp: Vector3 = st["pos"]
+	var hd: float = (Catalog.ITEMS[st["id"]]["size"] as Vector2).y * 0.5
+	var lp := sp - fwd * (hd + 1.0)
+	var inner := (st["rect"] as Rect2).grow(-1.0)
+	var best := {}
+	var best_rank := 9
+	var best_d := INF
+	for l: Dictionary in lines:
+		var k := String(l["kind"])
+		var rank: int = {"rolllinie": 0, "rollweg": 1, "rollweg_breit": 1, "vorfeld": 2}.get(k, 9)
+		if rank > best_rank or rank == 9:
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		for j in range(sm.size() - 1):
+			var la := (sm[j] - sp).dot(lat)
+			var lb := (sm[j + 1] - sp).dot(lat)
+			if la * lb > 0.0 or absf(la - lb) < 0.001:
+				continue
+			var q := sm[j].lerp(sm[j + 1], la / (la - lb))
+			q.y = 0.0
+			var d := q.distance_to(lp)
+			if d > 42.0 or (q - lp).dot(fwd) > 4.0 or inner.has_point(Vector2(q.x, q.z)):
+				continue
+			if rank < best_rank or d < best_d:
+				best_rank = rank
+				best_d = d
+				var t := sm[j + 1] - sm[j]
+				t.y = 0.0
+				best = {"p": q, "t": t.normalized(), "line": l}
+	if best.is_empty():
+		return out
+	out["rank"] = best_rank
+	if best_rank == 2:
+		out["base"] = best["line"]
+	var bp: Vector3 = best["p"]
+	var tng: Vector3 = best["t"]
+	var end := sp + fwd * (hd - 11.0)
+	var dout := (end - bp).normalized()
+	var span := bp.distance_to(end)
+	for sgn: float in [-1.0, 1.0]:
+		var din := tng * sgn
+		var theta := PI - acos(clampf((-din).dot(dout), -1.0, 1.0))
+		var cut := minf(35.0 * tan(theta * 0.5), span * 0.66)
+		var s1 := bp - din * cut
+		var e := bp + dout * cut
+		var pts := []
+		for i in range(13):
+			var tt := float(i) / 12.0
+			pts.append(s1 * ((1.0 - tt) * (1.0 - tt)) + bp * (2.0 * (1.0 - tt) * tt) + e * (tt * tt))
+		pts.append(end)
+		(out["lines"] as Array).append(pts)
+	return out
+
+
+## Legt die Einrolllinien eines Stands als echte Rolllinien an (änder- und abreißbar). Liegt hinter dem
+## Stand nur ein Vorfeld ohne Linie, bekommt es zuerst eine Mittellinie. Rückgabe: Zahl der Linien.
+func make_leadins(st: Dictionary, only_on_lines: bool = false) -> int:
+	var li: Dictionary = stand_leadins(st)
+	var n := 0
+	# hinter dem Stand ein Rollweg: dort keine Linien anlegen (sonst gilt der Rollweg als geführt)
+	if int(li["rank"]) == 1 or (only_on_lines and int(li["rank"]) != 0):
+		return 0
+	var base: Dictionary = li["base"]
+	if not base.is_empty():
+		var c := build_line("rolllinie", base["points"], true)
+		if not c.is_empty():
+			n += 1
+			li = stand_leadins(st)
+	for pts: Array in li["lines"]:
+		var smp := line_samples("rolllinie", pts)
+		if String(check_line("rolllinie", smp)["why"]) != "":
+			continue
+		if not build_line("rolllinie", pts, true).is_empty():
+			n += 1
+	return n
+
+
+## Rolllinien, die in diesem Stand enden (mit dem Stand abreißen).
+func stand_lines(st: Dictionary) -> Array:
+	var out := []
+	var r := (st["rect"] as Rect2).grow(-2.0)
+	for l: Dictionary in lines:
+		if l["kind"] != "rolllinie":
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		var a := sm[0]
+		var b := sm[sm.size() - 1]
+		if r.has_point(Vector2(a.x, a.z)) or r.has_point(Vector2(b.x, b.z)):
+			out.append(l)
+	return out
+
+
 func stands() -> Array:
 	var out := []
 	for it: Dictionary in items:
@@ -3125,6 +3237,10 @@ func remove(rec: Dictionary, refund: float = 0.5) -> void:
 		var hsr := hall_side(bridge_anchor(rec))
 		if not hsr.is_empty():
 			facade_hall = hsr[0]
+	if String(rec.get("id", "")) in STAND_IDS:
+		for sl: Dictionary in stand_lines(rec):
+			_remove_one(sl, refund)
+			any_line = true
 	_remove_one(rec, refund)
 	if Catalog.is_door(String(rec.get("id", ""))) and not (rec.get("hall", {}) as Dictionary).is_empty():
 		refresh_walls(rec["hall"], floor_of(rec))
@@ -3202,7 +3318,7 @@ func clear_all() -> void:
 
 func save_game(quiet: bool = false) -> void:
 	before_save.emit()
-	var data := {"version": 10, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
+	var data := {"version": 11, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
 		"wind": [wind_dir, wind_kt], "extra": extra, "lotse": atc_manual, "fees": fees, "nachtflug": night_ban}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
@@ -3295,11 +3411,22 @@ func load_game() -> bool:
 		var lo: Dictionary = (it.get("opts", {}) as Dictionary).duplicate()
 		if Catalog.SIZED.has(String(it["id"])) and not lo.has("tore"):
 			lo["tore"] = 0   # alter Spielstand: Gebäude in alter Größe
+		if String(it["id"]) in STAND_IDS and not lo.has("markierung") and int(data.get("version", 0)) < 11:
+			lo["markierung"] = "voll"   # alter Spielstand: Einrolllinien bleiben aufgemalt
 		var rec := build_item(String(it["id"]), Vector3(float(it["x"]), 0.0, float(it["z"])), int(it["rot"]), true,
 			lo, int(it.get("floor", 0)))
 		if not rec.is_empty():
 			rec["cost"] = int(it.get("cost", 0))
 	view_floor = 0
+	if int(data.get("version", 0)) < 11:
+		# alter Spielstand: liegt hinter einem Stand schon eine Rolllinie, werden seine aufgemalten
+		# Einrolllinien zu echten Rolllinien (sonst bleiben sie aufgemalt, umstellbar im Infofeld)
+		for st: Dictionary in stands():
+			if String((st.get("opts", {}) as Dictionary).get("markierung", "")) != "voll" or not stand_lines(st).is_empty():
+				continue
+			if int(stand_leadins(st)["rank"]) == 0 and make_leadins(st, true) > 0:
+				st["opts"]["markierung"] = "eigene"
+				_rebuild_node(st)
 	history.clear()
 	junction_controls = data.get("controls", {})
 	network_changed.emit()
@@ -3378,6 +3505,9 @@ func load_starter() -> void:
 	for x: float in [-67.0, -22.0, 11.0, 56.0]:
 		build_item("fluggastbruecke", V.call(x, -28.8), 0, true)
 	build_item("stand_gross", V.call(165, -50), 0, true)
+	# Einrolllinien als echte Rolllinien (lassen sich ändern und abreißen)
+	for st: Dictionary in stands():
+		make_leadins(st)
 	build_item("bushalt", V.call(123.5, -62), 1, true)
 	for x: float in [-107.5, -62.5, -17.5, 27.5, 72.5]:
 		build_item("flutlicht", V.call(x, -52), 0, true)

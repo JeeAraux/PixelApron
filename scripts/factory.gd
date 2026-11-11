@@ -1275,7 +1275,7 @@ static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
 	var y := 0.05
 	# Markierung "voll": wie bisher; "eigene": keine gelbe Mittellinie (Rollführungslinien zeichnet der
 	# Spieler mit dem Werkzeug Rolllinie); "aus": nur Andockanzeige, Betankung und Bodenstrom
-	var mark := String((n.get_meta("opts", {}) as Dictionary).get("markierung", "voll"))
+	var mark := String((n.get_meta("opts", {}) as Dictionary).get("markierung", "eigene"))
 	var flat := func(a: Vector2, b: Vector2, c: Color) -> void:
 		if mark == "aus":
 			return

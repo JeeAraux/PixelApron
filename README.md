@@ -22,6 +22,9 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.27.1: Rollführungslinien an den Positionen**
+  - Die Einrolllinien an den Ständen sind keine aufgemalte Deko mehr, sondern echte Rollführungslinien: Sie lassen sich abreißen, ersetzen und neu zeichnen. Neue Stände bekommen sie automatisch, wenn hinter ihnen schon eine Rolllinie liegt. Wird ein Stand abgerissen, verschwinden seine Linien mit.
+  - Alte Spielstände behalten ihre aufgemalten Linien. Stellt man im Infofeld des Stands die Markierung auf „Rolllinien (änderbar)“, werden sie zu echten Linien. Liegt hinter dem Stand nur Vorfeld, bekommt das Vorfeld dabei eine Mittellinie.
 - **Update 0.27: Große Hallen, Vorfeld als Fläche, Obergeschosse nach Maß**
   - **Busgarage, Feuerwache und Gepäckumschlag nach Größe:** Im Infofeld lässt sich die Zahl der Tore einstellen (Gepäckumschlag bis 8, Busgarage bis 8, Feuerwache bis 6). Die Halle wächst mit, jede Spur hat ihr eigenes Rolltor und ihre Einrichtung: Löschfahrzeuge, Arbeitsgruben und Waschplatz, Abladebänder mit Sammelband und Leitstand. In der Innenansicht ist das Dach ab, man sieht hinein.
   - **Gepäckzüge fahren in die Halle:** Die Züge fahren durch das Tor in eine freie Spur des Gepäckumschlags, laden dort ab und setzen rückwärts hinaus. Die Koffer laufen über das Sammelband zur Sortierung und weiter zum Gepäckband, wo sie von der Rampe auf das Band rutschen.
