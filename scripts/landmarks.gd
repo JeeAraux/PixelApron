@@ -944,6 +944,73 @@ static func _fire_station(n: Node3D, k: Kit) -> void:
 
 ## Großes Flugfeldlöschfahrzeug (6x6, Front -z): Kabine mit großer Scheibe, Dach- und
 ## Frontwerfer, Rollläden, Laufsteg mit Geländer, Blaulichter, Warnmarkierung hinten.
+## Rettungswagen: Fahrerhaus mit Haube, Kofferaufbau, rot-gelbe Warnmarkierung, Schriftzug,
+## Blaulichtbalken. Front -Z (Fahrtrichtung). Die blinkenden Blaulichter baut rtw_node() dazu.
+static func rtw_mesh() -> ArrayMesh:
+	var k := Kit.new()
+	var white := Color(0.95, 0.95, 0.93)
+	var red := Color(0.85, 0.1, 0.08)
+	var yellow := Color(0.98, 0.85, 0.1)
+	var glass := Color(0.15, 0.2, 0.25)
+	# Räder
+	for z: float in [-2.35, 2.0]:
+		for sx: float in [-1.0, 1.0]:
+			k.cyl(Vector3(sx * 0.95, 0.38, z), Vector3(sx * 1.12, 0.38, z), 0.38, 0.38, Color(0.08, 0.08, 0.08), 12)
+			k.cyl(Vector3(sx * 1.1, 0.38, z), Vector3(sx * 1.13, 0.38, z), 0.22, 0.22, Color(0.7, 0.71, 0.72), 10)
+	# Fahrgestell, Haube, Fahrerhaus
+	k.box(Vector3(-0.95, 0.35, -3.4), Vector3(0.95, 0.55, 3.3), Color(0.2, 0.2, 0.22))
+	k.box(Vector3(-1.0, 0.55, -3.45), Vector3(1.0, 1.25, -2.75), white)
+	k.box(Vector3(-0.95, 0.55, -3.5), Vector3(0.95, 0.85, -3.45), Color(0.15, 0.15, 0.16))
+	for sx: float in [-0.7, 0.7]:
+		k.box(Vector3(sx - 0.2, 0.95, -3.48), Vector3(sx + 0.2, 1.12, -3.44), Color(1.0, 0.98, 0.85, 0.3))
+	k.box(Vector3(-1.02, 0.55, -2.75), Vector3(1.02, 2.3, -1.75), white)
+	k.box(Vector3(-0.92, 1.4, -2.78), Vector3(0.92, 2.15, -2.74), glass)
+	for sx: float in [-1.03, 1.03]:
+		k.box(Vector3(sx - 0.01, 1.35, -2.6), Vector3(sx + 0.01, 2.1, -1.9), glass)
+		k.box(Vector3(sx * 1.12 - 0.04, 1.6, -2.75), Vector3(sx * 1.12 + 0.04, 1.95, -2.6), Color(0.15, 0.15, 0.16))
+	# Kofferaufbau
+	k.box(Vector3(-1.12, 0.6, -1.75), Vector3(1.12, 2.9, 3.35), white)
+	k.box(Vector3(-1.13, 2.9, -1.75), Vector3(1.13, 2.95, 3.36), Color(0.85, 0.85, 0.83))
+	# rote Bauchbinde und gelbe Leuchtstreifen rundum
+	for sx: float in [-1.13, 1.13]:
+		k.box(Vector3(sx - 0.005, 1.15, -1.75), Vector3(sx + 0.005, 1.45, 3.35), red)
+		k.box(Vector3(sx - 0.005, 0.95, -1.75), Vector3(sx + 0.005, 1.15, 3.35), yellow)
+		k.box(Vector3(sx - 0.005, 1.15, -2.75), Vector3(sx + 0.005, 1.45, -1.75), red)
+		# Fenster im Aufbau
+		k.box(Vector3(sx - 0.006, 1.75, 0.6), Vector3(sx + 0.006, 2.4, 1.6), glass)
+	# Heck: Warnmarkierung (rot-gelb), Türen
+	for i in range(6):
+		var x := -1.05 + float(i) * 0.35
+		k.box(Vector3(x, 0.65, 3.35), Vector3(x + 0.35, 1.3, 3.37), red if i % 2 == 0 else yellow)
+	k.box(Vector3(-0.02, 1.3, 3.35), Vector3(0.02, 2.85, 3.38), Color(0.6, 0.6, 0.6))
+	k.box(Vector3(-0.9, 1.9, 3.35), Vector3(-0.15, 2.5, 3.37), glass)
+	k.box(Vector3(0.15, 1.9, 3.35), Vector3(0.9, 2.5, 3.37), glass)
+	PixelFont.draw(k, "RETTUNGSDIENST", Vector3(-1.14, 2.15, 0.7), Vector3(0, 0, -1), Vector3.UP, Vector3(-1, 0, 0), 0.045, red)
+	PixelFont.draw(k, "RETTUNGSDIENST", Vector3(1.14, 2.15, 0.7), Vector3(0, 0, 1), Vector3.UP, Vector3(1, 0, 0), 0.045, red)
+	PixelFont.draw(k, "112", Vector3(0, 2.62, 3.38), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.06, red)
+	# Blaulichtbalken (Gehäuse; Lichter als eigene Knoten)
+	k.box(Vector3(-0.8, 2.3, -2.45), Vector3(0.8, 2.36, -2.05), Color(0.2, 0.2, 0.22))
+	return k.commit()
+
+
+## Rettungswagen-Knoten mit Karosserie ("Body") und vier Blaulichtern "Blau0".."Blau3" (blinken im Einsatz).
+static func rtw_node() -> Node3D:
+	var n := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.name = "Body"
+	mi.mesh = rtw_mesh()
+	n.add_child(mi)
+	var spots := [Vector3(-0.55, 2.42, -2.25), Vector3(0.55, 2.42, -2.25), Vector3(-1.0, 2.98, 3.25), Vector3(1.0, 2.98, 3.25)]
+	for i in range(spots.size()):
+		var lk := Kit.new()
+		lk.box(Vector3(-0.16, -0.06, -0.12), Vector3(0.16, 0.06, 0.12), Color(0.2, 0.45, 1.0, 0.3))
+		var l := lk.instance("Blau%d" % i)
+		l.position = spots[i]
+		l.visible = false
+		mi.add_child(l)
+	return n
+
+
 static func fire_truck_mesh() -> ArrayMesh:
 	if _truck != null:
 		return _truck

@@ -25,7 +25,8 @@ const WATER := Color(0.35, 0.62, 0.8)
 
 const IDS := ["uhr", "snackautomat", "getraenkeautomat", "infoschalter", "lounge", "bistrotisch", "trinkbrunnen",
 	"rollsteig", "werbebildschirm", "spielecke", "ladestation", "geldautomat", "kofferwagen", "kiosk", "aquarium",
-	"palme", "baumbeet", "flugzeugmodell", "fahnen", "fluegel", "massagesessel", "muelltrennung", "gruenwand", "springbrunnen"]
+	"palme", "baumbeet", "flugzeugmodell", "fahnen", "fluegel", "massagesessel", "muelltrennung", "gruenwand", "springbrunnen",
+	"regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]
 
 
 static func build(n: Node3D, id: String) -> bool:
@@ -92,6 +93,18 @@ static func build(n: Node3D, id: String) -> bool:
 		"springbrunnen":
 			_fountain(n, k)
 			anim = true
+		"regal":
+			_shelf(k)
+		"kuechenzeile":
+			_kitchen(k)
+		"behandlungsliege":
+			_medic(n, k)
+			anim = true
+		"spind":
+			_lockers(k)
+		"schaltschrank":
+			_cabinet(n, k)
+			anim = true
 	if k.count > 0:
 		n.add_child(k.instance("Moebel"))
 	if anim:
@@ -100,6 +113,104 @@ static func build(n: Node3D, id: String) -> bool:
 		a.set_script(DecoAnim)
 		n.add_child(a)
 	return true
+
+
+## Schwerlastregal (3 × 1 m) mit Kartons und Paletten.
+static func _shelf(k: Kit) -> void:
+	var blue := Color(0.2, 0.35, 0.65)
+	var orange := Color(0.9, 0.5, 0.15)
+	for x: float in [-1.45, 0.0, 1.45]:
+		for z: float in [-0.45, 0.4]:
+			k.box(Vector3(x - 0.04, 0, z - 0.03), Vector3(x + 0.04, 2.3, z + 0.03), blue)
+	for y: float in [0.15, 0.95, 1.75]:
+		for z: float in [-0.45, 0.4]:
+			k.box(Vector3(-1.5, y, z - 0.04), Vector3(1.5, y + 0.1, z + 0.04), orange)
+		k.box(Vector3(-1.45, y + 0.1, -0.42), Vector3(1.45, y + 0.12, 0.38), Color(0.55, 0.42, 0.28))
+		var i := 0
+		for x: float in [-1.15, -0.45, 0.3, 1.0]:
+			var h := 0.35 + float((i * 7 + int(y * 10.0)) % 3) * 0.12
+			var c := Color(0.68, 0.52, 0.32) if (i + int(y * 10.0)) % 2 == 0 else Color(0.6, 0.45, 0.27)
+			k.box(Vector3(x - 0.3, y + 0.12, -0.35), Vector3(x + 0.3, y + 0.12 + h, 0.3), c)
+			k.box(Vector3(x - 0.3, y + 0.12 + h * 0.45, 0.3), Vector3(x + 0.3, y + 0.12 + h * 0.55, 0.31), Color(0.85, 0.8, 0.7))
+			i += 1
+
+
+## Küchenzeile (4 × 1 m): Unterschränke, Herd mit Abzugshaube, Spüle, Kühlschrank.
+static func _kitchen(k: Kit) -> void:
+	k.box(Vector3(-2.0, 0, -0.5), Vector3(1.2, 0.86, 0.3), WHITE)
+	k.box(Vector3(-2.02, 0.86, -0.52), Vector3(1.22, 0.9, 0.32), Color(0.3, 0.3, 0.32))
+	for x: float in [-1.6, -0.8, 0.0, 0.8]:
+		k.box(Vector3(x - 0.38, 0.1, 0.3), Vector3(x + 0.38, 0.8, 0.31), Color(0.85, 0.85, 0.83))
+		k.box(Vector3(x - 0.15, 0.7, 0.31), Vector3(x + 0.15, 0.72, 0.34), CHROME)
+	# Kochfeld und Haube
+	k.box(Vector3(-1.9, 0.9, -0.4), Vector3(-1.1, 0.91, 0.2), DARK)
+	for p: Vector2 in [Vector2(-1.7, -0.2), Vector2(-1.3, -0.2), Vector2(-1.7, 0.05), Vector2(-1.3, 0.05)]:
+		k.cyl(Vector3(p.x, 0.91, p.y), Vector3(p.x, 0.915, p.y), 0.12, 0.12, Color(0.5, 0.15, 0.1), 10)
+	k.box(Vector3(-1.95, 1.7, -0.5), Vector3(-1.05, 1.85, 0.15), CHROME)
+	k.box(Vector3(-1.6, 1.85, -0.5), Vector3(-1.4, 2.2, -0.3), CHROME)
+	# Spüle mit Armatur
+	k.box(Vector3(-0.4, 0.86, -0.35), Vector3(0.4, 0.91, 0.2), CHROME)
+	k.box(Vector3(-0.3, 0.8, -0.28), Vector3(0.3, 0.9, 0.12), Color(0.55, 0.57, 0.6))
+	k.cyl(Vector3(0, 0.91, -0.38), Vector3(0, 1.2, -0.38), 0.025, 0.025, CHROME, 8)
+	k.box(Vector3(-0.03, 1.17, -0.38), Vector3(0.03, 1.2, -0.2), CHROME)
+	# Oberschränke
+	k.box(Vector3(-0.9, 1.5, -0.5), Vector3(1.2, 2.1, -0.15), WHITE)
+	# Kühlschrank
+	k.box(Vector3(1.25, 0, -0.5), Vector3(2.0, 2.05, 0.3), Color(0.82, 0.83, 0.85))
+	k.box(Vector3(1.3, 1.2, 0.3), Vector3(1.95, 1.22, 0.31), Color(0.55, 0.57, 0.6))
+	k.box(Vector3(1.85, 0.4, 0.31), Vector3(1.88, 1.9, 0.34), CHROME)
+
+
+## Behandlungsliege (2 × 1 m) mit Notfallrucksack, Defibrillator (blinkt) und Sauerstoff.
+static func _medic(n: Node3D, k: Kit) -> void:
+	k.box(Vector3(-0.95, 0.55, -0.35), Vector3(0.75, 0.68, 0.35), Color(0.2, 0.35, 0.55))
+	k.box(Vector3(0.45, 0.68, -0.35), Vector3(0.75, 0.85, 0.35), Color(0.2, 0.35, 0.55))
+	k.box(Vector3(-0.92, 0.68, -0.32), Vector3(0.4, 0.7, 0.32), WHITE)
+	for x: float in [-0.85, 0.65]:
+		k.box(Vector3(x - 0.04, 0, -0.04), Vector3(x + 0.04, 0.55, 0.04), CHROME)
+		k.box(Vector3(x - 0.04, 0.0, -0.32), Vector3(x + 0.04, 0.05, 0.32), CHROME)
+	# Rucksack (rot mit weißem Kreuz), Defi (grün), O2-Flasche
+	k.rounded_box(Vector3(-0.95, 0, 0.42), Vector3(-0.45, 0.45, 0.62), 0.05, Color(0.8, 0.12, 0.1), 2)
+	k.box(Vector3(-0.73, 0.15, 0.62), Vector3(-0.67, 0.33, 0.63), WHITE)
+	k.box(Vector3(-0.79, 0.21, 0.62), Vector3(-0.61, 0.27, 0.63), WHITE)
+	k.box(Vector3(0.6, 0.85, -0.3), Vector3(0.95, 1.1, -0.05), Color(0.2, 0.6, 0.3))
+	k.cyl(Vector3(0.85, 0, 0.45), Vector3(0.85, 0.75, 0.45), 0.08, 0.08, Color(0.85, 0.85, 0.85), 10)
+	k.cyl(Vector3(0.85, 0.75, 0.45), Vector3(0.85, 0.82, 0.45), 0.04, 0.04, Color(0.15, 0.55, 0.25), 8)
+	var lk := Kit.new()
+	lk.box(Vector3(-0.03, 0, -0.03), Vector3(0.03, 0.03, 0.03), Color(0.3, 1.0, 0.4, 0.3))
+	var l := _part(n, "BlinkDefi", lk, Vector3(0.88, 1.1, -0.18))
+	l.set_meta("period", 1.8)
+
+
+## Spinde (2 m breit, 4 Türen) mit Bank davor.
+static func _lockers(k: Kit) -> void:
+	var col := Color(0.45, 0.55, 0.65)
+	k.box(Vector3(-1.0, 0, -0.3), Vector3(1.0, 1.85, 0.25), col)
+	for i in range(4):
+		var x := -1.0 + float(i) * 0.5
+		k.box(Vector3(x + 0.02, 0.05, 0.25), Vector3(x + 0.48, 1.8, 0.26), col.lightened(0.08))
+		for y: float in [1.55, 1.6, 1.65]:
+			k.box(Vector3(x + 0.12, y, 0.26), Vector3(x + 0.38, y + 0.02, 0.27), DARK)
+		k.box(Vector3(x + 0.4, 0.9, 0.26), Vector3(x + 0.43, 1.05, 0.29), CHROME)
+	k.box(Vector3(-0.9, 0.4, 0.45), Vector3(0.9, 0.45, 0.6), OAK)
+	for x: float in [-0.8, 0.8]:
+		k.box(Vector3(x - 0.03, 0, 0.5), Vector3(x + 0.03, 0.4, 0.55), STEEL)
+
+
+## Schaltschrank mit Lüftungsgitter, Anzeige und Statuslampen.
+static func _cabinet(n: Node3D, k: Kit) -> void:
+	k.box(Vector3(-0.6, 0, -0.3), Vector3(0.6, 2.0, 0.28), Color(0.78, 0.79, 0.76))
+	k.box(Vector3(-0.58, 0.05, 0.28), Vector3(-0.01, 1.95, 0.29), Color(0.82, 0.83, 0.8))
+	k.box(Vector3(0.01, 0.05, 0.28), Vector3(0.58, 1.95, 0.29), Color(0.82, 0.83, 0.8))
+	for i in range(6):
+		k.box(Vector3(-0.5, 0.2 + float(i) * 0.06, 0.29), Vector3(-0.1, 0.22 + float(i) * 0.06, 0.3), DARK)
+	k.box(Vector3(0.12, 1.4, 0.29), Vector3(0.45, 1.65, 0.3), Color(0.1, 0.2, 0.15))
+	k.box(Vector3(-0.15, 0.95, 0.29), Vector3(-0.08, 1.15, 0.31), DARK)
+	k.box(Vector3(-0.55, 1.98, -0.25), Vector3(0.55, 2.0, 0.25), Color(0.92, 0.74, 0.18))
+	var lk := Kit.new()
+	lk.box(Vector3(-0.02, 0, 0), Vector3(0.02, 0.04, 0.02), Color(0.3, 1.0, 0.4, 0.3))
+	var l := _part(n, "BlinkSchrank", lk, Vector3(0.2, 1.75, 0.29))
+	l.set_meta("period", 1.3)
 
 
 static func _part(n: Node3D, name: String, k: Kit, at: Vector3 = Vector3.ZERO) -> MeshInstance3D:

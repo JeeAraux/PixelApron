@@ -53,7 +53,7 @@ static func build(n: Node3D, id: String, opts: Dictionary) -> bool:
 		"gepaecklift":
 			_bag_lift(k)
 		"sicherheit":
-			_security(n, k)
+			_security(n, k, String(opts.get("technik", "klassisch")))
 			if bool(opts.get("fastlane", false)):
 				# Fast-Lane für Vielflieger: goldener Boden und Schild über der rechten Spur
 				k.box(Vector3(0.2, 0.04, -4.0), Vector3(3.0, 0.05, 4.0), Color(0.62, 0.5, 0.24))
@@ -485,7 +485,20 @@ static func _sorter(n: Node3D, k: Kit, chutes: int = 4) -> void:
 
 # ---------------------------------------------------------------- Sicherheitskontrolle
 
-static func _security(n: Node3D, k: Kit) -> void:
+## Rollwagen mit Kartons (Warenlieferung vom Lager in die Läden).
+static func goods_cart_mesh() -> ArrayMesh:
+	var k := Kit.new()
+	k.box(Vector3(-0.35, 0.18, -0.5), Vector3(0.35, 0.22, 0.5), Color(0.35, 0.38, 0.42))
+	for p: Vector2 in [Vector2(-0.3, -0.45), Vector2(0.3, -0.45), Vector2(-0.3, 0.45), Vector2(0.3, 0.45)]:
+		k.cyl(Vector3(p.x - 0.03, 0.08, p.y), Vector3(p.x + 0.03, 0.08, p.y), 0.08, 0.08, DARK, 8)
+	k.box(Vector3(-0.35, 0.22, 0.45), Vector3(0.35, 1.0, 0.5), Color(0.35, 0.38, 0.42))
+	k.box(Vector3(-0.3, 0.22, -0.45), Vector3(0.28, 0.55, 0.0), Color(0.68, 0.52, 0.32))
+	k.box(Vector3(-0.28, 0.22, 0.02), Vector3(0.3, 0.7, 0.42), Color(0.6, 0.45, 0.27))
+	k.box(Vector3(-0.2, 0.55, -0.4), Vector3(0.2, 0.8, -0.05), Color(0.72, 0.56, 0.35))
+	return k.commit()
+
+
+static func _security(n: Node3D, k: Kit, technik: String = "klassisch") -> void:
 	k.box(Vector3(-3, 0, -4), Vector3(3, 0.04, 4), Color(0.26, 0.28, 0.32))
 	k.box(Vector3(-0.06, 0, -3.6), Vector3(0.06, 1.05, 3.6), CHROME)
 	_pane(n, "Trenner", Vector3(-0.03, 0.2, -3.5), Vector3(0.03, 1.0, 3.5))
@@ -500,8 +513,20 @@ static func _security(n: Node3D, k: Kit) -> void:
 			rz += 0.18
 		for sx: float in [-0.5, 0.5]:
 			k.box(Vector3(bx + sx - 0.03, 0.76, -2.6), Vector3(bx + sx + 0.03, 0.9, 3.2), CHROME)
-		# Röntgengerät: Gehäuse mit Bleivorhang und Monitor
-		k.rounded_box(Vector3(bx - 0.75, 0.05, -0.6), Vector3(bx + 0.75, 1.75, 1.0), 0.06, Color(0.78, 0.8, 0.8), 2)
+		# Röntgengerät: Gehäuse mit Bleivorhang und Monitor (CT: großes Gantry-Gehäuse)
+		if technik == "klassisch":
+			k.rounded_box(Vector3(bx - 0.75, 0.05, -0.6), Vector3(bx + 0.75, 1.75, 1.0), 0.06, Color(0.78, 0.8, 0.8), 2)
+		else:
+			k.rounded_box(Vector3(bx - 0.65, 0.05, -1.0), Vector3(bx + 0.9, 1.95, 1.4), 0.12, Color(0.9, 0.91, 0.92), 3)
+			k.box(Vector3(bx - 0.66, 1.4, -0.4), Vector3(bx + 0.91, 1.55, 0.8), Color(0.15, 0.45, 0.8))
+			PixelFont.draw(k, "CT", Vector3(bx, 1.7, 1.41), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.05, Color(0.15, 0.35, 0.6))
+		if technik == "express":
+			# automatische Wannenrückführung unter dem Band und Abschiebeplatz mit drei Stationen
+			k.box(Vector3(bx - 0.48, 0.15, -2.6), Vector3(bx + 0.48, 0.35, 3.2), Color(0.42, 0.45, 0.48))
+			for i in range(3):
+				var zz := -2.5 + float(i) * 0.45
+				k.box(Vector3(bx + 0.55, 0.0, zz), Vector3(bx + 1.3, 0.8, zz + 0.38), Color(0.6, 0.62, 0.65))
+				k.box(Vector3(bx + 1.25, 0.8, zz + 0.1), Vector3(bx + 1.3, 1.0, zz + 0.28), Color(0.2, 0.8, 0.4, 0.3))
 		k.box(Vector3(bx - 0.45, 0.82, -0.62), Vector3(bx + 0.45, 1.3, -0.58), Color(0.15, 0.15, 0.16))
 		k.box(Vector3(bx - 0.45, 0.82, 0.98), Vector3(bx + 0.45, 1.3, 1.02), Color(0.15, 0.15, 0.16))
 		for i in range(6):

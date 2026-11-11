@@ -37,22 +37,22 @@ func run(main: Node) -> void:
 	var hangar0: Dictionary = game.items_of("hangar")[0]
 	var tb = main.terminal
 	check(game.supplied(term, "strom") and game.supplied(term, "wasser") and game.supplied(term, "waerme"), "Terminalhalle hat Strom, Wasser und Wärme")
-	check(game.inside_of(term).size() > 20 and game.walls_of(term).size() == 5, "Terminal eingerichtet (%d Teile, %d Wände)" % [game.inside_of(term).size(), game.walls_of(term).size()])
+	check(game.inside_of(term).size() > 20 and game.walls_of(term).size() == 7, "Terminal eingerichtet (%d Teile, %d Wände)" % [game.inside_of(term).size(), game.walls_of(term).size()])
 	check(tb.check() == "", "Terminal betriebsbereit " + tb.check())
 	check(String(hangar0["supply"].get("strom", "")) == "ok", "Hangar im Startflughafen hat Strom")
 	check(main.flights.check_operation() == "", "Flugbetrieb startklar")
 	# 0.9: Bereiche, Türen, Personal, Garagen und Betriebsstraße im Startflughafen
-	check(game.zones_of(term).size() == 3, "Bereiche angelegt (öffentlich, Sicherheit, Personal)")
+	check(game.zones_of(term).size() == 4, "Bereiche angelegt (öffentlich, Sicherheit, Personal, Lager)")
 	check(game.zone_at(term, Vector2(-67, -20), 0) == "sicherheit" and game.zone_at(term, Vector2(-34, 2.5), 0) == "oeffentlich"
 		and game.zone_at(term, Vector2(90, -20), 0) == "personal", "Gates im Sicherheitsbereich, Check-in öffentlich, Gepäck im Personalbereich")
 	var doors: Array = game.items_of("tuer")
-	check(doors.size() == 2, "Zwei Personaltüren gesetzt")
+	check(doors.size() == 3, "Drei Personaltüren gesetzt (eine am Lager)")
 	var cut_walls := 0
 	for l: Dictionary in game.walls_of(term):
 		for c: Array in game.wall_cuts(l):
 			if c.size() == 2:
 				cut_walls += 1
-	check(cut_walls == 2, "Die Türen öffnen ihre Wände (%d Öffnungen)" % cut_walls)
+	check(cut_walls == 3, "Die Türen öffnen ihre Wände (%d Öffnungen)" % cut_walls)
 	var tgrids: Dictionary = tb.grids[(term["node"] as Node).get_instance_id()]
 	var dcell := Vector2i(84, -8)
 	check((tgrids[0]["dep"] as AStarGrid2D).is_point_solid(dcell) and not (tgrids[0]["staff"] as AStarGrid2D).is_point_solid(dcell),
@@ -849,6 +849,130 @@ func run(main: Node) -> void:
 		if l["kind"] == "kofferband" and (l["points"][0] as Vector3).z > 850.0:
 			game.remove(l, 1.0)
 	game.set_interior_view(false)
+	# 0.20: Raumarten, Waren und Lieferungen, Sicherheitstechnik, Wand- und Schnittansicht
+	# (der Test der Bereiche hat oben alle Flächen entfernt, auch die Raumart des Lagers)
+	if game.rooms_of(sh, "lager").is_empty():
+		game.build_zone("raum_lager", Rect2(80, -16, 6, 8), true, 0)
+	check(game.room_ok(sh, "lager"), "Startterminal: Lager mit Regalen ist fertig eingerichtet")
+	var rh2: Dictionary = game.build_hall(Rect2(-640, 920, 40, 30))
+	game.set_interior_view(true)
+	game.build_zone("bereich_personal", Rect2(-640, 920, 40, 30))
+	var rwhy: String = game.build_room(Rect2(-630, 925, 6, 5), "", "personal", "kueche")
+	var kst: Array = game.rooms_of(rh2, "kueche")
+	check(rwhy == "" and kst.size() == 1 and not bool(kst[0]["ok"]), "Raum mit Raumart Küche angelegt, ihm fehlt noch die Küchenzeile")
+	check(game.zone_at(rh2, Vector2(-627, 927), 0) == "personal", "Raumarten überdecken die Bereiche nicht")
+	game.build_item("kuechenzeile", Vector3(-627, 0, 926), 0)
+	check(game.room_ok(rh2, "kueche"), "Mit Küchenzeile ist die Küche fertig")
+	game.remove(rh2, 1.0)
+	var sec0: float = tb.security_cap()
+	var sec_items: Array = game.items_of("sicherheit")
+	game.cycle_option(sec_items[0], "technik", 1)
+	check(tb.security_cap() > sec0, "CT-Scanner an der Kontrolle schafft mehr (%d → %d)" % [int(sec0), int(tb.security_cap())])
+	game.cycle_option(sec_items[0], "technik", -1)
+	var shid: int = (sh["node"] as Node).get_instance_id()
+	tb.goods[shid] = 1.0
+	var rf1: float = tb.retail_factor()
+	tb.consume_goods(3000)
+	check(tb.goods_of(sh) < 0.5 and tb.retail_factor() < rf1, "Leere Regale: Läden verdienen weniger (%.2f)" % tb.retail_factor())
+	tb.goods_t = 0.0
+	tb._goods_tick(0.1)
+	var trolley := false
+	for per: Dictionary in tb.people:
+		trolley = trolley or bool(per.get("trolley", false))
+	check(trolley and tb.goods_of(sh) > 0.0, "Mitarbeiter bringen Ware mit dem Rollwagen aus dem Lager")
+	tb.stock[shid] = 0.3
+	main.ops.delivery_t = 0.0
+	main.ops._delivery_tick(0.1)
+	check(not main.ops.deliveries.is_empty(), "Lieferwagen fährt zum Rolltor")
+	for i in range(2500):
+		main.ops._delivery_tick(0.1)
+		main.ops._animate_doors(0.1)
+		if tb.stock_of(sh) > 0.9:
+			break
+	check(tb.stock_of(sh) > 0.9, "Lieferung füllt das Lager auf")
+	tb.goods[shid] = 1.0
+	check(game.cycle_wall_mode() == "voll", "Wandansicht umschaltbar")
+	var full_wall := false
+	for l: Dictionary in game.lines:
+		if l["kind"] == "innenwand":
+			var hi := (l["node"] as Node3D).get_node_or_null("Hoch") as Node3D
+			full_wall = full_wall or (hi != null and hi.visible)
+	game.cycle_wall_mode()
+	game.cycle_wall_mode()
+	check(full_wall and game.wall_mode == "halb", "Innenwände in voller Höhe zeigbar")
+	game.view_floor = 1
+	game.section_view = true
+	var sec_on: bool = game.floor_shown(0)
+	game.section_view = false
+	check(sec_on and not game.floor_shown(0), "Schnittansicht zeigt die Ebenen darunter")
+	game.set_view_floor(0)
+	game.set_interior_view(false)
+	# 0.21: Personen ansehen, Overlays, Notfälle mit Rettungswagen, Störungen
+	var ev = main.events
+	check(not ev.enabled, "Ereignisse im Selbsttest abgeschaltet (nur gezielt ausgelöst)")
+	var rw: Array = game.items_of("rettungswache")
+	check(rw.size() == 1 and game.supplied(rw[0], "strom") and "rettungswache" in Catalog.garages_for("rtw"), "Rettungswache im Startflughafen mit Strom")
+	var pnode := Node3D.new()
+	tb.add_child(pnode)
+	var fake := {"node": pnode, "flight": 777003, "dep": true, "hall_id": shid, "plan": [["wait", 999.0]], "si": 0, "path": [], "pi": 0,
+		"timer": 0.0, "pos": Vector3(20, 0, 8)}
+	tb.people.append(fake)
+	game.set_interior_view(true)
+	check(is_same(tb.person_at(Vector3(20.4, 0, 8.3)), fake), "Person im Terminal anklickbar")
+	var pd: Array = tb.describe_person(fake, main.flights)
+	check(String(pd[0]).begins_with("Fluggast") and String(pd[1]).contains("Hunger"), "Infofeld der Person: Flug, Tätigkeit, Bedürfnisse")
+	tb.collapse(fake)
+	check(bool(fake.get("collapsed", false)), "Fluggast bricht zusammen und liegt am Boden")
+	var rinfo := {}
+	var rpts: Array = tb.rescue_point(fake)
+	var rsent := false
+	for opt: Array in rpts:
+		if main.ops.send_rtw(opt[0], opt[1], 3.0, rinfo):
+			rsent = true
+			break
+	check(rsent and not bool(rinfo.get("outside", false)), "Rettungswagen rückt aus der Rettungswache aus")
+	for i in range(4000):
+		main.ops._step_rtw(0.1)
+		main.ops._animate_doors(0.1)
+		main.ops._step_returning(0.1)
+		if bool(rinfo.get("done", false)):
+			break
+	check(rinfo.has("arrived") and bool(rinfo.get("done", false)), "Rettungswagen mit Blaulicht vor Ort, Einsatz beendet (%.0f s)" % (float(rinfo.get("arrived", 0.0)) - float(rinfo.get("sent", 0.0))))
+	tb.carry_away(fake)
+	check(not (fake in tb.people), "Patient abtransportiert")
+	game.set_interior_view(false)
+	check(not tb.heat.is_empty(), "Gedränge und Wartezeit werden je Halle gesammelt")
+	check(main.overlay.cycle() == "gedraenge" and main.overlay.quads.size() >= 1, "Overlay Gedränge über der Halle")
+	main.overlay.set_mode("laerm")
+	var rw0: Array = game.runway_list()[0]
+	var near_n: float = main.flights.noise_at((rw0[0] as Vector3).lerp(rw0[1], 0.5) + Vector3(0, 0, 100))
+	var far_n: float = main.flights.noise_at((rw0[0] as Vector3).lerp(rw0[1], 0.5) + Vector3(0, 0, 3000))
+	check(main.overlay.quads.has("laerm") and near_n > far_n + 10.0, "Fluglärm-Overlay: nah an der Piste lauter (%.0f / %.0f)" % [near_n, far_n])
+	main.overlay.set_mode("aus")
+	var link0: int = game.checkins_linked(sh).size()
+	check(ev.trigger("bandausfall"), "Bandausfall ausgelöst")
+	var link1: int = game.checkins_linked(sh).size()
+	for i in range(1200):
+		ev.step(0.1)
+		if ev.active.is_empty():
+			break
+	check(ev.active.is_empty() and game.checkins_linked(sh).size() == link0, "Kofferband repariert (%d → %d → %d Schalter)" % [link0, link1, game.checkins_linked(sh).size()])
+	var st0: int = tb.staff_available()
+	ev.trigger("streik")
+	check(tb.staff_available() < st0, "Streik: weniger Personal (%d statt %d)" % [tb.staff_available(), st0])
+	ev.trigger("gewitter")
+	check(main.flights.storm and main.ops.storm, "Gewitter: Abfertigung und Vorfeld ruhen")
+	check(ev.trigger("stromausfall"), "Stromausfall an einem Trafo")
+	for i in range(7000):
+		ev.step(0.1)
+		if ev.active.is_empty():
+			break
+	check(ev.active.is_empty() and tb.staff_factor == 1.0 and not main.flights.storm and not main.ops.storm, "Ereignisse klingen wieder ab")
+	game.evaluate_supply()
+	main.flights.inspect_t = 5.0
+	check(main.flights._runway_closed(), "Pisteninspektion nach Vogelschlag sperrt die Piste")
+	main.flights.inspect_t = 0.0
+	main.weather.force("klar")
 	game.sandbox = false
 
 	# Rollführungslinie: nur auf Belag
@@ -1058,8 +1182,8 @@ func run(main: Node) -> void:
 	check(sides_after == sides_before and sides_after > 0, "Querschnitte im Spielstand (%d Alleen)" % sides_after)
 	check((game.extra as Dictionary).has("betrieb") and (game.extra as Dictionary).has("wetter"), "Wetter, Statistik und Verträge im Spielstand")
 	var term2: Dictionary = game.items_of("halle")[0]
-	check(game.walls_of(term2).size() == 5 and game.inside_of(term2).size() > 20 and tb.check() == "", "Terminal mit Wänden und Einrichtung geladen " + tb.check())
-	check(game.zones_of(term2).size() >= 2 and game.items_of("tuer").size() == 2, "Bereiche und Türen geladen")
+	check(game.walls_of(term2).size() == 7 and game.inside_of(term2).size() > 20 and tb.check() == "", "Terminal mit Wänden und Einrichtung geladen " + tb.check())
+	check(game.zones_of(term2).size() >= 2 and game.items_of("tuer").size() == 3, "Bereiche und Türen geladen")
 	await get_tree().process_frame
 	check(main.traffic.movers.size() > 5, "Verkehr nach dem Laden wieder unterwegs")
 

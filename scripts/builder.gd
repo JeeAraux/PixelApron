@@ -60,6 +60,7 @@ var mat_upgrade: StandardMaterial3D
 var snapping := true          # Winkel und Länge einrasten (Shift kehrt es um)
 var room_zone := ""           # Raum-Werkzeug: Bereich, der mit angelegt wird ("" = keiner)
 var room_door := "automatik"  # Raum-Werkzeug: Türart
+var room_kind := ""           # Raum-Werkzeug: Raumart (lager, kueche, sanitaet, pause, technik)
 var area_from := Vector3.INF  # Flächenabriss: Startecke beim Ziehen
 
 
@@ -300,7 +301,7 @@ func on_click(p: Vector3) -> void:
 			_refresh()
 			return
 		var rr := room_rect(points[0], hover)
-		var why := game.build_room(rr, room_zone, room_door)
+		var why := game.build_room(rr, room_zone, room_door, room_kind)
 		game.toast.emit(why if why != "" else "Raum %d × %d m gebaut" % [int(rr.size.x), int(rr.size.y)])
 		points.clear()
 		_refresh()
@@ -1203,6 +1204,8 @@ func set_room_option(key: String, value: String) -> void:
 		room_zone = value
 	elif key == "tuer":
 		room_door = value
+	elif key == "raumart":
+		room_kind = value
 	_refresh()
 
 

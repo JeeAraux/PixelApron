@@ -217,7 +217,13 @@ func _move_plows() -> void:
 
 
 ## Licht nach Wetter dämpfen (nach dem Tageslicht aufrufen).
+var flash := 0.0   # Blitz bei Gewitter (Ereignisse), klingt schnell ab
+
+
 func apply_light(sun: DirectionalLight3D, env: Environment) -> void:
+	if flash > 0.0:
+		sun.light_energy += flash * 2.5
+		env.ambient_light_energy += flash * 2.0
 	var dim := 0.0
 	match state:
 		"wolken":

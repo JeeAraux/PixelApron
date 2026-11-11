@@ -28,6 +28,8 @@ var jobs: Dictionary = {}     # Flug-ID -> Auftrag (Schlepper, Treppen, Busse)
 var walkers: Array = []       # Passagiere unter freiem Himmel
 var vehicles: Array = []      # alle Bodenfahrzeuge, damit sie einander ausweichen
 var flights_ref: Variant = null   # flights.gd: rollende Flugzeuge, vor denen Fahrzeuge warten
+var storm := false                # Gewitter: Bodenfahrzeuge bleiben stehen (außer Rettungsdienst und Feuerwehr)
+var rtw_jobs: Array = []          # Rettungswagen im Einsatz: {v, target, face, phase, t, stay, info}
 var linked_baggage := false   # Gepäckförderband zum Umschlag vorhanden: Abfertigung schneller
 var net := ServiceNet.new()      # Betriebsstraßen und Vorfelder
 var fire_net := ServiceNet.new() # dazu Rollwege (Feuerwehr)
@@ -113,6 +115,10 @@ static func _length_of(kind: String) -> float:
 			return 7.6
 		"gpu":
 			return 3.6
+		"rtw":
+			return 6.8
+		"lieferwagen":
+			return 5.3
 		"zug":
 			return 3.0
 	return 5.0
@@ -143,6 +149,10 @@ func _drive_to(v: Dictionary, b: Vector3, hb: Vector3, vmax: float) -> void:
 
 func _move(v: Dictionary, sim: float) -> void:
 	if v["kind"] == "bus" and _bus_doors(v, sim):
+		return
+	if storm and not (String(v["kind"]) in ["rtw", "feuerwehr"]) and bool(v["moving"]):
+		# Blitzgefahr: auf dem Vorfeld ruht die Arbeit
+		v["v"] = 0.0
 		return
 	if not bool(v["moving"]):
 		_settle(v, sim)
@@ -649,6 +659,13 @@ func clear() -> void:
 	missions.clear()
 	door_want.clear()
 	chute_users.clear()
+	for d: Dictionary in deliveries:
+		_free(d.get("v"))
+	deliveries.clear()
+	for j: Dictionary in rtw_jobs:
+		_free(j.get("v"))
+	rtw_jobs.clear()
+	storm = false
 
 
 # ---------------------------------------------------------------- Passagiere draußen
@@ -770,6 +787,8 @@ func step(sim: float) -> void:
 		_rebuild_net()
 	_step_returning(sim)
 	_step_sorting(sim)
+	_delivery_tick(sim)
+	_step_rtw(sim)
 	_fire_tick(sim)
 	_animate_doors(sim)
 	for id: int in jobs.keys():
@@ -1938,6 +1957,187 @@ func _chute_free(v: Dictionary) -> bool:
 		chute_users.append(v)
 		return true
 	return false
+
+
+## Ferner Startpunkt im Betriebsstraßennetz (Einfahrt von außerhalb), von dem aus ziel erreichbar ist:
+## [Start, Weg] oder leer.
+func far_start(target: Vector3) -> Array:
+	var order := []
+	for i in range(net.pos.size()):
+		order.append([net.pos[i].distance_to(target), i])
+	order.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) > float(b[0]))
+	for k in range(mini(order.size(), 24)):
+		var q: Vector3 = net.pos[int(order[k][1])]
+		var road := net.route(q, target, 80.0)
+		if road.size() >= 2:
+			return [q, road]
+	return []
+
+
+# ---------------------------------------------------------------- Rettungsdienst
+
+## Rettungswagen mit Blaulicht zu einem Punkt schicken (aus der Rettungswache, sonst von außerhalb über
+## das Ende der Betriebsstraße). info bekommt "arrived" (Uhrzeit) und "done", wenn der Einsatz vorbei ist.
+func send_rtw(target: Vector3, face: Vector3, stay: float, info: Dictionary) -> bool:
+	if net_dirty:
+		_rebuild_net()
+	if net.pos.size() < 2:
+		return false
+	var g := _garage("rtw", target)
+	var start: Vector3
+	var way := []
+	if not g.is_empty():
+		start = g[1]
+		way.append(g[1])
+		for q: Vector3 in net.route(g[2], target, 80.0):
+			way.append(q)
+	else:
+		var se := far_start(target)
+		if se.is_empty():
+			return false
+		start = se[0]
+		for q: Vector3 in (se[1] as PackedVector3Array):
+			way.append(q)
+		info["outside"] = true
+	if way.size() < 2:
+		return false
+	# das letzte Stück abseits der Betriebsstraße darf nicht durch Gebäude führen: höchstens 30 m
+	if way.size() >= 3 and (way[way.size() - 2] as Vector3).distance_to(target) > 30.0:
+		return false
+	var h0 := ((way[1] as Vector3) - (way[0] as Vector3))
+	h0.y = 0.0
+	h0 = h0.normalized() if h0.length() > 0.01 else Vector3.FORWARD
+	var v := _vehicle_from(Landmarks.rtw_node(), "rtw", start, h0)
+	v["blau"] = true
+	var pts := _route(way, h0, face if face.length() > 0.1 else h0)
+	v["vmax"] = GSE_V * (1.9 if g.is_empty() else 1.7)
+	if not g.is_empty():
+		_leave_garage(v, g, pts)
+	else:
+		_go(v, pts, float(v["vmax"]))
+	info["sent"] = clock
+	rtw_jobs.append({"v": v, "target": target, "phase": "hin", "t": 0.0, "stay": stay, "info": info})
+	return true
+
+
+func _step_rtw(sim: float) -> void:
+	for j: Dictionary in rtw_jobs.duplicate():
+		var v: Dictionary = j["v"]
+		if not is_instance_valid(v.get("node")):
+			rtw_jobs.erase(j)
+			continue
+		var on := bool(v.get("blau", false)) and fmod(clock * 3.0, 1.0) < 0.5
+		var body := (v["node"] as Node3D).get_node_or_null("Body")
+		if body != null:
+			for i in range(4):
+				var l := body.get_node_or_null("Blau%d" % i) as Node3D
+				if l != null:
+					l.visible = on if i % 2 == 0 else (bool(v.get("blau", false)) and not on)
+		var info: Dictionary = j["info"]
+		match String(j["phase"]):
+			"hin":
+				if _door_step(v):
+					_move(v, sim)
+				if not v.has("await_door") and not bool(v["moving"]):
+					j["phase"] = "vor_ort"
+					info["arrived"] = clock
+			"vor_ort":
+				j["t"] = float(j["t"]) + sim
+				if float(j["t"]) >= float(j["stay"]) or bool(info.get("release", false)):
+					info["done"] = true
+					v["blau"] = false
+					rtw_jobs.erase(j)
+					_send_home(v, "rtw")
+
+
+# ---------------------------------------------------------------- Warenlieferung
+
+var deliveries: Array = []   # {v, hall, gate, phase, t, back}
+var delivery_t := 20.0
+
+
+## Lieferwagen bringen Ware: Hat eine Halle ein fertiges Lager mit weniger als 60 % Bestand und ein
+## Rolltor, fährt ein Transporter vom Ende der Betriebsstraße vors Tor, das Tor geht auf, er lädt aus.
+func _delivery_tick(sim: float) -> void:
+	for d: Dictionary in deliveries.duplicate():
+		var v: Dictionary = d["v"]
+		if not is_instance_valid(v.get("node")):
+			deliveries.erase(d)
+			continue
+		var gate: Dictionary = d["gate"]
+		var gate_ok := is_instance_valid(gate.get("node"))
+		if bool(v["moving"]):
+			if gate_ok and String(d["phase"]) == "hin" and (v["pos"] as Vector3).distance_to(door_point(gate)) < 30.0:
+				var key := _door_key(gate, 0)
+				door_rec[key] = [gate, 0]
+				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
+			_move(v, sim)
+			continue
+		if String(d["phase"]) == "hin":
+			d["t"] = float(d["t"]) + sim
+			if gate_ok:
+				var key2 := _door_key(gate, 0)
+				door_want[key2] = maxf(float(door_want.get(key2, 0.0)), clock + 1.5)
+			if float(d["t"]) > 18.0:
+				if terminal != null and is_instance_valid((d["hall"] as Dictionary).get("node")):
+					terminal.restock(d["hall"])
+				d["phase"] = "weg"
+				var back := net.route(v["pos"], d["back"], 80.0)
+				if back.size() < 2:
+					_free(v)
+					deliveries.erase(d)
+					continue
+				var way := []
+				for q: Vector3 in back:
+					way.append(q)
+				_go(v, _route(way, v["heading"], (way[way.size() - 1] - way[way.size() - 2]).normalized()), GSE_V * 1.4)
+		else:
+			_free(v)
+			deliveries.erase(d)
+	delivery_t -= sim
+	if delivery_t > 0.0 or terminal == null:
+		return
+	delivery_t = 40.0
+	if net.pos.size() < 2:
+		return
+	for h: Dictionary in game.items_of("halle"):
+		if not game.room_ok(h, "lager") or float(terminal.stock_of(h)) > 0.6:
+			continue
+		var busy := false
+		for d: Dictionary in deliveries:
+			busy = busy or is_same(d["hall"], h)
+		if busy:
+			continue
+		var gate: Dictionary = {}
+		for g: Dictionary in game.items_of("rolltor"):
+			if is_same(g.get("hall", {}), h) and GameState.floor_of(g) == 0:
+				gate = g
+				break
+		if gate.is_empty():
+			continue
+		# Anfahrt von einem fernen Ende des Betriebsstraßennetzes, das mit dem Tor verbunden ist
+		var dp := door_point(gate)
+		var no := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
+		var side := (-no).cross(Vector3.UP)
+		var park := dp + no * 4.5 - side * 9.0
+		var se := far_start(park)
+		if se.is_empty():
+			continue
+		var start: Vector3 = se[0]
+		var road: PackedVector3Array = se[1]
+		var way := []
+		for q: Vector3 in road:
+			way.append(q)
+		way.insert(way.size() - 1, park - side * 12.0)
+		var node := Node3D.new()
+		var mi := MeshInstance3D.new()
+		mi.name = "Body"
+		mi.mesh = Models.car_mesh("transporter", Color(0.93, 0.93, 0.9))
+		node.add_child(mi)
+		var h0 := (road[1] - road[0]).normalized() if road.size() > 1 else Vector3.FORWARD
+		var v := _vehicle_from(node, "lieferwagen", start, h0)
+		_go(v, _route(way, h0, side), GSE_V * 1.4)
+		deliveries.append({"v": v, "hall": h, "gate": gate, "phase": "hin", "t": 0.0, "back": start})
 
 
 ## Gepäckzüge an der Sortierung: anhalten, Koffer abladen (Ankunft) bzw. aufladen (Abflug).

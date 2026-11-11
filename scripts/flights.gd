@@ -77,9 +77,45 @@ func _process(delta: float) -> void:
 
 
 ## Ein Simulationsschritt; sim = vergangene Simulationssekunden (auch für Tests nutzbar).
+var storm := false        # Gewitter: Abfertigung ruht (Ereignisse)
+var inspect_t := 0.0      # Pisteninspektion nach Vogelschlag: so lange (Sekunden) ist die Piste zu
+var events: Variant = null
+
+
+## Fluglärm an einem Punkt (etwa dB(A)): Pisten mit An- und Abflugschneise, lauter mit mehr Bewegungen
+## in der letzten Stunde. 0 weit weg, um 70 direkt an der Piste.
+func noise_at(p: Vector3) -> float:
+	var n := float(movements.size())
+	var best := 0.0
+	for rw: Array in game.runway_list():
+		var a: Vector3 = rw[0]
+		var b: Vector3 = rw[1]
+		var ab := Vector2(b.x - a.x, b.z - a.z)
+		var len := ab.length()
+		if len < 1.0:
+			continue
+		var dir := ab / len
+		var ap := Vector2(p.x - a.x, p.z - a.z)
+		var t := ap.dot(dir)
+		var c := absf(ap.x * dir.y - ap.y * dir.x)
+		var beyond := maxf(0.0, maxf(-t, t - len))
+		# Schneisen: weit hinaus, aber schmal
+		var d := sqrt(c * c + beyond * beyond * 0.06)
+		var l := 58.0 + 8.0 * log(1.0 + n) / log(10.0) - 22.0 * log(1.0 + d / 220.0) / log(10.0)
+		best = maxf(best, l)
+	return maxf(best, 0.0)
+
+
+func _runway_closed() -> bool:
+	return inspect_t > 0.0 or (weather != null and weather.runway_closed())
+
+
 func step(sim: float) -> void:
 	if sim <= 0.0:
 		return
+	inspect_t = maxf(0.0, inspect_t - sim)
+	if events != null:
+		events.step(sim)
 	if dirty:
 		_rebuild()
 	game.advance(sim * CLOCK)
@@ -267,7 +303,7 @@ func _try_spawn() -> void:
 		return
 	if _owner(land_ri) != -1:
 		return
-	if weather != null and weather.runway_closed():
+	if _runway_closed():
 		reason = "Piste wird geräumt"
 		return
 	if weather != null and weather.is_fog() and not _cat1():
@@ -719,6 +755,10 @@ func _update(p: Dictionary, sim: float) -> void:
 				_remove(p, "%s hat zu lange gewartet und weicht nach München aus" % p["code"])
 			return
 		"abfertigung":
+			if storm:
+				# Gewitter: niemand arbeitet auf dem Vorfeld, die Abfertigung verzögert sich
+				p["delay"] = float(p["delay"]) + sim * CLOCK
+				return
 			p["timer"] = float(p["timer"]) - sim * CLOCK
 			_update_gse(p, sim)
 			var f := 1.0 - float(p["timer"]) / maxf(float(p["turn"]), 0.01)
@@ -812,6 +852,8 @@ func _update(p: Dictionary, sim: float) -> void:
 				else:
 					var fare := int(float(int(plane["pax"]) * Catalog.TICKET_FEE) * lerpf(0.7, 1.2, game.satisfaction / 100.0))
 					var shops := int(plane["pax"]) * (int(terminal.retail_per_pax()) if terminal != null else 0)
+					if terminal != null:
+						terminal.consume_goods(int(plane["pax"]))
 					var extra_eur := 0
 					if terminal != null:
 						extra_eur = int(terminal.extra_income(p))
@@ -876,7 +918,7 @@ func _may_take_runway(id: int, ri: int = -1) -> bool:
 		return true
 	if _owner(ri) != -1 or _arrival_close(ri):
 		return false
-	if weather != null and weather.runway_closed():
+	if _runway_closed():
 		return false
 	# Lotsenmodus: Starts nur mit Startfreigabe
 	var p := _plane_by_id(id)
@@ -2298,7 +2340,7 @@ func clearance(id: int) -> String:
 		return ""
 	match String(p["state"]):
 		"warteschleife":
-			if _owner(land_ri) != -1 or (weather != null and weather.runway_closed()):
+			if _owner(land_ri) != -1 or (_runway_closed()):
 				return "Piste belegt – %s bleibt in der Warteschleife" % p["code"]
 			var rwy := _runway()
 			var ends := _rwy_ends(rwy)

@@ -50,7 +50,7 @@ const OPTIONS := {
 	"shop": [["stil", "Laden", ["kiosk", "dutyfree", "buecher", "elektronik", "apotheke", "mode"]]],
 	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]], ["gate", "Für Gate", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]]],
 	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
-	"sicherheit": [["fastlane", "Fast-Lane", [false, true]]],
+	"sicherheit": [["fastlane", "Fast-Lane", [false, true]], ["technik", "Technik", ["klassisch", "ct", "express"]]],
 	"gepaeckanlage": [["rutschen", "Make-up-Rutschen", [4, 6, 8, 2]]],
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]]],
@@ -644,7 +644,7 @@ func _apply_visibility(l: Dictionary) -> void:
 	if not is_instance_valid(node):
 		return
 	if Catalog.is_floor_line(kind):
-		node.visible = (floor_of(l) == view_floor) if interior_view else floor_of(l) >= 0
+		node.visible = floor_shown(floor_of(l))
 		return
 	var basement := interior_view and view_floor < 0
 	if Catalog.utility_of(kind) != "":
@@ -668,27 +668,69 @@ func set_interior_view(on: bool) -> void:
 	floor_changed.emit(view_floor)
 
 
+var wall_mode := "halb"     # Innenansicht: Wände "voll", "halb" oder "aus" (Taste H)
+var section_view := false    # Innenansicht: alle Ebenen bis zur gezeigten übereinander (Taste J)
+signal view_mode_changed
+
+
+func cycle_wall_mode() -> String:
+	var order := ["halb", "voll", "aus"]
+	wall_mode = order[(order.find(wall_mode) + 1) % order.size()]
+	_refresh_view()
+	return wall_mode
+
+
+func set_section_view(on: bool) -> void:
+	section_view = on
+	_refresh_view()
+
+
+func _refresh_view() -> void:
+	for it: Dictionary in items:
+		_apply_floor(it)
+	for l: Dictionary in lines:
+		_apply_visibility(l)
+		if Catalog.is_wall(String(l["kind"])):
+			_apply_interior(l["node"], true)
+	view_mode_changed.emit()
+
+
 ## Halle oder Wand für die Innenansicht: Dach und hohe Fassade weg, niedrige Fassade auf der gezeigten Ebene.
+## Wandansicht "voll" zeigt Innenwände in ganzer Höhe, "aus" blendet sie ganz aus.
 func _apply_interior(n: Node3D, wall: bool = false) -> void:
 	for part: String in ["Dach", "Hoch"]:
 		var c := n.get_node_or_null(part) as Node3D
 		if c != null:
-			c.visible = not interior_view
+			c.visible = not interior_view or (wall and part == "Hoch" and wall_mode == "voll")
 	var low := n.get_node_or_null("Tief") as Node3D
 	if low != null:
-		low.visible = interior_view and view_floor >= 0
+		low.visible = interior_view and view_floor >= 0 and not (wall and wall_mode == "aus")
 		if not wall:
 			low.position.y = float(maxi(view_floor, 0)) * Catalog.FLOOR_H
 	for f in range(-1, 4):
 		var slab := n.get_node_or_null("Ebene%d" % f) as Node3D
 		if slab != null:
-			slab.visible = (not interior_view and f >= 0) or (interior_view and f <= view_floor and (f >= 0 or view_floor < 0))
+			slab.visible = (not interior_view and f >= 0) or (interior_view and f <= view_floor and (f >= 0 or view_floor < 0) \
+				and (not section_view or f == _lowest_floor(n)))
 
 
 # ---------------------------------------------------------------- Ebenen und Bauformen
 
 static func floor_of(rec: Dictionary) -> int:
 	return int(rec.get("floor", 0))
+
+
+## Schnittansicht: Ebene f ist zu sehen (die gezeigte und alle darunter bis zum Erdgeschoss bzw. Keller).
+func floor_shown(f: int) -> bool:
+	if not interior_view:
+		return f >= 0
+	if section_view:
+		return f <= view_floor and (f >= 0 or view_floor < 0)
+	return f == view_floor
+
+
+static func _lowest_floor(n: Node3D) -> int:
+	return -1 if n.get_node_or_null("Ebene-1") != null else 0
 
 
 func opt(rec: Dictionary, key: String) -> Variant:
@@ -738,7 +780,7 @@ func _apply_floor(it: Dictionary) -> void:
 	elif Catalog.is_inside(String(it["id"])):
 		var f := floor_of(it)
 		var both := bool(Catalog.ITEMS[it["id"]].get("bag_lift", false)) and f + 1 == view_floor
-		node.visible = (f == view_floor or both) if interior_view else f >= 0
+		node.visible = (floor_shown(f) or both) if interior_view else f >= 0
 	else:
 		node.visible = not (interior_view and view_floor < 0)
 
@@ -797,6 +839,9 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 		cost = 70000 * (int(v) - int(cur))
 	if rec["id"] == "gepaeckanlage" and key == "rutschen":
 		cost = 30000 * (int(v) - int(cur))
+	if rec["id"] == "sicherheit" and key == "technik":
+		var price := {"klassisch": 0, "ct": 120000, "express": 260000}
+		cost = int(price.get(String(v), 0)) - int(price.get(String(cur), 0))
 	if rec["id"] == "fluggastbruecke" and key == "steg":
 		# Rotunde nach außen verschieben; der Steg darf über Straßen und Betriebsstraßen gehen
 		var anchor := bridge_anchor(rec)
@@ -1583,9 +1628,57 @@ func zone_at(hall: Dictionary, p: Vector2, f: int) -> String:
 	var zs := zones_of(hall)
 	for i in range(zs.size() - 1, -1, -1):
 		var z: Dictionary = zs[i]
-		if floor_of(z) == f and (z["rect"] as Rect2).has_point(p):
-			return String(Catalog.ITEMS[z["id"]]["zone"])
+		var zn := String(Catalog.ITEMS[z["id"]]["zone"])
+		if zn != "" and floor_of(z) == f and (z["rect"] as Rect2).has_point(p):
+			return zn
 	return ""
+
+
+## Räume einer Art in einer Halle: [{rec, ok, missing}]
+func rooms_of(hall: Dictionary, kind: String = "") -> Array:
+	var out := []
+	for z: Dictionary in zones_of(hall):
+		var rk := Catalog.room_of(String(z["id"]))
+		if rk == "" or (kind != "" and rk != kind):
+			continue
+		out.append(room_status(z))
+	return out
+
+
+## Ist ein Raum fertig eingerichtet? Ausstattung muss ganz im Raum stehen (gleiche Ebene).
+func room_status(z: Dictionary) -> Dictionary:
+	var rk := Catalog.room_of(String(z["id"]))
+	var spec: Dictionary = Catalog.ROOM_TYPES[rk]
+	var r: Rect2 = z["rect"]
+	var missing := []
+	if r.get_area() < float(spec["area"]):
+		missing.append("mindestens %d m²" % int(spec["area"]))
+	var hall: Dictionary = z.get("hall", {})
+	for need: Array in spec["needs"]:
+		var have := 0
+		if not hall.is_empty():
+			for it: Dictionary in inside_of(hall):
+				if it["id"] == need[0] and floor_of(it) == floor_of(z) and r.grow(0.05).encloses(it["rect"]):
+					have += 1
+		if have < int(need[1]):
+			missing.append("%d× %s" % [int(need[1]) - have, Catalog.label(String(need[0]))])
+	return {"rec": z, "kind": rk, "ok": missing.is_empty(), "missing": missing}
+
+
+## Gibt es in der Halle einen fertigen Raum dieser Art?
+func room_ok(hall: Dictionary, kind: String) -> bool:
+	for st: Dictionary in rooms_of(hall, kind):
+		if bool(st["ok"]):
+			return true
+	return false
+
+
+## Irgendwo ein fertiger Raum dieser Art?
+func any_room_ok(kind: String) -> bool:
+	for h: Dictionary in items_of("halle"):
+		if room_ok(h, kind):
+			return true
+	return false
 
 
 ## Flächenabriss: alles im Rechteck (auf der gezeigten Ebene). Hallen nur, wenn sie ganz drin liegen.
@@ -1690,11 +1783,11 @@ func room_cost(r: Rect2, zone_id: String) -> int:
 	return total
 
 
-func build_room(r: Rect2, zone_id: String, door_art: String) -> String:
+func build_room(r: Rect2, zone_id: String, door_art: String, room_kind: String = "", free: bool = false) -> String:
 	var why := room_problem(r)
 	if why != "":
 		return why
-	if not can_afford(room_cost(r, zone_id)):
+	if not free and not can_afford(room_cost(r, zone_id)):
 		return "Nicht genug Geld"
 	var edges := room_edges(r)
 	var built := []
@@ -1702,11 +1795,13 @@ func build_room(r: Rect2, zone_id: String, door_art: String) -> String:
 		var wy := can_place_wall(e[0], e[1])
 		if wy != "":
 			continue
-		var rec := build_line("innenwand", [e[0], e[1]])
+		var rec := build_line("innenwand", [e[0], e[1]], free)
 		if not rec.is_empty():
 			built.append(rec)
 	if zone_id != "":
-		build_zone(zone_id, r)
+		build_zone(zone_id, r, free)
+	if room_kind != "" and Catalog.ITEMS.has("raum_" + room_kind):
+		build_zone("raum_" + room_kind, r, free)
 	# Tür: längste neue Wand, Mitte; geht das nicht, ein Stück daneben
 	built.sort_custom(func(x: Dictionary, y: Dictionary) -> bool: return Spline.length(x["samples"]) > Spline.length(y["samples"]))
 	for w: Dictionary in built:
@@ -1721,7 +1816,7 @@ func build_room(r: Rect2, zone_id: String, door_art: String) -> String:
 			var p := a.lerp(b, f)
 			p = Vector3(snappedf(p.x, 0.5), 0, snappedf(p.z, 0.5))
 			if can_place("tuer", p, rot) == "":
-				build_item("tuer", p, rot, false, {"art": door_art})
+				build_item("tuer", p, rot, free, {"art": door_art})
 				return ""
 	return "" if not built.is_empty() else "Hier stehen schon alle Wände"
 
@@ -2078,7 +2173,7 @@ func bag_routes() -> Dictionary:
 	var fh := Catalog.FLOOR_H
 	var segs := []    # [Punkte (Welt), Ebene]
 	for l: Dictionary in lines:
-		if l["kind"] != "kofferband":
+		if l["kind"] != "kofferband" or bool(l.get("broken", false)):
 			continue
 		var pts := PackedVector3Array()
 		var f := floor_of(l)
@@ -2430,7 +2525,8 @@ func evaluate_supply() -> void:
 				var node: Dictionary = nodes[k]
 				if node["type"] == "item":
 					var def: Dictionary = Catalog.ITEMS[node["id"]]
-					cap[cid] = float(cap[cid]) + float((def.get("supply", {}) as Dictionary).get(util, 0.0))
+					if not bool(node.get("failed", false)):
+						cap[cid] = float(cap[cid]) + float((def.get("supply", {}) as Dictionary).get(util, 0.0))
 					dem[cid] = float(dem[cid]) + float(needs_of(node).get(util, 0.0))
 				for nb: int in adj[k]:
 					if comp[nb] == -1:
@@ -2919,6 +3015,7 @@ func load_starter() -> void:
 	build_item("tanklager", V.call(250, -55), 0, true)
 	build_item("busgarage", V.call(298, -52), 0, true)
 	build_item("feuerwache", V.call(345, -52), 0, true)
+	build_item("rettungswache", V.call(378, -50), 0, true)
 	build_item("gepaeckumschlag", V.call(295, -10), 0, true)
 	build_item("personalgebaeude", V.call(150, 14), 0, true)
 	# Befeuerung: Station mit Strom, Anflugbefeuerung und PAPI an beiden Pistenenden, Rollhalteorte
@@ -2950,6 +3047,7 @@ func load_starter() -> void:
 	build_line("stromkabel", [V.call(240, -21), V.call(240, -40)], true)
 	build_line("stromkabel", [V.call(271, -55), V.call(281, -55)], true)
 	build_line("stromkabel", [V.call(315, -50), V.call(331, -50)], true)
+	build_line("stromkabel", [V.call(359, -50), V.call(370, -50)], true)
 	build_line("stromkabel", [V.call(209, 17), V.call(257, 20)], true)
 	build_line("stromkabel", [V.call(267, 16), V.call(283, -3)], true)
 	build_line("stromkabel", [V.call(-66, 55), V.call(-57, 55)], true)
@@ -3051,6 +3149,10 @@ func _starter_terminal(V: Callable) -> void:
 	put.call("gepaeckanlage", 90, -20)
 	put.call("gepaeckroentgen", 90, -12.5, 1)
 	put.call("personalraum", 100, -10.5)
+	# Lager im Personalbereich: Regale, von hier bringen Mitarbeiter Ware in Läden und Cafés
+	build_room(Rect2(80, -16, 6, 8), "", "personal", "lager", true)
+	put.call("regal", 83, -14.9)
+	put.call("regal", 83, -11.5)
 	# Heizkörper an den Außenwänden
 	for x: float in [-136.0, -125.0, -95.0, -82.0, -70.0, -60.0, -35.0, -20.0, -10.0, 10.0, 20.0, 34.0, 60.0, 72.0, 86.0, 100.0]:
 		put.call("heizkoerper", x, 15.75)

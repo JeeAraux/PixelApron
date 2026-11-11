@@ -116,6 +116,9 @@ const ITEMS := {
 	"feuerwache": {"name": "Feuerwache", "size": Vector2(30, 20), "h": 13.0, "cost": 700000, "grid": 2.0,
 		"doors": [[Vector3(-11.5, 0, 4), 5.4, 5.4, 5.6], [Vector3(-4.5, 0, 4), 5.4, 5.4, 5.6], [Vector3(2.5, 0, 4), 5.4, 5.4, 5.6]],
 		"needs": {"strom": 50, "wasser": 6}, "desc": "Flughafenfeuerwehr."},
+	"rettungswache": {"name": "Rettungswache", "size": Vector2(18, 14), "h": 7.0, "cost": 380000, "grid": 2.0,
+		"garage": ["rtw"], "doors": [[Vector3(-3.5, 0, 7), 4.2, 4.0, 7.5], [Vector3(3.5, 0, 7), 4.2, 4.0, 7.5]],
+		"needs": {"strom": 15}, "desc": "Wache mit zwei Rettungswagen. Bei medizinischen Notfällen im Terminal oder an Bord fährt ein RTW mit Blaulicht hin (ohne Wache kommt er von außerhalb, viel später). Tore vorn (+Z) zur Betriebsstraße."},
 	"parkhaus": {"name": "Parkhaus", "size": Vector2(32, 44), "h": 14.5, "cost": 1500000, "grid": 2.0,
 		"needs": {"strom": 80}, "access": {"ein": Vector2(-6, -24), "aus": Vector2(6, -24)}, "spaces": 300,
 		"desc": "Vier Ebenen, 300 Plätze. Ein- und Ausfahrt mit Schranke an der Vorderseite (Pfeil beim Setzen): dort muss eine Straße vorbeiführen. Bringt Parkgebühren."},
@@ -181,7 +184,7 @@ const ITEMS := {
 		"desc": "Bringt die Koffer vom Check-in zu den Flugzeugen und von den Gepäckzügen zu den Bändern. Kofferbänder schließen an den Kanten an; ein Rolltor in der Außenwand daneben lässt die Gepäckzüge vorfahren."},
 	"sicherheit": {"name": "Sicherheitskontrolle", "short": "Kontrolle", "size": Vector2(6, 8), "h": 2.5, "cost": 150000, "grid": 1.0,
 		"inside": true, "walk": true, "needs": {"strom": 12}, "cap": 150,
-		"desc": "Zwei Spuren mit Röntgen und Torsonde, 150 Passagiere pro Stunde. Passagiere gehen von vorn nach hinten hindurch."},
+		"desc": "Zwei Spuren mit Röntgen und Torsonde, 150 Passagiere pro Stunde (Bauform CT-Scanner 220, Express mit Wannenrückführung 280). Passagiere gehen von vorn nach hinten hindurch."},
 	"gate": {"name": "Gate", "size": Vector2(10, 8), "h": 3.2, "cost": 90000, "grid": 1.0, "inside": true,
 		"wall": true, "walk": true, "needs": {"strom": 4},
 		"desc": "Wartebereich mit Ausgang zum Flugzeug. An die Außenwand zum Vorfeld stellen. Ein Gate je Flugzeug am Stand."},
@@ -217,6 +220,31 @@ const ITEMS := {
 	"bereich_personal": {"name": "Personalbereich", "short": "Personal", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 5,
 		"grid": 1.0, "inside": true, "rect_tool": true, "zone": "personal",
 		"desc": "Nur für Mitarbeiter: Gepäcksortierung, Personalräume, Technik. Fluggäste kommen hier nicht hinein, Mitarbeiter nur durch Personaltüren."},
+	"raum_lager": {"name": "Lager", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 4, "grid": 1.0, "inside": true,
+		"rect_tool": true, "zone": "", "room": "lager",
+		"desc": "Raumart Lager: braucht 2 Regale und mindestens 12 m². Mitarbeiter bringen von hier Ware zu Läden und Cafés; Lieferwagen füllen es über ein Rolltor auf."},
+	"raum_kueche": {"name": "Küche", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 4, "grid": 1.0, "inside": true,
+		"rect_tool": true, "zone": "", "room": "kueche",
+		"desc": "Raumart Küche: braucht eine Küchenzeile und mindestens 10 m². Cafés und Restaurants der Halle verdienen ein Viertel mehr."},
+	"raum_sanitaet": {"name": "Sanitätsraum", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 4, "grid": 1.0, "inside": true,
+		"rect_tool": true, "zone": "", "room": "sanitaet",
+		"desc": "Raumart Sanitätsraum: braucht eine Behandlungsliege und mindestens 8 m². Ersthelfer sind bei Notfällen in der Halle schneller."},
+	"raum_pause": {"name": "Pausenraum", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 4, "grid": 1.0, "inside": true,
+		"rect_tool": true, "zone": "", "room": "pause",
+		"desc": "Raumart Pausenraum: braucht Spinde und Bistrotische, mindestens 10 m². Das Personal arbeitet 10 % mehr."},
+	"raum_technik": {"name": "Technikraum", "size": Vector2(4, 4), "h": 0.1, "cost": 0, "cost_m2": 4, "grid": 1.0, "inside": true,
+		"rect_tool": true, "zone": "", "room": "technik",
+		"desc": "Raumart Technikraum: braucht 2 Schaltschränke und mindestens 6 m². Weniger Ausfälle von Bändern und Strom, Techniker sind schneller."},
+	"regal": {"name": "Lagerregal", "size": Vector2(3, 1), "h": 2.4, "cost": 2500, "grid": 0.5, "inside": true,
+		"desc": "Schwerlastregal mit Kartons, für das Lager."},
+	"kuechenzeile": {"name": "Küchenzeile", "size": Vector2(4, 1), "h": 2.2, "cost": 18000, "grid": 0.5, "inside": true, "needs": {"strom": 3, "wasser": 0.5},
+		"desc": "Herd, Spüle und Kühlschrank für die Küche."},
+	"behandlungsliege": {"name": "Behandlungsliege", "size": Vector2(2, 1), "h": 1.2, "cost": 6000, "grid": 0.5, "inside": true,
+		"desc": "Liege mit Notfallrucksack, Defibrillator und Sauerstoff für den Sanitätsraum."},
+	"spind": {"name": "Spinde", "size": Vector2(2, 0.6), "h": 1.9, "cost": 1800, "grid": 0.5, "inside": true,
+		"desc": "Spinde für den Pausenraum."},
+	"schaltschrank": {"name": "Schaltschrank", "size": Vector2(1.2, 0.6), "h": 2.0, "cost": 9000, "grid": 0.5, "inside": true,
+		"desc": "Schaltschrank mit Sicherungen und Steuerung für den Technikraum."},
 	"personalraum": {"name": "Personalraum", "size": Vector2(6, 4), "h": 2.6, "cost": 25000, "grid": 0.5, "inside": true,
 		"needs": {"strom": 2, "wasser": 0.5},
 		"desc": "Spinde, Tisch, Kaffeemaschine und Sofa für die Pause. In den Personalbereich stellen. Von hier gehen die Mitarbeiter an ihre Schalter."},
@@ -309,8 +337,9 @@ const ITEMS := {
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
 	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude", "frachtterminal", "winterdienst"]],
-	["terminal", "Terminal", ["halle", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
+	["terminal", "Terminal", ["halle", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum",
+		"raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
 		"ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium", "palme", "baumbeet", "gruenwand",
@@ -326,12 +355,13 @@ const GROUPS := {
 	"flug": [["Stände", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt"]],
 		["Befeuerung", ["flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi"]],
 		["Betrieb", ["tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "personalgebaeude"]],
-		["Werft und Dienste", ["hangar", "feuerwache", "frachtterminal", "winterdienst"]]],
+		["Werft und Dienste", ["hangar", "feuerwache", "rettungswache", "frachtterminal", "winterdienst"]]],
 	"terminal": [["Halle", ["halle", "raum", "innenwand", "glaswand", "tuer", "eingang", "rolltor"]],
 		["Bereiche", ["bereich_oeffentlich", "bereich_sicherheit", "bereich_personal"]],
 		["Abflug", ["checkin", "kofferband", "gepaecklift", "gepaeckanlage", "gepaeckroentgen", "sicherheit", "passkontrolle", "gate", "busgate"]],
 		["Ankunft", ["gepaeckband", "gepaeckermittlung", "zoll", "sb_ausgang"]],
-		["Ebenen", ["rolltreppe", "aufzug", "treppe"]], ["Personal", ["personalraum"]]],
+		["Ebenen", ["rolltreppe", "aufzug", "treppe"]], ["Personal", ["personalraum"]],
+		["Räume", ["raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]]],
 	"ausstattung": [["Service", ["wc", "infoschalter", "anzeige", "heizkoerper"]], ["Gastro und Shops", ["cafe", "shop", "kiosk", "airline_lounge"]],
 		["Warten", ["sitzreihe", "rollsteig"]], ["Deko", ["pflanze", "kunst"]]],
 	"moebel": [["Sitzen und Essen", ["lounge", "bistrotisch", "massagesessel"]],
@@ -454,6 +484,20 @@ static func is_inside(id: String) -> bool:
 ## Bodenbereich im Terminal (öffentlich, Sicherheitsbereich, Personal)?
 static func is_zone(id: String) -> bool:
 	return ITEMS.has(id) and ITEMS[id].has("zone")
+
+
+## Raumarten: Ausstattung [Bauteil, Anzahl] und Mindestfläche
+const ROOM_TYPES := {
+	"lager": {"name": "Lager", "needs": [["regal", 2]], "area": 12.0},
+	"kueche": {"name": "Küche", "needs": [["kuechenzeile", 1]], "area": 10.0},
+	"sanitaet": {"name": "Sanitätsraum", "needs": [["behandlungsliege", 1]], "area": 8.0},
+	"pause": {"name": "Pausenraum", "needs": [["spind", 1], ["bistrotisch", 1]], "area": 10.0},
+	"technik": {"name": "Technikraum", "needs": [["schaltschrank", 2]], "area": 6.0},
+}
+
+
+static func room_of(id: String) -> String:
+	return String(ITEMS[id].get("room", "")) if ITEMS.has(id) else ""
 
 
 ## Markierung oder Befeuerung, die an Piste oder Rollweg einrastet (Lage statt Drehung bestimmt das Aussehen).

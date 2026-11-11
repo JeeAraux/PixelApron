@@ -28,6 +28,9 @@ signal contract_requested(code: String)
 signal scenario_requested(key: String)
 signal tutorial_requested
 signal spot_requested(pos: Vector3)
+signal wall_mode_requested
+signal overlay_requested
+signal section_toggled(on: bool)
 
 const Catalog = preload("res://scripts/catalog.gd")
 const GameState = preload("res://scripts/game_state.gd")
@@ -60,6 +63,9 @@ var flight_rows: VBoxContainer
 var flight_done: Label
 var utility_button: Button
 var interior_button: Button
+var wall_button: Button
+var overlay_button: Button
+var section_button: Button
 var help_label: Label
 var menu_layer: Control
 var menu_page: Control
@@ -323,6 +329,11 @@ func _build_top() -> void:
 	utility_button.toggled.connect(func(on: bool) -> void: utility_toggled.emit(on))
 	row.add_child(utility_button)
 	view_buttons.append([utility_button, "Leitungen", "Netz"])
+	overlay_button = _button("Overlay", false)
+	overlay_button.tooltip_text = "Karten-Overlay umschalten: Gedränge, Wartezeit, Fluglärm (O)"
+	overlay_button.pressed.connect(func() -> void: overlay_requested.emit())
+	row.add_child(overlay_button)
+	view_buttons.append([overlay_button, "Overlay", "Ovl."])
 	interior_button = _button("Innenansicht", true)
 	interior_button.tooltip_text = "Dächer ausblenden und ins Terminal schauen (I)"
 	interior_button.toggled.connect(func(on: bool) -> void: interior_toggled.emit(on))
@@ -346,6 +357,17 @@ func _build_top() -> void:
 	up.tooltip_text = "Ebene höher (Bild auf). Über der obersten Ebene: der Halle unter der Kamera eine neue Ebene aufsetzen"
 	up.pressed.connect(func() -> void: floor_step.emit(1))
 	fb.add_child(up)
+	wall_button = _button("Wand ½", false)
+	wall_button.custom_minimum_size = Vector2(0, 40)
+	wall_button.tooltip_text = "Innenwände: halb, voll oder ausgeblendet (H)"
+	wall_button.pressed.connect(func() -> void: wall_mode_requested.emit())
+	fb.add_child(wall_button)
+	section_button = _button("Schnitt", true)
+	section_button.custom_minimum_size = Vector2(0, 40)
+	section_button.tooltip_text = "Schnittansicht: alle Ebenen bis zur gezeigten übereinander (J)"
+	section_button.toggled.connect(func(on: bool) -> void: section_toggled.emit(on))
+	fb.add_child(section_button)
+	view_buttons.append([section_button, "Schnitt", "Schn."])
 	floor_box = fb
 	row.add_child(fb)
 	var menu_b := _button("Menü", false)
@@ -1157,7 +1179,8 @@ func _build_line_bar() -> void:
 	room_box.add_theme_constant_override("separation", 3)
 	row.add_child(room_box)
 	for grp: Array in [["bereich", "Bereich", [["", "ohne"], ["bereich_oeffentlich", "Öffentlich"], ["bereich_sicherheit", "Sicherheit"], ["bereich_personal", "Personal"]]],
-			["tuer", "Tür", [["automatik", "Automatik"], ["fluegel", "Flügel"], ["personal", "Personal"]]]]:
+			["tuer", "Tür", [["automatik", "Automatik"], ["fluegel", "Flügel"], ["personal", "Personal"]]],
+			["raumart", "Raum", [["", "frei"], ["lager", "Lager"], ["kueche", "Küche"], ["sanitaet", "Sanität"], ["pause", "Pause"], ["technik", "Technik"]]]]:
 		room_box.add_child(_dock_sep())
 		var gl := _label(String(grp[1]), 13, C_DIM)
 		gl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1241,16 +1264,22 @@ func _fit_top(w: float) -> void:
 	top_row.add_theme_constant_override("separation", 14)
 	for vb: Array in view_buttons:
 		(vb[0] as Button).text = String(vb[1])
-	if top_row.get_combined_minimum_size().x + 24.0 <= w:
+	wall_compact = false
+	show_view_modes(wall_text, section_button.button_pressed)
+	wall_button.visible = interior_button.button_pressed
+	section_button.visible = interior_button.button_pressed
+	if top_row.get_combined_minimum_size().x + 64.0 <= w:
 		return
 	for vb: Array in view_buttons:
 		(vb[0] as Button).text = String(vb[2])
+	wall_compact = true
+	show_view_modes(wall_text, section_button.button_pressed)
 	top_row.add_theme_constant_override("separation", 8)
-	if top_row.get_combined_minimum_size().x + 24.0 <= w:
+	if top_row.get_combined_minimum_size().x + 64.0 <= w:
 		return
 	title_box.visible = false
 	(title_box.get_meta("sep") as Control).visible = false
-	if top_row.get_combined_minimum_size().x + 24.0 <= w:
+	if top_row.get_combined_minimum_size().x + 64.0 <= w:
 		return
 	day_label.visible = false
 
@@ -1351,6 +1380,26 @@ func show_utility(on: bool) -> void:
 func show_interior(on: bool) -> void:
 	interior_button.set_pressed_no_signal(on)
 	_queue_layout()
+
+
+var wall_text := "halb"
+var wall_compact := false
+
+
+func show_overlay(name: String) -> void:
+	toast("Overlay: " + name)
+	for vb: Array in view_buttons:
+		if vb[0] == overlay_button:
+			vb[1] = "Overlay" if name == "Overlay aus" else name
+			vb[2] = "Ovl." if name == "Overlay aus" else name.substr(0, 5) + "."
+	_queue_layout()
+
+
+func show_view_modes(wall: String, section: bool) -> void:
+	wall_text = wall
+	var sym: String = {"halb": "½", "voll": "▮", "aus": "–"}.get(wall, "")
+	wall_button.text = ("W" + sym) if wall_compact else ("Wand " + sym)
+	section_button.set_pressed_no_signal(section)
 
 
 func show_floor(f: int) -> void:

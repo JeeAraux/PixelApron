@@ -16,7 +16,7 @@ const WIN := Color(0.22, 0.32, 0.38, 0.6)
 const LAMP := Color(1.0, 0.92, 0.72, 0.3)
 const YELLOW := Color(0.9, 0.72, 0.16)
 
-const IDS := ["trafo", "heizzentrale", "wasseranschluss", "vorfelddepot", "tanklager", "busgarage", "catering", "personalgebaeude"]
+const IDS := ["trafo", "heizzentrale", "wasseranschluss", "vorfelddepot", "tanklager", "busgarage", "catering", "personalgebaeude", "rettungswache"]
 const Landmarks = preload("res://scripts/landmarks.gd")
 const Models = preload("res://scripts/models.gd")
 const CLAD := Color(0.7, 0.73, 0.74)
@@ -48,6 +48,8 @@ static func build(n: Node3D, id: String) -> bool:
 			_catering(n, k)
 		"personalgebaeude":
 			_staff_building(n, k)
+		"rettungswache":
+			_rescue_station(n, k)
 	n.add_child(k.instance("Bau"))
 	var a := Node.new()
 	a.name = "Anim"
@@ -402,6 +404,32 @@ static func _bus_depot(n: Node3D, k: Kit) -> void:
 		_window_strip(k, Vector3(-18.0, y, -8.0), Vector3(0, 0, 2.4), Vector3(-1, 0, 0))
 	_fan(n, k, Vector3(-4, 7.0, -4), 0.7, 2.0)
 	k.add_mesh(Models.gse_mesh("bus"), Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(16.0, 0.12, 6.0)), true)
+
+
+## Rettungswache: Fahrzeughalle mit zwei roten Rolltoren, Bürotrakt, rote Bauchbinde, Schild,
+## im Hof ein geparkter RTW.
+static func _rescue_station(n: Node3D, k: Kit) -> void:
+	var red := Color(0.82, 0.12, 0.1)
+	k.box(Vector3(-9, 0, -7), Vector3(9, 0.08, 7), Color(0.46, 0.46, 0.44))
+	k.box(Vector3(-7, 0, -6), Vector3(7, 5.6, 7), RENDER)
+	k.box(Vector3(-7.05, 3.9, -6.05), Vector3(7.05, 4.5, 7.05), red)
+	k.box(Vector3(-7.2, 5.6, -6.2), Vector3(7.2, 5.9, 7.2), Color(0.8, 0.8, 0.78))
+	k.box(Vector3(-6.8, 5.9, -5.8), Vector3(6.8, 5.95, 6.8), ROOF)
+	for i in range(2):
+		Landmarks.roll_door(n, k, i, Vector3(-3.5 + float(i) * 7.0, 0, 7.0), 4.2, 3.8, Color(0.85, 0.15, 0.12), 2)
+	# Bürotrakt mit Fensterband
+	k.box(Vector3(-9, 0, -7), Vector3(-7, 6.4, 3), RENDER)
+	_window_strip(k, Vector3(-9.0, 1.6, -2.0), Vector3(0, 0, 4.0), Vector3(-1, 0, 0))
+	_window_strip(k, Vector3(-9.0, 4.4, -2.0), Vector3(0, 0, 4.0), Vector3(-1, 0, 0))
+	k.box(Vector3(-3.0, 4.55, 7.05), Vector3(3.0, 5.45, 7.15), Color(0.95, 0.95, 0.93))
+	PixelFont.draw(k, "RETTUNGSWACHE", Vector3(0, 5.0, 7.16), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.07, red)
+	# Stern des Lebens als blaues Kreuz-Schild
+	k.box(Vector3(5.2, 4.6, 7.05), Vector3(6.4, 5.4, 7.15), Color(0.95, 0.95, 0.93))
+	k.box(Vector3(5.7, 4.7, 7.16), Vector3(5.9, 5.3, 7.18), Color(0.15, 0.35, 0.75))
+	k.box(Vector3(5.5, 4.9, 7.16), Vector3(6.1, 5.1, 7.18), Color(0.15, 0.35, 0.75))
+	# Stellplatz an der Seite: geparkter Reserve-RTW
+	k.box(Vector3(7.0, 0.08, -6.5), Vector3(9.0, 0.1, 6.5), Color(0.38, 0.4, 0.42))
+	k.add_mesh(Landmarks.rtw_mesh(), Transform3D(Basis.IDENTITY, Vector3(8.0, 0.1, 0.5)), true)
 
 
 static func _window_strip(k: Kit, c: Vector3, half: Vector3, nrm: Vector3) -> void:

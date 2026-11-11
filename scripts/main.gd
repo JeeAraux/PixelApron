@@ -17,6 +17,8 @@ const GroundOps = preload("res://scripts/ground_ops.gd")
 const Airfield = preload("res://scripts/airfield.gd")
 const Weather = preload("res://scripts/weather.gd")
 const Operations = preload("res://scripts/operations.gd")
+const Events = preload("res://scripts/events.gd")
+const Overlay = preload("res://scripts/overlay.gd")
 const RESUME_FLAG := "user://nach_update_laden"
 const Catalog = preload("res://scripts/catalog.gd")
 const GROUND_SHADER = preload("res://shaders/ground.gdshader")
@@ -39,6 +41,9 @@ var ops: GroundOps
 var airfield: Airfield
 var weather: Weather
 var betrieb: Operations
+var events: Events
+var overlay: Overlay
+var person_t := 0.0
 var hud: Hud
 var settings: Settings
 var updater: Updater
@@ -112,6 +117,23 @@ func _ready() -> void:
 	betrieb.weather = weather
 	flights.weather = weather
 	flights.betrieb = betrieb
+	events = Events.new()
+	events.name = "Ereignisse"
+	add_child(events)
+	events.game = game
+	events.terminal = terminal
+	events.ops = ops
+	events.flights = flights
+	events.weather = weather
+	flights.events = events
+	if "--demo" in OS.get_cmdline_user_args() or "--selftest" in OS.get_cmdline_user_args():
+		events.enabled = false
+	overlay = Overlay.new()
+	overlay.name = "Overlay"
+	world.add_child(overlay)
+	overlay.game = game
+	overlay.terminal = terminal
+	overlay.flights = flights
 	terminal.betrieb = betrieb
 	game.income_cb = betrieb.book_income
 	game.before_save.connect(_collect_extra)
@@ -263,6 +285,10 @@ func _connect() -> void:
 	hud.new_requested.connect(_new_map)
 	hud.undo_requested.connect(game.undo_last)
 	hud.interior_toggled.connect(game.set_interior_view)
+	hud.wall_mode_requested.connect(func() -> void: game.cycle_wall_mode())
+	hud.overlay_requested.connect(func() -> void: hud.show_overlay(Overlay.NAMES[overlay.cycle()]))
+	hud.section_toggled.connect(game.set_section_view)
+	game.view_mode_changed.connect(func() -> void: hud.show_view_modes(game.wall_mode, game.section_view))
 	hud.menu_opened.connect(_on_menu)
 	hud.quit_requested.connect(func() -> void: get_tree().quit())
 	hud.setting_changed.connect(_on_setting)
@@ -457,6 +483,9 @@ func _apply_setting(key: String, v: Variant) -> void:
 			hud.set_help_visible(bool(v))
 		"sandkasten":
 			_apply_sandbox()
+		"ereignisse":
+			if not ("--demo" in OS.get_cmdline_user_args() or "--selftest" in OS.get_cmdline_user_args()):
+				events.enabled = bool(v)
 
 
 ## Sandkasten nach Einstellung, in Szenarien immer aus.
@@ -527,6 +556,14 @@ func _process(delta: float) -> void:
 	if not hud.is_menu_open():
 		builder.on_move(ground_at(get_viewport().get_mouse_position()))
 	hud.set_clock(game.clock_text())
+	person_t -= delta
+	if person_t <= 0.0 and not terminal.selected_person.is_empty():
+		person_t = 0.5
+		if terminal.selected_person in terminal.people:
+			var d: Array = terminal.describe_person(terminal.selected_person, flights)
+			hud.set_info(String(d[0]), String(d[1]), 0)
+		else:
+			terminal.selected_person = {}
 	ui_timer -= delta
 	if ui_timer <= 0.0:
 		ui_timer = 0.25
@@ -599,6 +636,14 @@ func _inspect(p: Vector3) -> void:
 	_selected = {}
 	_selected_at = p
 	hud.set_options([])
+	terminal.selected_person = {}
+	if game.interior_view:
+		var per: Dictionary = terminal.person_at(p)
+		if not per.is_empty():
+			terminal.selected_person = per
+			var d: Array = terminal.describe_person(per, flights)
+			hud.set_info(String(d[0]), String(d[1]), 0)
+			return
 	var plane := flights.pick(p)
 	if not plane.is_empty():
 		hud.set_info("Flug " + String(plane["code"]), flights.describe(plane), 0)
@@ -702,6 +747,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				hud.toggle_build()
 			KEY_I:
 				game.set_interior_view(not game.interior_view)
+			KEY_H:
+				game.cycle_wall_mode()
+			KEY_O:
+				hud.show_overlay(Overlay.NAMES[overlay.cycle()])
+			KEY_J:
+				game.set_section_view(not game.section_view)
 			KEY_SPACE:
 				_set_speed(1 if game.speed == 0 else 0)
 			KEY_1:

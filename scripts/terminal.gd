@@ -175,8 +175,20 @@ func capacity_dep() -> float:
 		desks += float(info.get("desk_eff", 0.0)) * cap * 1.25
 	if game.legacy_belts:
 		desks += float(_sum("checkin") - _sum("checkin_band")) * cap
-	return minf(desks,
-		float(_sum("sicherheit") * int(Catalog.ITEMS["sicherheit"]["cap"])))
+	return minf(desks, security_cap())
+
+
+const SEC_CAP := {"klassisch": 150, "ct": 220, "express": 280}
+
+
+## Durchsatz aller Kontrollen nach ihrer Technik (klassisch, CT-Scanner, Express).
+func security_cap() -> float:
+	var total := 0.0
+	for info: Dictionary in _complete():
+		for it: Dictionary in game.inside_of(info["hall"]):
+			if it["id"] == "sicherheit":
+				total += float(SEC_CAP.get(String(game.opt(it, "technik")), 150))
+	return total
 
 
 func capacity_arr() -> float:
@@ -199,6 +211,124 @@ func slowdown() -> float:
 
 ## Einnahmen aus Café und Shop je abfliegendem Passagier.
 func retail_per_pax() -> int:
+	return roundi(float(_retail_base()) * retail_factor())
+
+
+## Warenstand und Küche: leere Regale verdienen wenig, eine Küche bringt den Cafés ein Viertel mehr.
+func retail_factor() -> float:
+	var sum := 0.0
+	var n := 0
+	var kitchen := false
+	for info: Dictionary in _complete():
+		var h: Dictionary = info["hall"]
+		var c: Dictionary = info["counts"]
+		if int(c.get("cafe", 0)) + int(c.get("shop", 0)) == 0:
+			continue
+		sum += lerpf(0.3, 1.0, goods_of(h))
+		n += 1
+		if int(c.get("cafe", 0)) > 0 and game.room_ok(h, "kueche"):
+			kitchen = true
+	var f := sum / float(n) if n > 0 else 1.0
+	return f * (1.12 if kitchen else 1.0)
+
+
+var goods: Dictionary = {}    # Halle (Instanz-ID) -> Warenstand in Läden und Cafés (0..1)
+var stock: Dictionary = {}    # Halle (Instanz-ID) -> Bestand im Lager (0..1)
+var goods_t := 0.0
+var heat_t := 0.0
+
+
+func goods_of(h: Dictionary) -> float:
+	return float(goods.get((h["node"] as Node).get_instance_id(), 1.0))
+
+
+func stock_of(h: Dictionary) -> float:
+	return float(stock.get((h["node"] as Node).get_instance_id(), 1.0))
+
+
+## Abflug: Reisende kaufen ein, die Regale leeren sich.
+func consume_goods(pax: int) -> void:
+	for info: Dictionary in _complete():
+		var h: Dictionary = info["hall"]
+		var c: Dictionary = info["counts"]
+		if int(c.get("cafe", 0)) + int(c.get("shop", 0)) + int(c.get("kiosk", 0)) == 0:
+			continue
+		var hid := (h["node"] as Node).get_instance_id()
+		goods[hid] = maxf(0.0, goods_of(h) - float(pax) / 1500.0)
+
+
+## Lieferung ist im Lager angekommen.
+func restock(h: Dictionary) -> void:
+	stock[(h["node"] as Node).get_instance_id()] = 1.0
+
+
+## Alle 8 s: Mitarbeiter bringen Ware aus dem Lager in die Läden (mit Rollwagen), ohne Lager kommt
+## sie nur langsam über den Eingang. Ohne Lieferungen über ein Rolltor füllt sich das Lager langsam.
+func _goods_tick(sim: float) -> void:
+	goods_t -= sim
+	if goods_t > 0.0:
+		return
+	goods_t = 8.0
+	for info: Dictionary in halls:
+		var h: Dictionary = info["hall"]
+		if not is_instance_valid(h.get("node")):
+			continue
+		var hid := (h["node"] as Node).get_instance_id()
+		var g := goods_of(h)
+		var st := stock_of(h)
+		var lager := game.room_ok(h, "lager")
+		if lager:
+			if g < 0.97 and st > 0.05:
+				goods[hid] = minf(1.0, g + 0.06)
+				stock[hid] = maxf(0.0, st - 0.04)
+				_spawn_trolley(h, hid)
+			if game.items_of("rolltor").filter(func(r: Dictionary) -> bool: return is_same(r.get("hall", {}), h)).is_empty():
+				stock[hid] = minf(1.0, stock_of(h) + 0.01)
+		elif g < 0.7:
+			# ohne Lager werden die Regale nie ganz voll
+			goods[hid] = minf(0.7, g + 0.03)
+
+
+## Rollwagen mit Kartons: vom Lager zu einem Laden oder Café und zurück.
+func _spawn_trolley(h: Dictionary, hid: int) -> void:
+	if not grids.has(hid):
+		return
+	var carts := 0
+	for per: Dictionary in people:
+		if bool(per.get("trolley", false)):
+			carts += 1
+	if carts >= 2:
+		return
+	var rooms := game.rooms_of(h, "lager").filter(func(s: Dictionary) -> bool: return bool(s["ok"]))
+	var shops := []
+	for it: Dictionary in game.inside_of(h):
+		if it["id"] in ["cafe", "shop", "kiosk"] and GameState.floor_of(it) == 0:
+			shops.append(it)
+	if rooms.is_empty() or shops.is_empty():
+		return
+	var room: Dictionary = (rooms[0] as Dictionary)["rec"]
+	if GameState.floor_of(room) != 0:
+		return
+	var c := (room["rect"] as Rect2).get_center()
+	var start := Vector3(c.x, 0, c.y)
+	var shop: Dictionary = shops[randi() % shops.size()]
+	var goal := _front(shop, _size(shop).x * 0.3, 0.8)
+	var node: Node3D = Factory.make_staff(Color(0.85, 0.45, 0.12), Color(0.2, 0.22, 0.26), randi() % 4, true)
+	var cart := MeshInstance3D.new()
+	cart.name = "Wagen"
+	cart.mesh = Interior.goods_cart_mesh()
+	cart.position = Vector3(0, 0, -0.85)
+	cart.rotation.y = PI
+	node.add_child(cart)
+	node.position = start
+	node.visible = false
+	add_child(node)
+	var plan := [["show"], ["go", goal], ["wait", randf_range(4.0, 7.0)], ["go", start], ["end"]]
+	people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
+		"timer": 0.0, "pos": start, "staff": true, "mode": "staff", "trolley": true})
+
+
+func _retail_base() -> int:
 	var total := 0
 	for id: String in ["cafe", "shop"]:
 		var n := _sum(id)
@@ -295,7 +425,17 @@ func staff_available() -> int:
 	for b: Dictionary in game.items_of("personalgebaeude"):
 		if game.supplied(b, "strom"):
 			n += int(Catalog.ITEMS["personalgebaeude"]["staff"])
-	return n
+	# Pausenraum: ausgeruhtes Personal schafft mehr
+	if game.any_room_ok("pause"):
+		n = roundi(float(n) * 1.1)
+	return roundi(float(n) * staff_factor)
+
+
+var staff_factor := 1.0   # Streik und Ähnliches (Ereignisse) senken das verfügbare Personal
+
+
+func _rooms_hint() -> void:
+	pass
 
 
 ## Faktor für die Abfertigungszeit bei Personalmangel (1 = genug Personal, bis 1,5).
@@ -337,7 +477,7 @@ func factors() -> Array:
 			hint = "Heizkörper bauen und die Halle mit einem Heizrohr an die Heizzentrale anschließen"
 	var ld := demand_dep / maxf(capacity_dep(), 1.0)
 	if ld > 1.05:
-		var which := "Check-in" if _sum("checkin") * int(Catalog.ITEMS["checkin"]["cap"]) <= _sum("sicherheit") * int(Catalog.ITEMS["sicherheit"]["cap"]) else "Kontrolle"
+		var which := "Check-in" if float(_sum("checkin") * int(Catalog.ITEMS["checkin"]["cap"])) <= security_cap() else "Kontrolle"
 		out.append(["Warteschlangen am %s" % which, -mini(20, roundi(10.0 * (ld - 1.0)) + 3)])
 		hint = "%s überlastet: mehr davon bauen" % which
 	var la := demand_arr / maxf(capacity_arr(), 1.0)
@@ -432,6 +572,14 @@ func hall_summary(h: Dictionary) -> String:
 		if int(c.get("gepaeckband", 0)) > 0 and not game.legacy_claims:
 			lines.append("Gepäckbänder am Kofferband von der Sortierung: %d von %d%s" % [int(c.get("claim_band", 0)), int(c.get("gepaeckband", 0)),
 				"" if int(c.get("claim_band", 0)) >= int(c.get("gepaeckband", 0)) else " (Einlauf an der Schmalseite anschließen)"])
+		var rl := []
+		for st: Dictionary in game.rooms_of(h):
+			rl.append("%s %s" % [Catalog.ROOM_TYPES[st["kind"]]["name"], "✓" if bool(st["ok"]) else "(fehlt: " + ", ".join(st["missing"]) + ")"])
+		if not rl.is_empty():
+			lines.append("Räume: " + " · ".join(rl))
+		if int(c.get("shop", 0)) + int(c.get("cafe", 0)) + int(c.get("kiosk", 0)) > 0:
+			lines.append("Waren in Läden und Cafés: %d %%%s" % [roundi(goods_of(h) * 100.0),
+				(" · Lager %d %%" % roundi(stock_of(h) * 100.0)) if game.room_ok(h, "lager") else " (ohne Lager füllen sie sich nur langsam auf)"])
 		var over := game.belts_overloaded().size()
 		if over > 0:
 			lines.append("Kofferband überlastet: %d Bänder mit mehr als %d Schaltern dahinter (Koffer stauen sich, Schalter langsamer)" % [over, GameState.BELT_CAP])
@@ -909,6 +1057,304 @@ func _drop(per: Dictionary) -> void:
 	people.erase(per)
 
 
+# ---------------------------------------------------------------- Notfälle und Technik
+
+## Zufälliger Fluggast in einer fertigen Halle im Erdgeschoss, der gerade sichtbar ist.
+func pick_patient(rng: RandomNumberGenerator) -> Dictionary:
+	var list := []
+	for per: Dictionary in people:
+		if bool(per.get("staff", false)) or bool(per.get("collapsed", false)) or int(per.get("flight", -1)) < 0:
+			continue
+		if not is_instance_valid(per.get("node")) or not (per["node"] as Node3D).visible:
+			continue
+		if _floor_at(per["pos"]) != 0:
+			continue
+		list.append(per)
+	if list.is_empty():
+		return {}
+	return list[rng.randi() % list.size()]
+
+
+## Fluggast bricht zusammen: liegt am Boden, darüber ein rotes Warnzeichen.
+func collapse(per: Dictionary) -> void:
+	per["collapsed"] = true
+	var node: Node3D = per["node"]
+	node.rotation = Vector3(-PI * 0.5, node.rotation.y, 0)
+	node.position = (per["pos"] as Vector3) + Vector3(0, 0.18, 0)
+	var k := preload("res://scripts/mesh_kit.gd").new()
+	k.box(Vector3(-0.08, -0.3, -0.02), Vector3(0.08, 0.3, 0.02), Color(1.0, 0.15, 0.1, 0.3))
+	k.box(Vector3(-0.3, -0.08, -0.02), Vector3(0.3, 0.08, 0.02), Color(1.0, 0.15, 0.1, 0.3))
+	var mark := k.instance("Notfall")
+	mark.top_level = true
+	mark.position = (per["pos"] as Vector3) + Vector3(0, 2.4, 0)
+	node.add_child(mark)
+
+
+## Ersthelfer aus dem Sanitätsraum laufen zum Patienten (nur mit fertigem Sanitätsraum in der Halle).
+func first_aid(per: Dictionary) -> bool:
+	var hid := int(per["hall_id"])
+	var hall: Dictionary = {}
+	for h: Dictionary in game.items_of("halle"):
+		if (h["node"] as Node).get_instance_id() == hid:
+			hall = h
+	if hall.is_empty():
+		return false
+	var rooms := game.rooms_of(hall, "sanitaet").filter(func(s: Dictionary) -> bool: return bool(s["ok"]) and GameState.floor_of(s["rec"]) == 0)
+	if rooms.is_empty() or not grids.has(hid):
+		return false
+	var c := ((rooms[0] as Dictionary)["rec"]["rect"] as Rect2).get_center()
+	var start := Vector3(c.x, 0, c.y)
+	var goal := (per["pos"] as Vector3) + Vector3(0.8, 0, 0.4)
+	for i in range(2):
+		var node: Node3D = Factory.make_staff(Color(0.92, 0.92, 0.9) if i == 0 else Color(0.85, 0.15, 0.1), Color(0.75, 0.15, 0.12), i, true)
+		node.position = start
+		node.visible = false
+		add_child(node)
+		var plan := [["wait", float(i) * 1.5], ["show"], ["go", goal + Vector3(0, 0, float(i) * 0.9)], ["wait", 9999.0]]
+		people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
+			"timer": 0.0, "pos": start, "staff": true, "mode": "staff", "medic_for": per})
+	return true
+
+
+## Patient wird abtransportiert (oder ist wieder auf den Beinen): er und seine Ersthelfer verschwinden.
+func carry_away(per: Dictionary) -> void:
+	for o: Dictionary in people.duplicate():
+		if o.get("medic_for") is Dictionary and is_same(o["medic_for"], per):
+			_drop(o)
+	if per in people:
+		_drop(per)
+
+
+## Treffpunkt für den Rettungswagen: draußen an der Hallenwand, die dem Patienten am nächsten liegt.
+func rescue_point(per: Dictionary) -> Array:
+	var hid := int(per["hall_id"])
+	for h: Dictionary in game.items_of("halle"):
+		if (h["node"] as Node).get_instance_id() != hid:
+			continue
+		var r: Rect2 = h["rect"]
+		var q := Vector2((per["pos"] as Vector3).x, (per["pos"] as Vector3).z)
+		var dl := [q.x - r.position.x, r.end.x - q.x, q.y - r.position.y, r.end.y - q.y]
+		# Landseite (+Z) hat keine Betriebsstraße: dann die Vorfeldseite nehmen
+		var order := [0, 1, 2, 3]
+		order.sort_custom(func(a: int, b: int) -> bool: return float(dl[a]) < float(dl[b]))
+		var out := []
+		for m: int in order:
+			var n: Vector3 = [Vector3(-1, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 0, 1)][m]
+			var c := Vector2(clampf(q.x, r.position.x, r.end.x), clampf(q.y, r.position.y, r.end.y))
+			match m:
+				0:
+					c.x = r.position.x
+				1:
+					c.x = r.end.x
+				2:
+					c.y = r.position.y
+				3:
+					c.y = r.end.y
+			out.append([Vector3(c.x, 0, c.y) + n * 7.0, n.cross(Vector3.UP)])
+		return out
+	return []
+
+
+## Techniker läuft vom Technikraum (sonst Personalraum) zu einem Punkt in der Halle.
+func send_technician(hall: Dictionary, goal: Vector3) -> bool:
+	var hid := (hall["node"] as Node).get_instance_id()
+	if not grids.has(hid):
+		return false
+	var start := Vector3.INF
+	for st: Dictionary in game.rooms_of(hall, "technik"):
+		if bool(st["ok"]) and GameState.floor_of(st["rec"]) == 0:
+			var c := (st["rec"]["rect"] as Rect2).get_center()
+			start = Vector3(c.x, 0, c.y)
+	if start == Vector3.INF:
+		for it: Dictionary in game.inside_of(hall):
+			if it["id"] == "personalraum" and GameState.floor_of(it) == 0:
+				start = _front(it, 1.5, 0.3)
+	if start == Vector3.INF:
+		return false
+	var node: Node3D = Factory.make_staff(Color(0.95, 0.5, 0.1), Color(0.15, 0.2, 0.35), 2, true)
+	node.position = start
+	node.visible = false
+	add_child(node)
+	var plan := [["show"], ["go", Vector3(goal.x, 0, goal.z)], ["wait", 9999.0]]
+	people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
+		"timer": 0.0, "pos": start, "staff": true, "mode": "staff", "technician": true})
+	return true
+
+
+func recall_technicians() -> void:
+	for o: Dictionary in people.duplicate():
+		if bool(o.get("technician", false)):
+			_drop(o)
+
+
+# ---------------------------------------------------------------- Personen ansehen
+
+var selected_person: Dictionary = {}
+var path_mesh: MeshInstance3D = null
+
+
+## Person am Bodenpunkt (Innenansicht, gezeigte Ebene), sonst leer.
+func person_at(p: Vector3) -> Dictionary:
+	var best: Dictionary = {}
+	var bd := 1.3
+	for per: Dictionary in people:
+		if not is_instance_valid(per.get("node")) or not (per["node"] as Node3D).visible:
+			continue
+		var q: Vector3 = per["pos"]
+		if _floor_at(q) != game.view_floor:
+			continue
+		var d := Vector2(q.x - p.x, q.z - p.z).length()
+		if d < bd:
+			bd = d
+			best = per
+	return best
+
+
+## Bedürfnisse aus der Aufenthaltsdauer (ohne Zufall, damit der Ablauf gleich bleibt).
+static func _needs(per: Dictionary) -> Array:
+	var seed_v := absi(hash(per.get("flight", 0)) + int(per.get("born", 0.0) * 10.0)) % 1000
+	var age := float(per.get("age", 0.0))
+	var hunger := clampf(float(seed_v % 50) / 100.0 + age / 900.0, 0.0, 1.0)
+	var wc := clampf(float((seed_v / 50) % 40) / 100.0 + age / 700.0, 0.0, 1.0)
+	return [hunger, wc]
+
+
+static func _bar(v: float) -> String:
+	var n := clampi(roundi(v * 5.0), 0, 5)
+	return "▮".repeat(n) + "▯".repeat(5 - n)
+
+
+func describe_person(per: Dictionary, flights: Variant) -> Array:
+	var title := "Fluggast"
+	var lines := []
+	if bool(per.get("collapsed", false)):
+		title = "Medizinischer Notfall"
+		lines.append("Liegt am Boden, Rettungsdienst ist alarmiert")
+	elif bool(per.get("staff", false)):
+		title = "Reinigungskraft" if bool(per.get("cleaner", false)) else ("Warenverteilung" if bool(per.get("trolley", false))
+			else ("Ersthelfer" if per.get("medic_for") is Dictionary else ("Techniker" if bool(per.get("technician", false)) else "Mitarbeiter")))
+		lines.append("Arbeitet im Terminal")
+	else:
+		var code := String(flights.code_of(int(per["flight"]))) if flights != null else "?"
+		title = ("Fluggast · Abflug " if bool(per["dep"]) else "Fluggast · Ankunft ") + code
+	var plan: Array = per["plan"]
+	var si: int = per["si"]
+	if si < plan.size() and not bool(per.get("collapsed", false)):
+		var st: Array = plan[si]
+		var what: String = {"go": "unterwegs", "wait": "wartet", "drop_bag": "gibt den Koffer ab", "bags": "wartet am Gepäckband auf den Koffer",
+			"sit": "sitzt am Gate", "stay": "wartet aufs Boarding", "ride": "fährt mit Rolltreppe oder Aufzug", "show": "kommt gerade an"}.get(String(st[0]), String(st[0]))
+		var nxt := ""
+		for k in range(si, mini(si + 6, plan.size())):
+			var s2: Array = plan[k]
+			if String(s2[0]) == "drop_bag":
+				nxt = "Check-in"
+				break
+			if String(s2[0]) == "bags":
+				nxt = "Gepäckband"
+				break
+			if String(s2[0]) in ["sit", "stay"]:
+				nxt = "Gate"
+				break
+		lines.append("Gerade: " + what + ("" if nxt == "" else " · als Nächstes: " + nxt))
+	if not bool(per.get("staff", false)):
+		var nd := _needs(per)
+		lines.append("Hunger %s   Toilette %s" % [_bar(nd[0]), _bar(nd[1])])
+		var mood := clampf(game.satisfaction / 100.0 - float(per.get("waited", 0.0)) / 600.0 - maxf(0.0, float(nd[0]) - 0.7) * 0.5, 0.0, 1.0)
+		lines.append("Laune %s  (%d %%)" % [_bar(mood), roundi(mood * 100.0)])
+		lines.append("Wartezeit bisher: %d s" % roundi(float(per.get("waited", 0.0))))
+	lines.append("Der gelbe Pfad zeigt den Weg")
+	return [title, "\n".join(lines)]
+
+
+## Weg der gewählten Person als gelbe Linie (wird jedes Bild neu gezeichnet).
+func _draw_path() -> void:
+	if path_mesh == null:
+		path_mesh = MeshInstance3D.new()
+		path_mesh.mesh = ImmediateMesh.new()
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_color = Color(1.0, 0.85, 0.2)
+		m.no_depth_test = true
+		path_mesh.material_override = m
+		add_child(path_mesh)
+	var im := path_mesh.mesh as ImmediateMesh
+	im.clear_surfaces()
+	if selected_person.is_empty() or not (selected_person in people):
+		selected_person = {}
+		return
+	var pts := [selected_person["pos"]]
+	var path: Array = selected_person.get("path", [])
+	for i in range(int(selected_person.get("pi", 0)), path.size()):
+		pts.append(path[i])
+	var plan: Array = selected_person["plan"]
+	for k in range(int(selected_person["si"]), plan.size()):
+		var s2: Array = plan[k]
+		if String(s2[0]) == "go":
+			pts.append(s2[1])
+	if pts.size() < 2:
+		return
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	for i in range(pts.size() - 1):
+		im.surface_add_vertex((pts[i] as Vector3) + Vector3(0, 0.25, 0))
+		im.surface_add_vertex((pts[i + 1] as Vector3) + Vector3(0, 0.25, 0))
+	im.surface_end()
+
+
+# ---------------------------------------------------------------- Karten-Overlays (Gedränge, Wartezeit)
+
+var heat: Dictionary = {}    # Halle (Instanz-ID) -> {rect, crowd: PackedFloat32Array, wait: PackedFloat32Array, w, h}
+const HEAT_CELL := 2.0
+
+
+func _heat_add(per: Dictionary, sim: float) -> void:
+	per["age"] = float(per.get("age", 0.0)) + sim
+	var plan: Array = per["plan"]
+	var si: int = per["si"]
+	var waiting := si < plan.size() and String((plan[si] as Array)[0]) in ["wait", "bags", "stay", "sit"]
+	if waiting and not bool(per.get("staff", false)):
+		per["waited"] = float(per.get("waited", 0.0)) + sim
+	var hid := int(per["hall_id"])
+	if not heat.has(hid):
+		for h: Dictionary in game.items_of("halle"):
+			if (h["node"] as Node).get_instance_id() == hid:
+				var r: Rect2 = h["rect"]
+				var w := ceili(r.size.x / HEAT_CELL)
+				var hh := ceili(r.size.y / HEAT_CELL)
+				var a := PackedFloat32Array()
+				a.resize(w * hh)
+				var b := PackedFloat32Array()
+				b.resize(w * hh)
+				heat[hid] = {"rect": r, "crowd": a, "wait": b, "w": w, "h": hh}
+		if not heat.has(hid):
+			return
+	var hm: Dictionary = heat[hid]
+	var r2: Rect2 = hm["rect"]
+	var q: Vector3 = per["pos"]
+	var cx := int((q.x - r2.position.x) / HEAT_CELL)
+	var cz := int((q.z - r2.position.y) / HEAT_CELL)
+	if cx < 0 or cz < 0 or cx >= int(hm["w"]) or cz >= int(hm["h"]):
+		return
+	var i := cz * int(hm["w"]) + cx
+	var crowd: PackedFloat32Array = hm["crowd"]
+	crowd[i] = crowd[i] + sim
+	hm["crowd"] = crowd
+	if waiting:
+		var wt: PackedFloat32Array = hm["wait"]
+		wt[i] = wt[i] + sim
+		hm["wait"] = wt
+
+
+## Werte langsam vergessen (alle paar Sekunden), damit die Karte die letzten Minuten zeigt.
+func _heat_decay() -> void:
+	for hid: int in heat:
+		var hm: Dictionary = heat[hid]
+		for key: String in ["crowd", "wait"]:
+			var a: PackedFloat32Array = hm[key]
+			for i in range(a.size()):
+				a[i] = a[i] * 0.9
+			hm[key] = a
+
+
 func clear_people() -> void:
 	for per: Dictionary in people.duplicate():
 		_drop(per)
@@ -924,6 +1370,13 @@ func step(sim: float) -> void:
 	if dirty:
 		_analyze()
 	_bag_step(sim)
+	_goods_tick(sim)
+	heat_t -= sim
+	if heat_t <= 0.0:
+		heat_t = 3.0
+		_heat_decay()
+	if not selected_person.is_empty() or path_mesh != null:
+		_draw_path()
 	_move_bridges(sim)
 	_belts(sim)
 	_animate_inside(sim)
@@ -934,6 +1387,9 @@ func step(sim: float) -> void:
 
 
 func _update_person(per: Dictionary, sim: float) -> void:
+	if bool(per.get("collapsed", false)):
+		return   # liegt am Boden und wartet auf den Rettungsdienst
+	_heat_add(per, sim)
 	var plan: Array = per["plan"]
 	var si: int = per["si"]
 	if si >= plan.size():
@@ -1697,6 +2153,7 @@ func _staff_tick(sim: float) -> void:
 	if staff_t > 0.0:
 		return
 	staff_t = randf_range(6.0, 14.0)
+	_rooms_hint()
 	var count := 0
 	var cleaners := 0
 	for per: Dictionary in people:
@@ -1945,7 +2402,7 @@ func _bag_step(sim: float) -> void:
 		# sichtbar, wenn die Ebene gezeigt wird (in der Halle) oder draußen
 		var f := floori((p.y + 1.0) / Catalog.FLOOR_H)
 		var inside := not game.hall_at(p).is_empty()
-		node.visible = (not inside) or (game.interior_view and f == game.view_floor)
+		node.visible = (not inside) or (game.interior_view and game.floor_shown(f))
 	for sid: int in sorter_busy.keys():
 		if clock > float(sorter_busy[sid]):
 			sorter_busy.erase(sid)

@@ -506,7 +506,11 @@ static func make_zone(id: String, w: float, d: float) -> Node3D:
 	var n := Node3D.new()
 	n.name = id
 	var zone := String(Catalog.ITEMS[id].get("zone", ""))
+	var room := Catalog.room_of(id)
 	var col: Color = {"oeffentlich": Color(0.35, 0.65, 0.95), "sicherheit": Color(0.98, 0.55, 0.15), "personal": Color(0.62, 0.42, 0.9)}.get(zone, Color.WHITE)
+	if room != "":
+		col = {"lager": Color(0.75, 0.6, 0.35), "kueche": Color(0.9, 0.35, 0.3), "sanitaet": Color(0.95, 0.95, 0.95),
+			"pause": Color(0.45, 0.8, 0.45), "technik": Color(0.95, 0.85, 0.25)}.get(room, Color.WHITE)
 	var k := Kit.new()
 	var hw := w * 0.5
 	var hd := d * 0.5
@@ -528,6 +532,8 @@ static func make_zone(id: String, w: float, d: float) -> Node3D:
 			k.quad(a, b, b + inward * e, a + inward * e, Color(col.r, col.g, col.b, 0.85), Vector3(0, -1, 0))
 			t += 1.3
 	var label: String = {"oeffentlich": "OEFFENTLICH", "sicherheit": "SICHERHEITSBEREICH", "personal": "NUR PERSONAL"}.get(zone, "")
+	if room != "":
+		label = {"lager": "LAGER", "kueche": "KUECHE", "sanitaet": "SANITAETSRAUM", "pause": "PAUSENRAUM", "technik": "TECHNIK"}.get(room, "")
 	var px := minf(0.22, (w * 0.8) / maxf(float(PixelFont.width(label)), 1.0))
 	if px > 0.04 and d > 1.5:
 		PixelFont.draw_ground(k, label, Vector3(0, y + 0.006, 0), Vector3(0, 0, -1), px, Color(col.r, col.g, col.b, 0.7))

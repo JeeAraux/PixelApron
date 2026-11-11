@@ -22,6 +22,17 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.21: Leben im Betrieb**
+  - **Personen ansehen:** In der Innenansicht eine Figur anklicken. Das Infofeld zeigt Flug, was sie gerade tut, als Nächstes vorhat, Hunger, Toilette, Laune und Wartezeit, dazu ihren Weg als gelbe Linie.
+  - **Overlays (O):** Gedränge und Wartezeit als Wärmekarte über den Hallen, Fluglärm um die Pisten mit An- und Abflugschneisen.
+  - **Medizinische Notfälle:** Ein Fluggast bricht im Terminal zusammen. Ersthelfer kommen aus dem Sanitätsraum, und ein Rettungswagen fährt mit Blaulicht an die Hallenwand und holt den Patienten ab. Bei einem Notfall an Bord wartet der RTW am Stand. Neue **Rettungswache** (Flugbetrieb → Werft und Dienste). Ohne Wache kommt der RTW von außerhalb und braucht viel länger.
+  - **Störungen und Ereignisse** (Einstellung „Ereignisse“): Bandausfall mit Techniker (mit Technikraum schneller), Stromausfall an einem Trafo, Warnstreik (weniger Personal), Gewitter mit Blitzen (Vorfeld und Abfertigung ruhen), Vogelschlag (Pisteninspektion durch die Feuerwehr).
+- **Update 0.20: Räume, Warenlogistik, Ansichten, Kontrolltechnik**
+  - **Raumarten wie in Prison Architect:** Lager, Küche, Sanitätsraum, Pausenraum und Technikraum. Mit dem Raum-Werkzeug wählbar (Leiste: Raum) oder als Fläche aufziehen. Ein Raum zählt erst mit seiner Ausstattung (Regale, Küchenzeile, Behandlungsliege, Spinde und Bistrotische, Schaltschränke) und Mindestfläche. Das Infofeld der Halle zeigt, was fehlt.
+  - **Wirkung:** Eine Küche bringt den Cafés mehr. Der Pausenraum lässt das Personal 10 % mehr schaffen. Sanitätsraum und Technikraum helfen bei Notfällen und Störungen (ab 0.21).
+  - **Warenlogistik:** Läden und Cafés verkaufen ihre Regale leer. Mitarbeiter bringen mit Rollwagen Ware aus dem Lager. Ein Lieferwagen füllt das Lager über ein Rolltor auf. Ohne Lager werden die Regale nie ganz voll.
+  - **Wandansicht (H):** Innenwände halb, in voller Höhe oder ausgeblendet. **Schnittansicht (J):** alle Ebenen bis zur gezeigten übereinander. Beides gibt es als Knöpfe neben der Ebenenwahl.
+  - **Sicherheitskontrolle:** Bauform Technik: klassisch (150/h), CT-Scanner (220/h) oder Express mit Wannenrückführung (280/h).
 - **Update 0.19: Gepäckabfertigung**
   - **Gepäckzüge fahren in die Halle:** Ist hinter dem Rolltor eine 4 × 10 m große Einfahrt frei (gelbe Fahrspur), fährt der erste Zug durchs offene Tor hinein, lädt ab und setzt rückwärts im Bogen wieder hinaus. Weitere Züge warten vor dem Tor.
   - **Abflugzüge am Tor:** Sie laden neben der Toröffnung, das Tor fährt hoch, und die Koffer laufen sichtbar aus der Sortierung hinaus.
