@@ -47,6 +47,9 @@ const WORKPLACES := ["checkin", "sicherheit", "gate", "busgate", "passkontrolle"
 
 func setup(g: GameState) -> void:
 	game = g
+	crowd = Node3D.new()
+	crowd.name = "Leute"
+	add_child(crowd)
 	game.items_changed.connect(_mark)
 	game.network_changed.connect(_mark)
 	game.supply_changed.connect(_mark)
@@ -211,7 +214,7 @@ func slowdown() -> float:
 
 ## Einnahmen aus Café und Shop je abfliegendem Passagier.
 func retail_per_pax() -> int:
-	return roundi(float(_retail_base()) * retail_factor())
+	return roundi(float(_retail_base()) * retail_factor() * float(game.fees["miete"]))
 
 
 ## Warenstand und Küche: leere Regale verdienen wenig, eine Küche bringt den Cafés ein Viertel mehr.
@@ -234,6 +237,7 @@ func retail_factor() -> float:
 
 var goods: Dictionary = {}    # Halle (Instanz-ID) -> Warenstand in Läden und Cafés (0..1)
 var stock: Dictionary = {}    # Halle (Instanz-ID) -> Bestand im Lager (0..1)
+var crowd: Node3D = null   # Menschen und laufende Koffer (weit herausgezoomt ausgeblendet)
 var goods_t := 0.0
 var heat_t := 0.0
 
@@ -322,7 +326,7 @@ func _spawn_trolley(h: Dictionary, hid: int) -> void:
 	node.add_child(cart)
 	node.position = start
 	node.visible = false
-	add_child(node)
+	crowd.add_child(node)
 	var plan := [["show"], ["go", goal], ["wait", randf_range(4.0, 7.0)], ["go", start], ["end"]]
 	people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
 		"timer": 0.0, "pos": start, "staff": true, "mode": "staff", "trolley": true})
@@ -514,6 +518,18 @@ func factors() -> Array:
 			hint = "Gepäckdurchleuchtung in den Kofferweg zwischen Check-in und Sortierung setzen (Bänder an den Schmalseiten)"
 	if _sum("airline_lounge") > 0:
 		out.append(["Airline-Lounge für Vielflieger", 2])
+	var miete := float(game.fees["miete"])
+	if miete > 1.2:
+		out.append(["Hohe Preise in Läden und Cafés", -roundi((miete - 1.0) * 6.0)])
+	var park := float(game.fees["park"])
+	if park > 1.2:
+		out.append(["Teure Parkplätze", -roundi((park - 1.0) * 4.0)])
+	elif park < 0.8:
+		out.append(["Günstiges Parken", 1])
+	if betrieb != null and betrieb.flights != null:
+		var comp: float = betrieb.flights.complaints_total()
+		if comp > 3.0:
+			out.append(["Lärmbeschwerden der Anwohner", -mini(8, roundi(comp / 4.0))])
 	if has_fastlane():
 		out.append(["Fast-Lane an der Kontrolle für Vielflieger", 1])
 	var need := staff_needed()
@@ -860,7 +876,7 @@ func _claim_flow(p_id: int) -> void:
 		mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[(p_id + i * 3) % Interior.BAG_COLS.size()])
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mi.visible = false
-		add_child(mi)
+		crowd.add_child(mi)
 		mi.position = route[0]
 		moving_bags.append({"node": mi, "route": route, "cum": cum, "s": -float(i) * 2.2, "v": CLAIM_SPEED, "claim": true})
 
@@ -882,7 +898,7 @@ func gate_bag(gate_node: Node, outward: bool = false) -> void:
 	mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[moving_bags.size() % Interior.BAG_COLS.size()])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.visible = false
-	add_child(mi)
+	crowd.add_child(mi)
 	mi.position = route[0]
 	var bag := {"node": mi, "route": route, "cum": cum, "s": 0.0, "v": CLAIM_SPEED}
 	if outward:
@@ -1032,7 +1048,7 @@ func _spawn(p: Dictionary, hall: Dictionary, dep: bool, start: Vector3, plan: Ar
 			Factory.blk(bag, Vector3(-0.1, 0.0, wz - 0.03), Vector3(0.1, 0.06, wz + 0.03), Color(0.08, 0.08, 0.08))
 	node.visible = false
 	node.position = start
-	add_child(node)
+	crowd.add_child(node)
 	people.append({"node": node, "flight": int(p["id"]), "dep": dep, "hall_id": (hall["node"] as Node).get_instance_id(),
 		"plan": plan, "si": 0, "path": [], "pi": 0, "timer": 0.0, "pos": start})
 
@@ -1109,7 +1125,7 @@ func first_aid(per: Dictionary) -> bool:
 		var node: Node3D = Factory.make_staff(Color(0.92, 0.92, 0.9) if i == 0 else Color(0.85, 0.15, 0.1), Color(0.75, 0.15, 0.12), i, true)
 		node.position = start
 		node.visible = false
-		add_child(node)
+		crowd.add_child(node)
 		var plan := [["wait", float(i) * 1.5], ["show"], ["go", goal + Vector3(0, 0, float(i) * 0.9)], ["wait", 9999.0]]
 		people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
 			"timer": 0.0, "pos": start, "staff": true, "mode": "staff", "medic_for": per})
@@ -1174,7 +1190,7 @@ func send_technician(hall: Dictionary, goal: Vector3) -> bool:
 	var node: Node3D = Factory.make_staff(Color(0.95, 0.5, 0.1), Color(0.15, 0.2, 0.35), 2, true)
 	node.position = start
 	node.visible = false
-	add_child(node)
+	crowd.add_child(node)
 	var plan := [["show"], ["go", Vector3(goal.x, 0, goal.z)], ["wait", 9999.0]]
 	people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
 		"timer": 0.0, "pos": start, "staff": true, "mode": "staff", "technician": true})
@@ -1847,7 +1863,7 @@ func _rebuild_bridges() -> void:
 			old.erase(bid)
 		else:
 			var basis := Basis(Vector3.UP, float(it["rot"]) * PI * 0.5)
-			b = _make_bridge(it["pos"], basis * Vector3(0, 0, 1))
+			b = _make_bridge(it["pos"], basis * Vector3(0, 0, 1), bool(game.opt(it, "oberdeck")))
 		b["item"] = it
 		b["gate"] = _gate_near(it)
 		bridges[bid] = b
@@ -1881,7 +1897,7 @@ func _bridge_for_gate(gate: Dictionary) -> Dictionary:
 
 
 ## Bewegliche Teile einer Brücke: zwei Teleskoptunnel, Kabine mit Faltenbalg, Fahrwerk mit Hubsäule.
-func _make_bridge(anchor: Vector3, out: Vector3) -> Dictionary:
+func _make_bridge(anchor: Vector3, out: Vector3, upper: bool = false) -> Dictionary:
 	var root := Node3D.new()
 	root.name = "Fluggastbruecke"
 	root.add_to_group("oberirdisch")
@@ -1901,6 +1917,12 @@ func _make_bridge(anchor: Vector3, out: Vector3) -> Dictionary:
 		tk.box(Vector3(-hw - 0.05, hh, -0.5), Vector3(hw + 0.05, hh + 0.08, 0.5), dark)
 		var mi := tk.instance(e[0])
 		root.add_child(mi)
+		if upper:
+			var up := MeshInstance3D.new()
+			up.name = "Oberdeck"
+			up.mesh = mi.mesh
+			up.position = Vector3(0, 3.4, 0)
+			mi.add_child(up)
 	var cab := Node3D.new()
 	cab.name = "Kabine"
 	root.add_child(cab)
@@ -1914,6 +1936,10 @@ func _make_bridge(anchor: Vector3, out: Vector3) -> Dictionary:
 	ck.box(Vector3(-1.9, 2.75, -1.6), Vector3(1.9, 2.9, 1.6), dark)
 	ck.box(Vector3(-0.4, 2.9, 0.4), Vector3(0.4, 3.2, 1.0), Color(0.95, 0.55, 0.1, 0.3))
 	cab.add_child(ck.instance("KabineModell"))
+	if upper:
+		var up2 := ck.instance("KabineOben")
+		up2.position = Vector3(0, 3.4, 0)
+		cab.add_child(up2)
 	var leg := Node3D.new()
 	leg.name = "Fahrwerk"
 	root.add_child(leg)
@@ -2196,7 +2222,7 @@ func _staff_tick(sim: float) -> void:
 		var node: Node3D = Factory.make_staff(shirt, Color(0.12, 0.13, 0.18), randi() % 4, vest)
 		node.position = start
 		node.visible = false
-		add_child(node)
+		crowd.add_child(node)
 		var plan := [["show"], ["go", goal], ["wait", randf_range(4.0, 12.0)], ["go", start], ["end"]]
 		people.append({"node": node, "flight": -1, "dep": true, "hall_id": hid, "plan": plan, "si": 0, "path": [], "pi": 0,
 			"timer": 0.0, "pos": start, "staff": true, "mode": "staff"})
@@ -2231,7 +2257,7 @@ func _spawn_cleaner(h: Dictionary, hid: int) -> void:
 	node.add_child(cart)
 	node.position = pts[0]
 	node.visible = false
-	add_child(node)
+	crowd.add_child(node)
 	var plan := [["show"]]
 	for i in range(1, pts.size()):
 		plan.append(["go", pts[i]])
@@ -2360,7 +2386,7 @@ func _bag_drop(desk: Dictionary) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[randi() % Interior.BAG_COLS.size()])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
+	crowd.add_child(mi)
 	mi.position = route[0]
 	moving_bags.append({"node": mi, "route": route, "cum": cum, "s": -1.6})
 

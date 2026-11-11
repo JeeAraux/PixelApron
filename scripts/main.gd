@@ -19,6 +19,7 @@ const Weather = preload("res://scripts/weather.gd")
 const Operations = preload("res://scripts/operations.gd")
 const Events = preload("res://scripts/events.gd")
 const Overlay = preload("res://scripts/overlay.gd")
+const Sound = preload("res://scripts/sound.gd")
 const RESUME_FLAG := "user://nach_update_laden"
 const Catalog = preload("res://scripts/catalog.gd")
 const GROUND_SHADER = preload("res://shaders/ground.gdshader")
@@ -44,6 +45,9 @@ var betrieb: Operations
 var events: Events
 var overlay: Overlay
 var person_t := 0.0
+var sound: Sound
+var lod_far := false
+var show_fps := false
 var hud: Hud
 var settings: Settings
 var updater: Updater
@@ -134,6 +138,16 @@ func _ready() -> void:
 	overlay.game = game
 	overlay.terminal = terminal
 	overlay.flights = flights
+	sound = Sound.new()
+	sound.name = "Geraeusche"
+	add_child(sound)
+	sound.game = game
+	sound.flights = flights
+	sound.ops = ops
+	sound.terminal = terminal
+	sound.weather = weather
+	if "--demo" in OS.get_cmdline_user_args() or "--selftest" in OS.get_cmdline_user_args():
+		sound.enabled = false
 	terminal.betrieb = betrieb
 	game.income_cb = betrieb.book_income
 	game.before_save.connect(_collect_extra)
@@ -313,6 +327,10 @@ func _connect() -> void:
 	builder.side_changed.connect(hud.show_side)
 	builder.steps.connect(hud.set_steps)
 	hud.ops_ref = betrieb
+	hud.fees_ref = game
+	hud.events_ref = events
+	hud.fee_changed.connect(func(key: String, dir: int) -> void: game.set_fee(key, dir))
+	hud.night_ban_toggled.connect(func() -> void: game.night_ban = not game.night_ban)
 	hud.clearance_requested.connect(_on_clearance)
 	hud.atc_toggled.connect(_on_atc)
 	hud.contract_requested.connect(betrieb.sign)
@@ -483,6 +501,10 @@ func _apply_setting(key: String, v: Variant) -> void:
 			hud.set_help_visible(bool(v))
 		"sandkasten":
 			_apply_sandbox()
+		"lautstaerke":
+			sound.set_volume(float(v))
+		"fps":
+			show_fps = bool(v)
 		"ereignisse":
 			if not ("--demo" in OS.get_cmdline_user_args() or "--selftest" in OS.get_cmdline_user_args()):
 				events.enabled = bool(v)
@@ -555,7 +577,15 @@ func _process(delta: float) -> void:
 	_daylight()
 	if not hud.is_menu_open():
 		builder.on_move(ground_at(get_viewport().get_mouse_position()))
-	hud.set_clock(game.clock_text())
+	hud.set_clock(game.clock_text() + ("  · %d fps" % Engine.get_frames_per_second() if show_fps else ""))
+	if sound.cam == null:
+		sound.cam = cam_rig
+	# Detailstufe: weit herausgezoomt Menschen, laufende Koffer und Einrichtung unter den Dächern ausblenden
+	var far := cam_rig.zoom > 260.0 and not game.interior_view
+	if far != lod_far:
+		lod_far = far
+		terminal.crowd.visible = not far
+		game.set_lod_far(far)
 	person_t -= delta
 	if person_t <= 0.0 and not terminal.selected_person.is_empty():
 		person_t = 0.5
@@ -666,7 +696,10 @@ func _inspect(p: Vector3) -> void:
 	if rec.get("id", "") == "gepaeckband":
 		var fid := int(terminal.belt_load.get((rec["node"] as Node).get_instance_id(), -1))
 		body = ("Band läuft für Flug %s\n" % flights.code_of(fid) if fid >= 0 else "Band steht\n") + body
-	if rec.get("id", "") in ["stand", "stand_aussen", "stand_gross"]:
+	if rec.get("id", "") in ["stand", "stand_aussen", "stand_gross", "stand_f"]:
+		body = "Flugplatzcode %s: passt für Flugzeuge bis %s\n" % [String(Catalog.ITEMS[rec["id"]].get("code", "C")),
+			{"C": "A321/B737", "E": "A350/B787/B767", "F": "A380"}.get(String(Catalog.ITEMS[rec["id"]].get("code", "C")), "")] + body
+	if rec.get("id", "") in ["stand", "stand_aussen", "stand_gross", "stand_f"]:
 		body = ("Zufahrt: an die Betriebsstraße angeschlossen" if ops.stand_connected(rec)
 			else "Keine Zufahrt: am Kopf des Stands (Nasenseite) eine Betriebsstraße bis auf 16 m heranführen") + "\n" + body
 	if rec.get("type", "") == "line" and Catalog.is_road(String(rec["kind"])):
@@ -1158,7 +1191,7 @@ func _demo(args: PackedStringArray) -> void:
 		var Lm = load("res://scripts/landmarks.gd")
 		var Mo = load("res://scripts/models.gd")
 		var row := [["linienbus", 9.0], ["bus", 10.0], ["schlepper", 9.0], ["gepaeckschlepper", 4.0], ["wagen", 4.0], ["bandlader", 5.0],
-			["catering_basis", 6.0], ["tank", 6.0], ["gpu", 4.0], ["treppe", 6.0], ["feuer", 7.0]]
+			["catering_basis", 6.0], ["tank", 6.0], ["gpu", 4.0], ["treppe", 6.0], ["feuer", 7.0], ["rtw", 6.0]]
 		var fx := -30.0
 		for e: Array in row:
 			var mi := MeshInstance3D.new()
@@ -1170,6 +1203,8 @@ func _demo(args: PackedStringArray) -> void:
 					mi.mesh = Mo.stairs_mesh(3.4)
 				"feuer":
 					mi.mesh = Lm.fire_truck_mesh()
+				"rtw":
+					mi.mesh = Lm.rtw_mesh()
 				_:
 					mi.mesh = Mo.gse_mesh(kind)
 			mi.position = base + Vector3(fx, 0, 50)

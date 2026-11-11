@@ -53,7 +53,7 @@ const OPTIONS := {
 	"sicherheit": [["fastlane", "Fast-Lane", [false, true]], ["technik", "Technik", ["klassisch", "ct", "express"]]],
 	"gepaeckanlage": [["rutschen", "Make-up-Rutschen", [4, 6, 8, 2]]],
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
-	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]]],
+	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]], ["oberdeck", "Oberdeck (A380)", [false, true]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
 }
 const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
@@ -668,6 +668,16 @@ func set_interior_view(on: bool) -> void:
 	floor_changed.emit(view_floor)
 
 
+var lod_far := false        # weit herausgezoomt: Einrichtung unter den Dächern ausblenden (Leistung)
+
+
+func set_lod_far(on: bool) -> void:
+	lod_far = on
+	for it: Dictionary in items:
+		if Catalog.is_inside(String(it["id"])):
+			_apply_floor(it)
+
+
 var wall_mode := "halb"     # Innenansicht: Wände "voll", "halb" oder "aus" (Taste H)
 var section_view := false    # Innenansicht: alle Ebenen bis zur gezeigten übereinander (Taste J)
 signal view_mode_changed
@@ -780,7 +790,7 @@ func _apply_floor(it: Dictionary) -> void:
 	elif Catalog.is_inside(String(it["id"])):
 		var f := floor_of(it)
 		var both := bool(Catalog.ITEMS[it["id"]].get("bag_lift", false)) and f + 1 == view_floor
-		node.visible = (floor_shown(f) or both) if interior_view else f >= 0
+		node.visible = (floor_shown(f) or both) if interior_view else (f >= 0 and not lod_far)
 	else:
 		node.visible = not (interior_view and view_floor < 0)
 
@@ -842,6 +852,8 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 	if rec["id"] == "sicherheit" and key == "technik":
 		var price := {"klassisch": 0, "ct": 120000, "express": 260000}
 		cost = int(price.get(String(v), 0)) - int(price.get(String(cur), 0))
+	if rec["id"] == "fluggastbruecke" and key == "oberdeck":
+		cost = 60000 if bool(v) else -60000
 	if rec["id"] == "fluggastbruecke" and key == "steg":
 		# Rotunde nach außen verschieben; der Steg darf über Straßen und Betriebsstraßen gehen
 		var anchor := bridge_anchor(rec)
@@ -1870,7 +1882,7 @@ func build_zone(id: String, r: Rect2, free: bool = false, f: int = -99) -> Dicti
 func stands() -> Array:
 	var out := []
 	for it: Dictionary in items:
-		if it["id"] == "stand" or it["id"] == "stand_aussen" or it["id"] == "stand_gross":
+		if it["id"] == "stand" or it["id"] == "stand_aussen" or it["id"] == "stand_gross" or it["id"] == "stand_f":
 			out.append(it)
 	return out
 
@@ -1889,6 +1901,22 @@ const BELT_LOW := 0.62    # Bandhöhe an Schaltern, Sortierung und Lift
 const BELT_HIGH := 2.9    # unter der Decke: Fluggäste gehen darunter durch
 const BELT_RAMP := 5.0
 var legacy_belts := false # Spielstand von vor 0.17: Schalter arbeiten auch ohne Kofferband
+var fees := {"lande": 1.0, "park": 1.0, "miete": 1.0}   # Gebühren als Faktor (0,5 … 2,0)
+var night_ban := false                                  # Nachtflugverbot 23–6 Uhr
+const FEE_STEPS := [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+
+
+func set_fee(key: String, dir: int) -> float:
+	var i := FEE_STEPS.find(float(fees.get(key, 1.0)))
+	if i < 0:
+		i = 2
+	fees[key] = FEE_STEPS[clampi(i + dir, 0, FEE_STEPS.size() - 1)]
+	return float(fees[key])
+
+
+func is_night_hour() -> bool:
+	var hr := fmod(minutes, 1440.0) / 60.0
+	return hr >= 23.0 or hr < 6.0
 var legacy_claims := false # Spielstand von vor 0.18: Gepäckbänder arbeiten auch ohne Kofferband
 const CLAIM_INLET := Vector3(-5.5, 0, 0)   # Einlauf des Gepäckbands (lokal)
 const GATE_INLET := Vector3(2.1, 0, -1.5)  # Rollenbahn hinter dem Rolltor (lokal, innen, neben der Fahrspur)
@@ -2829,7 +2857,7 @@ func clear_all() -> void:
 func save_game(quiet: bool = false) -> void:
 	before_save.emit()
 	var data := {"version": 10, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
-		"wind": [wind_dir, wind_kt], "extra": extra, "lotse": atc_manual}
+		"wind": [wind_dir, wind_kt], "extra": extra, "lotse": atc_manual, "fees": fees, "nachtflug": night_ban}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
 		var pts := []
@@ -2874,6 +2902,9 @@ func load_game() -> bool:
 	legacy_lights = int(data.get("version", 0)) < 7
 	legacy_belts = int(data.get("version", 0)) < 9
 	legacy_claims = int(data.get("version", 0)) < 10
+	var fd: Dictionary = data.get("fees", {})
+	fees = {"lande": float(fd.get("lande", 1.0)), "park": float(fd.get("park", 1.0)), "miete": float(fd.get("miete", 1.0))}
+	night_ban = bool(data.get("nachtflug", false))
 	# Hallen zuerst, damit Wände und Einrichtung ihre Halle finden
 	for it: Dictionary in data.get("items", []):
 		if String(it["id"]) == "halle":
@@ -2960,6 +2991,8 @@ func load_starter() -> void:
 	legacy_lights = false
 	legacy_belts = false
 	legacy_claims = false
+	fees = {"lande": 1.0, "park": 1.0, "miete": 1.0}
+	night_ban = false
 	var V := func(x: float, z: float) -> Vector3: return Vector3(x, 0.0, z)
 	# Vorfeld bis zum Terminal, dahinter der Parallelrollweg A (Abstand Pistenmitte 168 m nach ICAO,
 	# Rollhalteorte 90 m vor der Pistenmitte), an den Enden Zurollwege, dazwischen zwei Schnellabrollwege.
@@ -3016,6 +3049,10 @@ func load_starter() -> void:
 	build_item("busgarage", V.call(298, -52), 0, true)
 	build_item("feuerwache", V.call(345, -52), 0, true)
 	build_item("rettungswache", V.call(378, -50), 0, true)
+	# Ortsteile in der Nachbarschaft (Fluglärm, Beschwerden): eins in der östlichen Anflugschneise
+	build_item("wohngebiet", V.call(2050, -272), 0, true)
+	build_item("wohngebiet", V.call(-300, 420), 0, true)
+	build_item("wohngebiet", V.call(500, -760), 0, true)
 	build_item("gepaeckumschlag", V.call(295, -10), 0, true)
 	build_item("personalgebaeude", V.call(150, 14), 0, true)
 	# Befeuerung: Station mit Strom, Anflugbefeuerung und PAPI an beiden Pistenenden, Rollhalteorte

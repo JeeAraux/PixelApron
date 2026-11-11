@@ -6,6 +6,8 @@ const PATH := "user://einstellungen.cfg"
 ## Schlüssel, Standardwert, Anzeigename, Art (bool, choice, slider), Optionen
 const DEFS := [
 	["sandkasten", true, "Sandkasten: unbegrenztes Geld (nicht in Szenarien)", "bool", []],
+	["lautstaerke", 0.7, "Lautstärke (Geräusche, 0 = aus)", "slider", [0.0, 1.0]],
+	["fps", false, "Bilder pro Sekunde anzeigen", "bool", []],
 	["ereignisse", true, "Ereignisse: Notfälle, Störungen, Streik, Gewitter, Vogelschlag", "bool", []],
 	["vollbild", false, "Vollbild", "bool", []],
 	["schatten", 3, "Schatten", "choice", ["Aus", "Normal", "Hoch", "Sehr hoch"]],

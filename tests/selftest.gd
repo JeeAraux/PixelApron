@@ -12,6 +12,7 @@ func check(cond: bool, what: String) -> void:
 
 
 const Catalog = preload("res://scripts/catalog.gd")
+const Models = preload("res://scripts/models.gd")
 
 
 func run(main: Node) -> void:
@@ -973,6 +974,56 @@ func run(main: Node) -> void:
 	check(main.flights._runway_closed(), "Pisteninspektion nach Vogelschlag sperrt die Piste")
 	main.flights.inspect_t = 0.0
 	main.weather.force("klar")
+	# 0.22: Flugplatzcodes A–F, A380 und B767, Oberdeck-Steg, Gebühren, Fluglärm, Nachtflugverbot
+	check(Catalog.code_rank("F") > Catalog.code_rank("E") and Catalog.plane_wide("b767") and Catalog.plane_wide("a380") and not Catalog.plane_wide("a320"),
+		"Flugplatzcodes: B767 (D) und A380 (F) brauchen breite Rollwege")
+	check(Models.plane_mesh("a380", Color.RED, 0).get_surface_count() > 0 and Models.SPECS["a380"].has("eng2"), "A380 vierstrahlig mit Oberdeck-Fenstern")
+	var sf: Dictionary = game.build_item("stand_f", Vector3(-600, 0, 1200), 0, true)
+	check(not sf.is_empty() and sf in game.stands() and String(Catalog.ITEMS["stand_f"]["code"]) == "F", "A380-Stand (Code F) gebaut")
+	game.remove(sf, 1.0)
+	var brs: Array = game.items_of("fluggastbruecke")
+	game.cycle_option(brs[0], "oberdeck", 1)
+	tb._rebuild_bridges()
+	var upper := false
+	for bid: int in tb.bridges:
+		var bn: Node = tb.bridges[bid]["node"]
+		upper = upper or bn.find_child("Oberdeck", true, false) != null
+	check(upper, "Fluggastbrücke mit Oberdeck-Steg für den A380")
+	game.cycle_option(game.items_of("fluggastbruecke")[0], "oberdeck", -1)
+	var rp0: int = tb.retail_per_pax()
+	game.fees["miete"] = 2.0
+	var high_prices := false
+	for f: Array in tb.factors():
+		high_prices = high_prices or String(f[0]).contains("Hohe Preise")
+	check(tb.retail_per_pax() > rp0 and high_prices, "Ladenmiete: mehr Einnahmen, aber hohe Preise ärgern (%d → %d €)" % [rp0, tb.retail_per_pax()])
+	game.fees["miete"] = 1.0
+	check(is_equal_approx(game.set_fee("lande", 1), 1.25) and is_equal_approx(game.set_fee("lande", -1), 1.0), "Landeentgelt in Stufen einstellbar")
+	var vil: Array = game.items_of("wohngebiet")
+	check(vil.size() == 3, "Drei Wohngebiete rund um den Flughafen")
+	var east_n: float = main.flights.noise_at(Vector3(2050, 0, -272))
+	var town_n: float = main.flights.noise_at(Vector3(-300, 0, 420))
+	check(east_n > town_n, "Wohngebiet in der Anflugschneise ist lauter (%.0f / %.0f dB)" % [east_n, town_n])
+	var min0: float = game.minutes
+	game.minutes = floorf(min0 / 1440.0) * 1440.0 + 23.5 * 60.0
+	var night_ok: bool = game.is_night_hour()
+	game.night_ban = true
+	main.flights.next_flight = 0.0
+	main.flights.step(0.05)
+	check(night_ok and main.flights.reason.contains("Nachtflugverbot"), "Nachtflugverbot: nachts keine neuen Flüge")
+	game.night_ban = false
+	game.minutes = min0
+	# 0.23: Detailstufe (Leistung) und Geräusche
+	var inner_item: Dictionary = game.items_of("checkin")[0]
+	game.set_lod_far(true)
+	var hidden_far := not (inner_item["node"] as Node3D).visible
+	game.set_lod_far(false)
+	check(hidden_far and (inner_item["node"] as Node3D).visible, "Weit herausgezoomt: Einrichtung unter den Dächern ausgeblendet")
+	var in_crowd: bool = tb.people.is_empty() or (tb.people[0]["node"] as Node).get_parent() == tb.crowd
+	check(in_crowd, "Menschen hängen am eigenen Knoten (Detailstufe)")
+	var horn: AudioStreamWAV = main.sound._gen("horn")
+	var gong: AudioStreamWAV = main.sound._gen("gong")
+	check(not main.sound.enabled and horn.data.size() > 10000 and horn.loop_mode == AudioStreamWAV.LOOP_FORWARD and gong.data.size() > 10000,
+		"Geräusche werden erzeugt (Martinshorn, Gong), im Selbsttest stumm")
 	game.sandbox = false
 
 	# Rollführungslinie: nur auf Belag

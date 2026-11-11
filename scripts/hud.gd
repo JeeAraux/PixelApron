@@ -30,6 +30,8 @@ signal tutorial_requested
 signal spot_requested(pos: Vector3)
 signal wall_mode_requested
 signal overlay_requested
+signal fee_changed(key: String, dir: int)
+signal night_ban_toggled
 signal section_toggled(on: bool)
 
 const Catalog = preload("res://scripts/catalog.gd")
@@ -137,6 +139,8 @@ var mode_buttons: Dictionary = {}
 var hint_panel: PanelContainer
 var hint_label: Label
 var ops_ref: Variant = null         # operations.gd (Statistik, Verträge, Szenario)
+var fees_ref: Variant = null        # game_state.gd (Gebühren, Nachtflugverbot)
+var events_ref: Variant = null      # events.gd (Ereignisprotokoll)
 var ops_window: PanelContainer
 var ops_body: VBoxContainer
 var ops_tab := "statistik"
@@ -1724,7 +1728,7 @@ func _build_ops() -> void:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 6)
 	var tg := ButtonGroup.new()
-	for t: Array in [["statistik", "Statistik"], ["vertraege", "Airline-Verträge"], ["ziele", "Szenarien und Ziele"]]:
+	for t: Array in [["statistik", "Statistik"], ["vertraege", "Airline-Verträge"], ["gebuehren", "Gebühren und Lärm"], ["ziele", "Szenarien und Ziele"]]:
 		var b := _button(String(t[1]), true)
 		b.button_group = tg
 		b.button_pressed = t[0] == ops_tab
@@ -1768,6 +1772,8 @@ func _ops_refresh() -> void:
 			rows = _ops_stats()
 		"vertraege":
 			rows = _ops_contracts()
+		"gebuehren":
+			rows = _ops_fees()
 		"ziele":
 			rows = _ops_goals()
 	var sig := var_to_str(rows)
@@ -1833,6 +1839,33 @@ func _ops_row(r: Array) -> Control:
 			return ch
 		"sep":
 			return HSeparator.new()
+		"fee":
+			var h := HBoxContainer.new()
+			h.add_theme_constant_override("separation", 8)
+			var k := _label(String(r[1]), 14, C_TEXT)
+			k.custom_minimum_size = Vector2(300, 0)
+			h.add_child(k)
+			var key: String = r[2]
+			var dn := _button("◀", false)
+			dn.custom_minimum_size = Vector2(34, 30)
+			dn.pressed.connect(func() -> void:
+				fee_changed.emit(key, -1)
+				ops_sig = ""
+				_ops_refresh())
+			h.add_child(dn)
+			var vl := _label(String(r[3]), 15, C_TEXT)
+			vl.custom_minimum_size = Vector2(70, 0)
+			vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			h.add_child(vl)
+			var up := _button("▶", false)
+			up.custom_minimum_size = Vector2(34, 30)
+			up.pressed.connect(func() -> void:
+				fee_changed.emit(key, 1)
+				ops_sig = ""
+				_ops_refresh())
+			h.add_child(up)
+			h.add_child(_label(String(r[4]) if r.size() > 4 else "", 13, C_DIM))
+			return h
 	return Control.new()
 
 
@@ -1854,6 +1887,10 @@ func _ops_action(action: String, arg: Variant, b: Button) -> void:
 		"tutorial":
 			tutorial_requested.emit()
 			show_ops(false)
+		"nachtflug":
+			night_ban_toggled.emit()
+			ops_sig = ""
+			_ops_refresh()
 
 
 func _ops_stats() -> Array:
@@ -1924,6 +1961,37 @@ func _ops_contracts() -> Array:
 			rows.append(["button", "Vertrag unterschreiben", "sign", code, o.offer_ok(code)])
 		elif float((o.contracts[code] as Dictionary).get("verletzt", 0.0)) > 0.0:
 			rows.append(["text", "Bedingungen nicht erfüllt: Kündigung droht!", C_BAD])
+	return rows
+
+
+## Gebühren (Landeentgelt, Parken, Ladenmiete), Fluglärm an den Wohngebieten, Nachtflugverbot, Ereignisse.
+func _ops_fees() -> Array:
+	var rows := []
+	if fees_ref == null:
+		return rows
+	var g = fees_ref
+	rows.append(["title", "Gebühren"])
+	rows.append(["text", "Höhere Gebühren bringen mehr Geld je Flug, Parkplatz oder Laden, aber weniger Flüge bzw. unzufriedenere Reisende.", C_DIM])
+	for e: Array in [["lande", "Landeentgelt", "mehr Geld je Landung, Airlines kommen seltener"],
+			["park", "Parkgebühr", "über 120 %: Reisende ärgern sich"], ["miete", "Ladenmiete (Preise)", "über 120 %: hohe Preise kosten Zufriedenheit"]]:
+		rows.append(["fee", String(e[1]), String(e[0]), "%d %%" % roundi(float(g.fees[e[0]]) * 100.0), String(e[2])])
+	rows.append(["sep"])
+	rows.append(["title", "Fluglärm und Nachtflug"])
+	var fl = ops_ref.flights if ops_ref != null else null
+	if fl != null:
+		for w: Dictionary in g.items_of("wohngebiet"):
+			var wid := (w["node"] as Node).get_instance_id()
+			var l: float = fl.noise_at(w["pos"])
+			var c := float(fl.complaints.get(wid, 0.0))
+			rows.append(["kv", "Wohngebiet bei %d / %d" % [roundi((w["pos"] as Vector3).x), roundi((w["pos"] as Vector3).z)],
+				"%d dB · %s" % [roundi(l), "keine Beschwerden" if c < 1.0 else "%d Beschwerden" % roundi(c)], C_TEXT if c < 3.0 else C_BAD])
+	rows.append(["button", "Nachtflugverbot 23–6 Uhr: %s (umschalten)" % ("an" if bool(g.night_ban) else "aus"), "nachtflug", null, true])
+	rows.append(["text", "Mit Verbot starten nachts keine neuen Flüge. Ohne Verbot zählen nächtliche Beschwerden dreifach. Das Overlay Fluglärm (O) zeigt die Lärmkarte.", C_DIM])
+	if events_ref != null:
+		rows.append(["sep"])
+		rows.append(["title", "Ereignisse"])
+		var sm: String = events_ref.summary()
+		rows.append(["text", sm if sm != "" else "Bisher keine besonderen Vorkommnisse.", C_TEXT])
 	return rows
 
 

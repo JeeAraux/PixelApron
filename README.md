@@ -22,6 +22,14 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.23: Leistung und Geräusche**
+  - **Detailstufe:** Weit herausgezoomt blendet das Spiel Menschen, laufende Koffer und die Einrichtung unter den Hallendächern aus. Große Flughäfen laufen so flüssiger. Wer möchte, lässt sich die Bilder pro Sekunde in der Kopfzeile anzeigen (Einstellung).
+  - **Geräusche** (im Spiel erzeugt, ohne Tondateien): Gong, wenn das Boarding beginnt, Triebwerksrauschen rollender, startender und landender Flugzeuge in der Nähe, Stimmengewirr in der Innenansicht, Regen, Donner nach Blitzen, Martinshorn am Rettungswagen und Warnpiepen fahrender Rolltore. Lautstärke in den Einstellungen.
+- **Update 0.22: Größere Flugzeuge, Gebühren, Fluglärm**
+  - **Flugplatzcodes A–F:** Stände, Rollwege und Pisten passen zur Spannweite. Neu sind die **Boeing 767** (Code D) und der **Airbus A380** (Code F, vierstrahlig, Doppelstock), dazu ein **A380-Stand** (84 × 80 m). Ab Code D brauchen Flugzeuge breite Rollwege, der A380 eine Piste ab 2950 m.
+  - **Fluggastbrücke mit Oberdeck-Steg** (Bauform): ein zweiter Tunnel und eine zweite Kabine darüber.
+  - **Gebühren** im Betriebsfenster (Reiter „Gebühren und Lärm“): Landeentgelt (mehr Geld je Landung, Airlines kommen seltener), Parkgebühr und Ladenmiete (mehr Einnahmen, aber über 120 % ärgern sich die Reisenden).
+  - **Fluglärm:** Drei Wohngebiete rund um den Flughafen, eines davon in der Anflugschneise. Über 55 dB beschweren sich die Anwohner, nachts dreifach, und die Zufriedenheit sinkt. Wohngebiete lassen sich auch selbst bauen (Umfeld). **Nachtflugverbot** 23–6 Uhr zum Umschalten. Das Betriebsfenster zeigt außerdem das Ereignisprotokoll.
 - **Update 0.21: Leben im Betrieb**
   - **Personen ansehen:** In der Innenansicht eine Figur anklicken. Das Infofeld zeigt Flug, was sie gerade tut, als Nächstes vorhat, Hunger, Toilette, Laune und Wartezeit, dazu ihren Weg als gelbe Linie.
   - **Overlays (O):** Gedränge und Wartezeit als Wärmekarte über den Hallen, Fluglärm um die Pisten mit An- und Abflugschneisen.

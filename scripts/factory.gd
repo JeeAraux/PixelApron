@@ -983,6 +983,8 @@ static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 			_stand(n, true, "stand_aussen")
 		"stand_gross":
 			_stand(n, false, "stand_gross")
+		"stand_f":
+			_stand(n, false, "stand_f")
 		"bushalt":
 			_bus_stop(n)
 		"haltestelle":
@@ -1528,6 +1530,13 @@ static func make_plane(kind: String, livery: Color, style: int = 0, cargo: bool 
 		fan.mesh = Models.fan_mesh(kind)
 		fan.position = Vector3(float(side[1]) * float(s["eng_x"]), float(s["eng_y"]), float(s["eng_z"]) + (-0.15 if bool(s.get("props", false)) else 0.42))
 		n.add_child(fan)
+		if s.has("eng2"):
+			var e2: Array = s["eng2"]
+			var fan2 := MeshInstance3D.new()
+			fan2.name = String(side[0]) + "2"
+			fan2.mesh = Models.fan_mesh(kind)
+			fan2.position = Vector3(float(side[1]) * float(e2[0]), float(e2[1]), float(e2[2]) + 0.42)
+			n.add_child(fan2)
 	# Landeklappen (je Seite innen und außen) und Spoiler als bewegliche Teile
 	if true:
 		for side: float in [-1.0, 1.0]:

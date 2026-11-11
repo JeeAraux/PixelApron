@@ -105,6 +105,29 @@ const SPECS := {
 		"nose_gear_z": -27.0, "main_gear_z": 1.8, "main_gear_x": 5.4, "bogie": 2, "main_wheel_r": 0.68, "nose_wheel_r": 0.52,
 		"doors": [-29.0, 23.5], "exits": [-12.5, 3.0], "win_from": -28.0, "win_to": 22.5, "win_dy": 0.8,
 	},
+	"b767": {
+		"len": 54.9, "r": 2.52, "cy": 4.0, "nose_len": 6.8, "nose_tip": 0.3,
+		"tail_start": 13.0, "tail_r": 0.45, "tail_drop": 0.55,
+		"wing_z": -5.0, "wing_c": 9.0, "kink_c": 5.4, "tip_x": 23.8, "tip_c": 1.8, "sweep": 31.5, "dihedral": 6.0, "wing_y": 2.4,
+		"winglet": [3.4, 0.3, 1.6, 0.7],
+		"eng_x": 7.6, "eng_y": 2.05, "eng_r": 1.4, "eng_flat": 1.0, "eng_z": -9.6, "eng_len": 5.4,
+		"stab_z": 22.0, "stab_c": 4.6, "stab_span": 9.0, "stab_y": 5.6, "stab_sweep": 32.0,
+		"fin_z": 17.4, "fin_c": 8.0, "fin_h": 8.4, "fin_sweep": 40.0, "fin_tip_c": 2.8, "dorsal": false,
+		"nose_gear_z": -21.5, "main_gear_z": 1.2, "main_gear_x": 4.6, "bogie": 2, "main_wheel_r": 0.62, "nose_wheel_r": 0.46,
+		"doors": [-23.0, 18.5], "exits": [-9.0, 1.5], "win_from": -22.0, "win_to": 17.5, "win_dy": 0.7,
+	},
+	"a380": {
+		"len": 72.7, "r": 3.6, "cy": 5.5, "nose_len": 9.2, "nose_tip": 0.32, "mask": true,
+		"tail_start": 17.5, "tail_r": 0.6, "tail_drop": 1.1,
+		"wing_z": -3.5, "wing_c": 17.5, "kink_c": 9.2, "tip_x": 39.9, "tip_c": 3.0, "sweep": 33.5, "dihedral": 5.6, "wing_y": 3.2,
+		"winglet": [2.4, 0.6, 2.0, 0.9],
+		"eng_x": 15.3, "eng_y": 2.6, "eng_r": 1.55, "eng_flat": 1.0, "eng_z": -11.0, "eng_len": 6.2,
+		"eng2": [25.6, 3.4, -5.4],
+		"stab_z": 30.0, "stab_c": 8.5, "stab_span": 15.3, "stab_y": 7.9, "stab_sweep": 33.0,
+		"fin_z": 23.5, "fin_c": 12.0, "fin_h": 13.2, "fin_sweep": 40.0, "fin_tip_c": 4.2, "dorsal": false,
+		"nose_gear_z": -30.0, "main_gear_z": 2.6, "main_gear_x": 6.0, "bogie": 3, "main_wheel_r": 0.7, "nose_wheel_r": 0.55,
+		"doors": [-30.5, 25.0], "exits": [-14.5, 6.0], "win_from": -29.5, "win_to": 24.0, "win_dy": -0.9, "win_dy2": 1.7,
+	},
 	"b787": {
 		"len": 62.8, "r": 2.88, "cy": 4.5, "nose_len": 7.6, "nose_tip": 0.34,
 		"tail_start": 15.5, "tail_r": 0.45, "tail_drop": 0.7,
@@ -166,6 +189,14 @@ static func plane_mesh(kind: String, livery: Color, style: int = 0, cargo: bool 
 	_tail(k, s, livery)
 	for side: float in [-1.0, 1.0]:
 		_engine(k, s, livery, side)
+		if s.has("eng2"):
+			# vierstrahlig: äußeres Triebwerk weiter draußen am Flügel
+			var s2 := s.duplicate()
+			var e2: Array = s["eng2"]
+			s2["eng_x"] = e2[0]
+			s2["eng_y"] = e2[1]
+			s2["eng_z"] = e2[2]
+			_engine(k, s2, livery, side)
 	_lights(k, s)
 	_wordmark(k, s, livery, cargo)
 	var mesh := k.commit()
@@ -410,6 +441,9 @@ static func _fuselage(k: Kit, s: Dictionary, livery: Color, style: int = 0, carg
 				blocked = blocked or absf(wz - e) < 0.32
 			if not blocked:
 				_window(k, s, side, wz, cy + wdy, 0.115, 0.165, WIN)
+				if s.has("win_dy2") and wz > float(s["win_from"]) + 2.5 and wz < float(s["win_to"]) - 3.0:
+					# Oberdeck (Doppelstock)
+					_window(k, s, side, wz, cy + float(s["win_dy2"]), 0.115, 0.165, WIN)
 			wz += 0.535
 		for d: float in doors:
 			_door(k, s, side, d, cy - 0.05, 0.43, 0.95)

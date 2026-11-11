@@ -106,6 +106,33 @@ func noise_at(p: Vector3) -> float:
 	return maxf(best, 0.0)
 
 
+var noise_t := 0.0
+var complaints: Dictionary = {}   # Wohngebiet (Instanz-ID) -> Beschwerden der letzten Stunden (abklingend)
+
+
+## Alle 10 s: Lärm an den Wohngebieten; über 55 dB gibt es Beschwerden, nachts dreifach.
+func _noise_tick(sim: float) -> void:
+	noise_t -= sim
+	if noise_t > 0.0:
+		return
+	noise_t = 10.0
+	var night := game.is_night_hour()
+	for w: Dictionary in game.items_of("wohngebiet"):
+		var wid := (w["node"] as Node).get_instance_id()
+		var l := noise_at(w["pos"])
+		var c := float(complaints.get(wid, 0.0)) * 0.97
+		if l > 55.0 and not movements.is_empty():
+			c += (l - 55.0) * 0.05 * (3.0 if night else 1.0)
+		complaints[wid] = c
+
+
+func complaints_total() -> float:
+	var t := 0.0
+	for k: int in complaints:
+		t += float(complaints[k])
+	return t
+
+
 func _runway_closed() -> bool:
 	return inspect_t > 0.0 or (weather != null and weather.runway_closed())
 
@@ -132,8 +159,13 @@ func step(sim: float) -> void:
 	_runway_direction()
 	next_flight -= sim * CLOCK
 	if next_flight <= 0.0:
-		next_flight = INTERVAL * lerpf(1.6, 0.55, game.satisfaction / 100.0) * (weather.spawn_factor() if weather != null else 1.0)
-		_try_spawn()
+		next_flight = INTERVAL * lerpf(1.6, 0.55, game.satisfaction / 100.0) * (weather.spawn_factor() if weather != null else 1.0) \
+			* pow(float(game.fees["lande"]), 0.8)
+		if game.night_ban and game.is_night_hour():
+			reason = "Nachtflugverbot (23 bis 6 Uhr)"
+		else:
+			_try_spawn()
+	_noise_tick(sim)
 	_build_route_sets()
 	for p: Dictionary in planes.duplicate():
 		_update(p, sim)
@@ -339,16 +371,18 @@ func _try_spawn() -> void:
 		var pl: Dictionary = Catalog.PLANES[k]
 		if length < float(pl["min_rwy"]):
 			continue
-		if String(pl["code"]) == "E" and stand_code != "E":
+		if Catalog.code_rank(String(pl["code"])) > Catalog.code_rank(stand_code):
 			continue
 		if Catalog.FREIGHTERS.has(k):
 			cargo_kinds.append(k)
 		if bool(pl.get("fracht", false)):
 			continue
 		kinds.append(k)
-		if stand_code == "E" and String(pl["code"]) == "E":
+		if Catalog.code_rank(stand_code) >= 3 and Catalog.code_rank(String(pl["code"])) >= 3:
 			kinds.append(k)   # Großraum-Stände bevorzugt für Großraumflugzeuge
 			kinds.append(k)
+			if String(pl["code"]) == stand_code:
+				kinds.append(k)
 	if kinds.is_empty():
 		reason = "Piste zu kurz für die Flugzeuge"
 		return
@@ -363,7 +397,7 @@ func _try_spawn() -> void:
 			if "b777f" in cargo_kinds and randf() < 0.5:
 				kind = "b777f"
 			cargo = true
-	var wide := String(Catalog.PLANES[kind]["code"]) == "E"
+	var wide := Catalog.plane_wide(kind)
 	var probe := graph.path(graph.nearest(s[s.size() / 2], "piste"), stand_id, {}, Vector3.ZERO, wide)
 	if probe.is_empty():
 		reason = "Kein Rollweg zwischen Piste und Stand" + (" (Großraumflugzeuge brauchen breite Rollwege)" if wide else "")
@@ -1798,7 +1832,7 @@ func _park(p: Dictionary) -> void:
 		var tonnes := int(Catalog.FREIGHTERS.get(String(p["kind"]), 20))
 		game.earn(int(plane["fee"]) + tonnes * 150, "Frachtflug %s aus %s (%d t)" % [p["code"], p["city"], tonnes], "Fracht")
 	else:
-		game.earn_quiet(int(plane["fee"]), "Landeentgelte")
+		game.earn_quiet(int(float(plane["fee"]) * float(game.fees["lande"])), "Landeentgelte")
 		game.earn(int(plane["pax"]) * Catalog.TICKET_FEE, "Landung %s aus %s" % [p["code"], p["city"]], "Tickets")
 	# Kerosin und Bordessen verkauft der Flughafen selbst, wenn er Tanklager und Catering hat
 	if ops != null:

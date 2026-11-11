@@ -604,7 +604,7 @@ func _parking_tick(dt: float) -> void:
 			_lane_leg(lane["line"], int(lane["d"]), int(lane["k"]), float(lane["pos"]) + 6.0)]
 		var m := _spawn_with_legs(legs, "raus")
 		m["v"] = 2.0
-		game.earn_quiet(PARK_FEE, "Parken")
+		game.earn_quiet(roundi(float(PARK_FEE) * float(game.fees["park"])), "Parken")
 
 
 func _drive(m: Dictionary, dt: float) -> void:

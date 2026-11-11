@@ -75,7 +75,11 @@ const ITEMS := {
 	"stand": {"name": "Stand mit Brücke", "short": "Kontaktstand", "size": Vector2(40, 46), "h": 0.2, "cost": 60000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Abstellposition am Terminal: Die Fluggastbrücke des nächsten Gates dockt an (Reichweite 36 m). Nase zeigt zum Terminal. Muss auf dem Vorfeld liegen."},
 	"stand_gross": {"name": "Großraum-Stand", "size": Vector2(66, 74), "h": 0.2, "cost": 95000, "grid": 1.0, "on": "vorfeld", "code": "E",
-		"desc": "Position für Großraumflugzeuge (A330, Code E), passt auch für alle kleineren. Mit Brücke, wenn eine in Reichweite ist, sonst Bus und Treppe. Braucht breite Rollwege."},
+		"desc": "Position für Großraumflugzeuge (B767 Code D, A330/A350/B787 Code E), passt auch für alle kleineren. Mit Brücke, wenn eine in Reichweite ist, sonst Bus und Treppe. Braucht breite Rollwege."},
+	"stand_f": {"name": "A380-Stand", "size": Vector2(84, 80), "h": 0.2, "cost": 160000, "grid": 1.0, "on": "vorfeld", "code": "F",
+		"desc": "Position für die größten Flugzeuge (A380, Code F, 80 m Spannweite), passt für alle. Am besten mit Fluggastbrücke mit Oberdeck-Steg. Braucht breite Rollwege und eine Piste ab 2950 m."},
+	"wohngebiet": {"name": "Wohngebiet", "size": Vector2(70, 60), "h": 9.0, "cost": 0, "grid": 2.0,
+		"desc": "Ortsteil mit Einfamilienhäusern. Wird es zu laut (Fluglärm über 55 dB), beschweren sich die Anwohner – nachts besonders."},
 	"stand_aussen": {"name": "Außenposition", "size": Vector2(40, 46), "h": 0.2, "cost": 45000, "grid": 1.0, "on": "vorfeld",
 		"desc": "Abstellposition ohne Brücke: Treppenwagen docken an, Vorfeldbusse bringen die Passagiere vom Bus-Gate. Braucht ein Bus-Gate und am besten eine Vorfeld-Haltestelle."},
 	"fluggastbruecke": {"name": "Fluggastbrücke", "short": "Brücke", "size": Vector2(4, 4), "h": 6.5, "cost": 260000, "grid": 1.0,
@@ -337,7 +341,7 @@ const ITEMS := {
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
 	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
 	["terminal", "Terminal", ["halle", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum",
 		"raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
@@ -345,14 +349,14 @@ const CATEGORIES := [
 		"ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium", "palme", "baumbeet", "gruenwand",
 		"springbrunnen", "fluegel", "flugzeugmodell", "fahnen"]],
 	["versorgung", "Versorgung", ["stromkabel", "wasserrohr", "heizrohr", "trafo", "wasseranschluss", "heizzentrale"]],
-	["umfeld", "Umfeld", ["parkhaus", "parkplatz", "mietwagen", "haltestelle", "taxistand", "kissandfly", "bahnhof", "zaun", "baum", "busch", "hecke", "blumenbeet", "teich", "felsen", "kuebel", "laterne", "bank", "picknick"]],
+	["umfeld", "Umfeld", ["parkhaus", "parkplatz", "mietwagen", "haltestelle", "taxistand", "kissandfly", "bahnhof", "zaun", "baum", "busch", "hecke", "blumenbeet", "teich", "felsen", "kuebel", "laterne", "bank", "picknick", "wohngebiet"]],
 ]
 
 ## Untergruppen der Baukategorien (Abschnitte und Sprungmarken in der Bauleiste)
 const GROUPS := {
 	"wege": [["Straßen", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg"]], ["Verkehr regeln", ["spuren", "kreuzung"]],
 		["Flugfeld", ["rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]]],
-	"flug": [["Stände", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt"]],
+	"flug": [["Stände", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt"]],
 		["Befeuerung", ["flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi"]],
 		["Betrieb", ["tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "personalgebaeude"]],
 		["Werft und Dienste", ["hangar", "feuerwache", "rettungswache", "frachtterminal", "winterdienst"]]],
@@ -370,7 +374,7 @@ const GROUPS := {
 		["Grün und Deko", ["aquarium", "palme", "baumbeet", "gruenwand", "springbrunnen", "fluegel", "flugzeugmodell", "fahnen"]]],
 	"versorgung": [["Leitungen", ["stromkabel", "wasserrohr", "heizrohr"]], ["Anlagen", ["trafo", "wasseranschluss", "heizzentrale"]]],
 	"umfeld": [["Anreise", ["parkhaus", "parkplatz", "mietwagen", "haltestelle", "taxistand", "kissandfly", "bahnhof"]],
-		["Gelände", ["zaun", "laterne", "bank", "picknick", "kuebel"]],
+		["Gelände", ["zaun", "laterne", "bank", "picknick", "kuebel", "wohngebiet"]],
 		["Natur", ["baum", "busch", "hecke", "blumenbeet", "teich", "felsen"]]],
 }
 ## Bild der Kategorie im Dock (ein typisches Bauteil)
@@ -407,6 +411,10 @@ const PLANES := {
 		"code": "E", "span": 60.1, "range": "lang"},
 	"a350": {"name": "Airbus A350-900", "min_rwy": 2600.0, "pax": 315, "turn": 65.0, "fee": 6200, "vapp": 72.0, "vr": 80.0, "nose": 33.4,
 		"code": "E", "span": 64.8, "range": "lang"},
+	"b767": {"name": "Boeing 767-300ER", "min_rwy": 2300.0, "pax": 250, "turn": 55.0, "fee": 4300, "vapp": 70.0, "vr": 76.0, "nose": 27.45,
+		"code": "D", "span": 47.6, "range": "lang"},
+	"a380": {"name": "Airbus A380-800", "min_rwy": 2950.0, "pax": 500, "turn": 85.0, "fee": 11500, "vapp": 72.0, "vr": 82.0, "nose": 36.35,
+		"code": "F", "span": 79.8, "range": "lang"},
 	"b777f": {"name": "Boeing 777F", "min_rwy": 2800.0, "pax": 0, "turn": 70.0, "fee": 7000, "vapp": 74.0, "vr": 82.0, "nose": 31.85,
 		"code": "E", "span": 64.8, "range": "lang", "fracht": true, "tonnen": 100},
 }
@@ -482,6 +490,16 @@ static func is_inside(id: String) -> bool:
 
 
 ## Bodenbereich im Terminal (öffentlich, Sicherheitsbereich, Personal)?
+## ICAO-Flugplatzcode nach Spannweite (A < 15 m … F < 80 m) als Rang 0..5.
+static func code_rank(c: String) -> int:
+	return maxi(0, "ABCDEF".find(c))
+
+
+## Großraum ab Code D: braucht breite Rollwege.
+static func plane_wide(kind: String) -> bool:
+	return code_rank(String(PLANES[kind]["code"])) >= 3
+
+
 static func is_zone(id: String) -> bool:
 	return ITEMS.has(id) and ITEMS[id].has("zone")
 

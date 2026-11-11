@@ -16,7 +16,7 @@ const WIN := Color(0.22, 0.32, 0.38, 0.6)
 const LAMP := Color(1.0, 0.92, 0.72, 0.3)
 const YELLOW := Color(0.9, 0.72, 0.16)
 
-const IDS := ["trafo", "heizzentrale", "wasseranschluss", "vorfelddepot", "tanklager", "busgarage", "catering", "personalgebaeude", "rettungswache"]
+const IDS := ["trafo", "heizzentrale", "wasseranschluss", "vorfelddepot", "tanklager", "busgarage", "catering", "personalgebaeude", "rettungswache", "wohngebiet"]
 const Landmarks = preload("res://scripts/landmarks.gd")
 const Models = preload("res://scripts/models.gd")
 const CLAD := Color(0.7, 0.73, 0.74)
@@ -50,6 +50,8 @@ static func build(n: Node3D, id: String) -> bool:
 			_staff_building(n, k)
 		"rettungswache":
 			_rescue_station(n, k)
+		"wohngebiet":
+			_village(k)
 	n.add_child(k.instance("Bau"))
 	var a := Node.new()
 	a.name = "Anim"
@@ -430,6 +432,36 @@ static func _rescue_station(n: Node3D, k: Kit) -> void:
 	# Stellplatz an der Seite: geparkter Reserve-RTW
 	k.box(Vector3(7.0, 0.08, -6.5), Vector3(9.0, 0.1, 6.5), Color(0.38, 0.4, 0.42))
 	k.add_mesh(Landmarks.rtw_mesh(), Transform3D(Basis.IDENTITY, Vector3(8.0, 0.1, 0.5)), true)
+
+
+## Wohngebiet (70 × 60 m): Straße mit Einfamilienhäusern, Gärten, Hecken und Bäumen.
+static func _village(k: Kit) -> void:
+	k.box(Vector3(-35, 0, -2.5), Vector3(35, 0.05, 2.5), Color(0.32, 0.33, 0.35))
+	var roofs := [Color(0.62, 0.22, 0.15), Color(0.45, 0.25, 0.2), Color(0.3, 0.3, 0.33), Color(0.7, 0.35, 0.2)]
+	var walls := [Color(0.93, 0.9, 0.82), Color(0.9, 0.85, 0.72), Color(0.85, 0.88, 0.9), Color(0.95, 0.93, 0.88)]
+	var i := 0
+	for row: float in [-1.0, 1.0]:
+		for x: float in [-27.0, -13.5, 0.0, 13.5, 27.0]:
+			var z := row * 16.0
+			var w := 8.0 + float(i % 3)
+			var d := 9.0
+			var h := 5.5 + float(i % 2)
+			k.box(Vector3(x - 6.2, 0.02, z - 12.0 * absf(row) * 0.0 - 11.0 * 0.5 - 2.5), Vector3(x + 6.2, 0.05, z + 11.0 * 0.5 + 2.5), Color(0.38, 0.55, 0.28))
+			k.box(Vector3(x - w * 0.5, 0, z - d * 0.5), Vector3(x + w * 0.5, h, z + d * 0.5), walls[i % walls.size()])
+			# Satteldach
+			var rc: Color = roofs[i % roofs.size()]
+			k.prism([Vector3(x - w * 0.5 - 0.4, h, z - d * 0.5 - 0.4), Vector3(x + w * 0.5 + 0.4, h, z - d * 0.5 - 0.4),
+				Vector3(x + w * 0.5 + 0.4, h, z + d * 0.5 + 0.4), Vector3(x - w * 0.5 - 0.4, h, z + d * 0.5 + 0.4)],
+				[Vector3(x - w * 0.5 - 0.4, h + 3.2, z), Vector3(x + w * 0.5 + 0.4, h + 3.2, z), Vector3(x + w * 0.5 + 0.4, h + 3.2, z), Vector3(x - w * 0.5 - 0.4, h + 3.2, z)], rc)
+			for wx: float in [-w * 0.25, w * 0.25]:
+				for wy: float in [1.4, 3.8]:
+					k.box(Vector3(x + wx - 0.6, wy, z - row * d * 0.5 - row * 0.03), Vector3(x + wx + 0.6, wy + 1.1, z - row * d * 0.5 + row * 0.0 - row * 0.06), WIN)
+			k.box(Vector3(x - 0.5, 0, z - row * d * 0.5 - row * 0.05), Vector3(x + 0.5, 2.1, z - row * d * 0.5 - row * 0.1), Color(0.4, 0.28, 0.18))
+			# Hecke und Baum im Garten
+			k.box(Vector3(x - 6.0, 0, z + row * 7.5 - 0.4), Vector3(x + 6.0, 1.2, z + row * 7.5 + 0.4), Color(0.2, 0.4, 0.18, 0.8))
+			k.cyl(Vector3(x + 4.0, 0, z + row * 5.0), Vector3(x + 4.0, 2.4, z + row * 5.0), 0.18, 0.14, Color(0.4, 0.28, 0.18), 6)
+			k.sphere(Vector3(x + 4.0, 3.6, z + row * 5.0), 1.7, Color(0.25, 0.48, 0.22, 0.8), 8, 5)
+			i += 1
 
 
 static func _window_strip(k: Kit, c: Vector3, half: Vector3, nrm: Vector3) -> void:
