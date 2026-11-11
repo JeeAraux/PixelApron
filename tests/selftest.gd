@@ -49,7 +49,9 @@ func run(main: Node) -> void:
 	check(doors.size() == 2, "Zwei Personaltüren gesetzt")
 	var cut_walls := 0
 	for l: Dictionary in game.walls_of(term):
-		cut_walls += game.wall_cuts(l).size()
+		for c: Array in game.wall_cuts(l):
+			if c.size() == 2:
+				cut_walls += 1
 	check(cut_walls == 2, "Die Türen öffnen ihre Wände (%d Öffnungen)" % cut_walls)
 	var tgrids: Dictionary = tb.grids[(term["node"] as Node).get_instance_id()]
 	var dcell := Vector2i(88, -8)
@@ -701,6 +703,7 @@ func run(main: Node) -> void:
 	for x: float in [-628.0, -622.0, -616.0]:
 		game.build_item("checkin", Vector3(x, 0, 666.5), 0)
 	check(game.checkins_linked(rh).size() == 0, "Ohne Kofferband ist kein Schalter angeschlossen")
+	check(tb._desk(rh).is_empty(), "Fluggäste gehen nicht an Schalter ohne Kofferband")
 	b.set_tool("kofferband")
 	b.set_mode("gerade")
 	b.on_move(Vector3(-612.4, 0, 665.3))
@@ -708,12 +711,57 @@ func run(main: Node) -> void:
 	b.set_tool("")
 	game.build_line("kofferband", [Vector3(-612.55, 0, 665.34), Vector3(-606, 0, 665.34), Vector3(-606, 0, 648), Vector3(-592.5, 0, 648)])
 	check(game.checkins_linked(rh).size() == 3, "Kofferband verbindet alle drei Schalter mit der Sortierung")
+	var belt_rec: Dictionary = {}
+	for l: Dictionary in game.lines:
+		if l["kind"] == "kofferband":
+			belt_rec = l
+	var bys: PackedVector3Array = belt_rec["samples"]
+	check(bys[0].y < 1.0 and bys[bys.size() - 1].y < 1.0, "Kofferband an den Anschlüssen niedrig")
 	var vic: int = game.area_victims(Rect2(-632, 662, 22, 8)).size()
 	check(vic >= 3, "Flächenabriss erfasst die Schalter (%d)" % vic)
 	b.set_tool("")
 	game.remove(rh, 1.0)
 	for l: Dictionary in game.lines.duplicate():
+		if l["kind"] == "kofferband" and (l["samples"] as PackedVector3Array)[0].z > 600.0:
+			game.remove(l, 1.0)
+	game.set_interior_view(false)
+	# 0.17: Kofferwege im Startterminal, Wandöffnung, Koffer nur bei Abgabe, Gepäcklift in den Keller
+	var sh: Dictionary = game.items_of("halle")[0]
+	check(game.checkins_linked(sh).size() == 6, "Startterminal: alle sechs Schalter am Kofferband (%d)" % game.checkins_linked(sh).size())
+	var high := false
+	var window := false
+	for l: Dictionary in game.lines:
 		if l["kind"] == "kofferband":
+			for v: Vector3 in (l["samples"] as PackedVector3Array):
+				high = high or v.y > 2.5
+		if Catalog.is_wall(String(l["kind"])):
+			for c: Array in game.wall_cuts(l):
+				window = window or c.size() >= 4
+	check(high, "Kofferband läuft dazwischen unter der Decke")
+	check(window, "Kofferband bricht eine Öffnung in die Wand")
+	var bags0: int = tb.moving_bags.size()
+	var desk0: Dictionary = game.items_of("checkin")[0]
+	tb._bag_drop(desk0)
+	check(tb.moving_bags.size() == bags0 + 1, "Koffer startet erst bei der Abgabe am Schalter")
+	for i in range(3000):
+		tb._bag_step(0.1)
+		if tb.moving_bags.size() == bags0:
+			break
+	check(tb.moving_bags.size() == bags0 and not tb.sorter_busy.is_empty(), "Koffer kommt an der Sortierung an, ihr Ring läuft")
+	var kh: Dictionary = game.build_hall(Rect2(-640, 720, 60, 40), false, {"keller": true})
+	game.set_interior_view(true)
+	game.set_view_floor(-1)
+	game.build_item("gepaeckanlage", Vector3(-600, 0, 735), 0)
+	var lift: Dictionary = game.build_item("gepaecklift", Vector3(-620, 0, 735), 0)
+	game.build_line("kofferband", [Vector3(-620, 0, 736.45), Vector3(-620, 0, 742), Vector3(-604.5, 0, 742), Vector3(-604.5, 0, 735)])
+	game.set_view_floor(0)
+	for x: float in [-634.0, -628.0]:
+		game.build_item("checkin", Vector3(x, 0, 746.5), 0)
+	game.build_line("kofferband", [Vector3(-624.55, 0, 745.34), Vector3(-620, 0, 745.34), Vector3(-620, 0, 736.45)])
+	check(not lift.is_empty() and game.checkins_linked(kh).size() == 2, "Gepäcklift bringt die Koffer in die Sortierung im Keller")
+	game.remove(kh, 1.0)
+	for l: Dictionary in game.lines.duplicate():
+		if l["kind"] == "kofferband" and (l["samples"] as PackedVector3Array)[0].z > 700.0:
 			game.remove(l, 1.0)
 	game.set_interior_view(false)
 	game.sandbox = false

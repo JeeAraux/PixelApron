@@ -10,7 +10,8 @@ uniform int flip = 0;
 uniform int num_a = 9;    // Pistenkennzahl am Anfang (Richtung Anfang → Ende)
 uniform int num_b = 27;   // Kennzahl am Ende
 uniform float core = 0.0; // Schulter: Breite der tragfähigen Fläche in der Mitte
-uniform int side_kind = 1; // Seitenraum (mark 12): 1 Gehweg, 2 Radweg + Gehweg, 3 Allee
+uniform int side_kind = 1;
+uniform int kerb = 0;      // Straßen mit Hochbord: Rinne aus Granitpflaster statt weißer Randlinie (europäisch) // Seitenraum (mark 12): 1 Gehweg, 2 Radweg + Gehweg, 3 Allee
 
 // Ziffern 5 × 7, je Zeile 5 Bit (links = höchstes Bit)
 const int DIGITS[70] = {
@@ -73,10 +74,11 @@ void fragment() {
 	vec3 white = vec3(0.86, 0.85, 0.80);
 	vec3 yellow = vec3(0.86, 0.69, 0.22);
 	if (mark == 1) {
-		if (ax < 0.16 && mod(v, 6.0) < 3.0) {
+		// Leitlinie innerorts: 3 m Strich, 6 m Lücke
+		if (ax < 0.06 && mod(v, 9.0) < 3.0) {
 			col = white;
 		}
-		if (abs(ax - (half_w - 0.4)) < 0.15) {
+		if (kerb == 0 && abs(ax - (half_w - 0.4)) < 0.12) {
 			col = white * 0.92;
 		}
 		if (ax > half_w - 0.15) {
@@ -84,13 +86,13 @@ void fragment() {
 		}
 	} else if (mark == 6) {
 		// 4 Spuren: doppelte Mittellinie, gestrichelte Spurtrenner
-		if (abs(ax - 0.22) < 0.1) {
+		if (abs(ax - 0.2) < 0.065) {
 			col = white;
 		}
-		if (abs(ax - width * 0.25) < 0.12 && mod(v, 6.0) < 3.0) {
+		if (abs(ax - width * 0.25) < 0.06 && mod(v, 9.0) < 3.0) {
 			col = white;
 		}
-		if (abs(ax - (half_w - 0.4)) < 0.15) {
+		if (kerb == 0 && abs(ax - (half_w - 0.4)) < 0.12) {
 			col = white * 0.92;
 		}
 		if (ax > half_w - 0.15) {
@@ -98,10 +100,10 @@ void fragment() {
 		}
 	} else if (mark == 7) {
 		// Einbahnstraße: gestrichelte Mitte, Pfeile
-		if (ax < 0.12 && mod(v, 6.0) < 3.0) {
+		if (ax < 0.06 && mod(v, 9.0) < 3.0) {
 			col = white;
 		}
-		if (abs(ax - (half_w - 0.4)) < 0.15) {
+		if (kerb == 0 && abs(ax - (half_w - 0.4)) < 0.12) {
 			col = white * 0.92;
 		}
 		if (ax > half_w - 0.15) {
@@ -274,6 +276,14 @@ void fragment() {
 		}
 		if (ax > 0.95) {
 			col = vec3(0.86, 0.69, 0.22);
+		}
+	}
+	// Rinne an Hochbordstraßen: 0,3 m Granit-Kleinpflaster am Rand
+	if (kerb == 1 && (mark == 1 || mark == 6 || mark == 7) && ax > half_w - 0.32) {
+		vec2 cell = floor(vec2(v / 0.1, (half_w - ax) / 0.1));
+		col = vec3(0.5, 0.49, 0.47) * (0.86 + 0.2 * hash(cell));
+		if (fract(v / 0.1) < 0.12 || fract((half_w - ax) / 0.1) < 0.12) {
+			col *= 0.75;
 		}
 	}
 	// Wetter: Schneematsch auf Wegen (mit Reifenspuren), nasser Belag glänzt

@@ -30,6 +30,7 @@ var non_schengen_seen := false
 var bridges: Dictionary = {}   # Instanz-ID des Gates -> Fluggastbrücke
 const Models = preload("res://scripts/models.gd")
 const Kit = preload("res://scripts/mesh_kit.gd")
+const Interior = preload("res://scripts/interior.gd")
 const BRIDGE_REACH := 38.0
 var bus_cb: Callable            # ground_ops.pax_at_door(Flug-ID): ein Abfliegender ist an der Bus-Tür
 var doors: Array = []           # [Tür-Datensatz, Öffnung 0..1]
@@ -61,6 +62,7 @@ func _analyze() -> void:
 	dirty = false
 	halls = []
 	grids = {}
+	game.refresh_belts()
 	for h: Dictionary in game.items_of("halle"):
 		var counts := {}
 		for it: Dictionary in game.inside_of(h):
@@ -92,6 +94,8 @@ func _analyze() -> void:
 		var problems := []
 		if missing.is_empty():
 			problems = _security_problems(h, grids[hid])
+			if not game.legacy_belts and int(counts.get("checkin", 0)) > 0 and int(counts["checkin_band"]) == 0:
+				problems.append("Check-in nicht über ein Kofferband mit der Gepäcksortierung verbunden")
 		var info := {
 			"hall": h, "counts": counts, "missing": missing, "powered": powered, "area": area, "problems": problems,
 			"complete": powered and missing.is_empty() and problems.is_empty() and int(counts.get("gepaeckanlage", 0)) > 0,
@@ -157,7 +161,12 @@ func _sum(key: String) -> int:
 
 func capacity_dep() -> float:
 	# Schalter am Kofferband schaffen ein Viertel mehr
-	return minf(float(_sum("checkin") * int(Catalog.ITEMS["checkin"]["cap"])) + float(_sum("checkin_band")) * float(Catalog.ITEMS["checkin"]["cap"]) * 0.25,
+	# nur Schalter mit Kofferband zur Sortierung arbeiten (alte Spielstände: alle, mit Band ein Viertel mehr)
+	var cap := float(Catalog.ITEMS["checkin"]["cap"])
+	var desks := float(_sum("checkin_band")) * cap * 1.25
+	if game.legacy_belts:
+		desks += float(_sum("checkin") - _sum("checkin_band")) * cap
+	return minf(desks,
 		float(_sum("sicherheit") * int(Catalog.ITEMS["sicherheit"]["cap"])))
 
 
@@ -353,7 +362,7 @@ func factors() -> Array:
 				hint = "Personalraum in den Personalbereich stellen"
 		if not game.zones_of(h).is_empty():
 			for it: Dictionary in game.inside_of(h):
-				if it["id"] == "gepaeckanlage" and game.zone_at(h, (it["rect"] as Rect2).get_center(), GameState.floor_of(it)) != "personal":
+				if it["id"] == "gepaeckanlage" and GameState.floor_of(it) >= 0 and game.zone_at(h, (it["rect"] as Rect2).get_center(), GameState.floor_of(it)) != "personal":
 					out.append(["Gepäcksortierung offen zugänglich (nicht im Personalbereich)", -2])
 					break
 	return out
@@ -394,7 +403,7 @@ func hall_summary(h: Dictionary) -> String:
 			int(c.get("sicherheit", 0)), int(c.get("gate", 0)), int(c.get("gepaeckband", 0)), int(c.get("wc", 0))])
 		if int(c.get("checkin", 0)) > 0:
 			lines.append("Check-in am Kofferband zur Sortierung: %d von %d%s" % [int(c.get("checkin_band", 0)), int(c.get("checkin", 0)),
-				"" if int(c.get("checkin_band", 0)) >= int(c.get("checkin", 0)) else " (Kofferband anschließen: +25 % Durchsatz)"])
+				"" if int(c.get("checkin_band", 0)) >= int(c.get("checkin", 0)) else (" (übrige Schalter ans Kofferband anschließen)" if not game.legacy_belts else " (Kofferband anschließen: +25 % Durchsatz)")])
 		lines.append("Abflug %d/h von %d/h möglich, Ankunft %d/h von %d/h" % [roundi(demand_dep), roundi(capacity_dep()),
 			roundi(demand_arr), roundi(capacity_arr())])
 		lines.append("Beheizt: %d %%" % roundi(float(info["warm"]) * 100.0))
@@ -539,10 +548,11 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 		if door.is_empty():
 			break
 		var plan := [["wait", 3.0 + float(i) * 0.6], ["show"]]
-		var desk := _any(hall, "checkin")
+		var desk := _desk(hall)
 		if not desk.is_empty():
 			plan.append(["go", _front(desk, 2.4, 1.6)])
 			plan.append(["wait", randf_range(2.5, 4.5)])
+			plan.append(["drop_bag", desk])
 		var sec := _any(hall, "sicherheit")
 		if not sec.is_empty():
 			var lane := (-1.6 if randf() < 0.5 else 1.6) - 0.6
@@ -785,6 +795,7 @@ func step(sim: float) -> void:
 	lost_recent = maxf(0.0, lost_recent - sim * 0.5)
 	if dirty:
 		_analyze()
+	_bag_step(sim)
 	_move_bridges(sim)
 	_belts(sim)
 	_animate_inside(sim)
@@ -810,6 +821,13 @@ func _update_person(per: Dictionary, sim: float) -> void:
 				per["si"] = si + 1
 		"show":
 			node.visible = true
+			per["si"] = si + 1
+		"drop_bag":
+			# Koffer abgeben: er läuft über die Bänder zur Sortierung
+			var mine := node.get_node_or_null("Koffer") as Node3D
+			if mine != null:
+				mine.visible = false
+			_bag_drop(st[1])
 			per["si"] = si + 1
 		"hide_bag", "take_bag":
 			var bag := node.get_node_or_null("Koffer") as Node3D
@@ -1717,3 +1735,109 @@ func auto_zones(h: Dictionary) -> void:
 			var gr: Rect2 = (it["rect"] as Rect2).grow(1.0).intersection(r)
 			game.build_zone("bereich_personal", Rect2(floorf(gr.position.x), floorf(gr.position.y), ceilf(gr.size.x), ceilf(gr.size.y)), true, GameState.floor_of(it))
 	dirty = true
+
+
+# ---------------------------------------------------------------- Koffer vom Check-in zur Sortierung
+
+var moving_bags: Array = []        # {node, route, cum, s}
+var scale_timer: Dictionary = {}   # Schalter-Knoten -> Restzeit, solange ein Koffer auf der Waage liegt
+var sorter_busy: Dictionary = {}   # Sortierung (Instanz-ID) -> Zeit, bis zu der ihr Ring läuft
+const BAG_SPEED := 1.3
+
+
+## Schalter, an dem Abfliegende einchecken: nur solche mit Kofferband zur Sortierung.
+func _desk(hall: Dictionary) -> Dictionary:
+	var linked := game.checkins_linked(hall)
+	var list := []
+	for it: Dictionary in game.inside_of(hall):
+		if it["id"] == "checkin" and (game.legacy_belts or linked.has((it["node"] as Node).get_instance_id())):
+			list.append(it)
+	if list.is_empty():
+		return {}
+	return list[randi() % list.size()]
+
+
+func _bag_drop(desk: Dictionary) -> void:
+	var dn: Variant = desk.get("node")
+	if not is_instance_valid(dn):
+		return
+	var dnode := dn as Node3D
+	var scale := dnode.get_node_or_null("Koffer_Waage") as Node3D
+	if scale != null:
+		scale.visible = true
+		scale_timer[dnode] = 1.6
+	var route: PackedVector3Array = game.bag_routes().get(dnode.get_instance_id(), PackedVector3Array())
+	if route.size() < 2:
+		return
+	var cum := PackedFloat32Array([0.0])
+	for i in range(1, route.size()):
+		cum.append(cum[i - 1] + route[i].distance_to(route[i - 1]))
+	var mi := MeshInstance3D.new()
+	mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[randi() % Interior.BAG_COLS.size()])
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	mi.position = route[0]
+	moving_bags.append({"node": mi, "route": route, "cum": cum, "s": -1.6})
+
+
+func _bag_step(sim: float) -> void:
+	for dnode: Variant in scale_timer.keys():
+		scale_timer[dnode] = float(scale_timer[dnode]) - sim
+		if float(scale_timer[dnode]) <= 0.0:
+			if is_instance_valid(dnode):
+				var sc := (dnode as Node3D).get_node_or_null("Koffer_Waage") as Node3D
+				if sc != null:
+					sc.visible = false
+			scale_timer.erase(dnode)
+	for b: Dictionary in moving_bags.duplicate():
+		var node: MeshInstance3D = b["node"]
+		b["s"] = float(b["s"]) + sim * BAG_SPEED
+		var cum: PackedFloat32Array = b["cum"]
+		var route: PackedVector3Array = b["route"]
+		var s := float(b["s"])
+		if s >= cum[cum.size() - 1]:
+			_bag_arrived(route[route.size() - 1])
+			node.queue_free()
+			moving_bags.erase(b)
+			continue
+		if s < 0.0:
+			node.visible = false   # liegt noch auf der Waage
+			continue
+		var i := 0
+		while i < cum.size() - 2 and cum[i + 1] < s:
+			i += 1
+		var seg := maxf(cum[i + 1] - cum[i], 0.001)
+		var p := route[i].lerp(route[i + 1], clampf((s - cum[i]) / seg, 0.0, 1.0))
+		node.position = p + Vector3(0, 0.17, 0)
+		var d := route[i + 1] - route[i]
+		d.y = 0.0
+		if d.length() > 0.01:
+			node.basis = Basis.looking_at(d.normalized(), Vector3.UP).rotated(Vector3.UP, PI * 0.5)
+		# sichtbar, wenn die Ebene gezeigt wird (in der Halle) oder draußen
+		var f := floori((p.y + 1.0) / Catalog.FLOOR_H)
+		var inside := not game.hall_at(p).is_empty()
+		node.visible = (not inside) or (game.interior_view and f == game.view_floor)
+	for sid: int in sorter_busy.keys():
+		if clock > float(sorter_busy[sid]):
+			sorter_busy.erase(sid)
+			_sorter_ring(sid, false)
+
+
+## Koffer an der Sortierung angekommen: ihr Ring läuft eine Weile mit Koffern.
+func _bag_arrived(p: Vector3) -> void:
+	for it: Dictionary in game.items_of("gepaeckanlage"):
+		if (it["rect"] as Rect2).grow(2.0).has_point(Vector2(p.x, p.z)):
+			var sid := (it["node"] as Node).get_instance_id()
+			if not sorter_busy.has(sid):
+				_sorter_ring(sid, true)
+			sorter_busy[sid] = clock + 40.0
+			return
+
+
+func _sorter_ring(sid: int, on: bool) -> void:
+	var nd := instance_from_id(sid) as Node3D
+	if nd == null:
+		return
+	var ring := nd.find_child("Ringkoffer", true, false) as Node3D
+	if ring != null:
+		ring.visible = on

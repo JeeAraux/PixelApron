@@ -175,39 +175,40 @@ static func _baggage_belt(s: PackedVector3Array) -> Node3D:
 	var k := Kit.new()
 	var steel := Color(0.42, 0.45, 0.48)
 	var chrome := Color(0.74, 0.76, 0.79)
-	var h := 0.62
 	var run := 0.0
 	var next_leg := 0.0
-	var pts := PackedVector3Array()
 	for i in range(s.size() - 1):
-		var a := Vector3(s[i].x, 0.0, s[i].z)
-		var b := Vector3(s[i + 1].x, 0.0, s[i + 1].z)
+		var ha := s[i].y if s[i].y > 0.1 else 0.62
+		var hb := s[i + 1].y if s[i + 1].y > 0.1 else 0.62
+		var a := Vector3(s[i].x, ha, s[i].z)
+		var b := Vector3(s[i + 1].x, hb, s[i + 1].z)
 		var d := b - a
 		var l := d.length()
 		if l < 0.01:
 			continue
 		var xf := Transform3D(Basis.looking_at(d / l, Vector3.UP), (a + b) * 0.5)
 		var hl := l * 0.5 + 0.03
-		k.box(Vector3(-0.5, h - 0.14, -hl), Vector3(0.5, h - 0.02, hl), steel, xf)
-		k.box(Vector3(-0.42, h - 0.02, -hl), Vector3(0.42, h, hl), Color(0.08, 0.08, 0.09), xf)
+		k.box(Vector3(-0.5, -0.14, -hl), Vector3(0.5, -0.02, hl), steel, xf)
+		k.box(Vector3(-0.42, -0.02, -hl), Vector3(0.42, 0.0, hl), Color(0.08, 0.08, 0.09), xf)
 		for sx: float in [-0.48, 0.48]:
-			k.box(Vector3(sx - 0.025, h - 0.02, -hl), Vector3(sx + 0.025, h + 0.16, hl), chrome, xf)
-		while next_leg <= run + l:
-			var p := a + d / l * (next_leg - run)
-			for sx: float in [-0.4, 0.4]:
-				var q := p + Basis.looking_at(d / l, Vector3.UP) * Vector3(sx, 0, 0)
-				k.box(Vector3(q.x - 0.04, 0.0, q.z - 0.04), Vector3(q.x + 0.04, h - 0.14, q.z + 0.04), steel)
+			k.box(Vector3(sx - 0.025, -0.02, -hl), Vector3(sx + 0.025, 0.16, hl), chrome, xf)
+		var flat := Vector2(d.x, d.z).length()
+		while next_leg <= run + flat:
+			var f := (next_leg - run) / maxf(flat, 0.001)
+			var p := a.lerp(b, f)
+			var side := Vector3(d.x, 0, d.z).normalized().cross(Vector3.UP)
+			if p.y > 1.5:
+				# unter der Decke: Abhängung an zwei Stangen bis zur Decke der Ebene
+				for sx: float in [-0.45, 0.45]:
+					var q := p + side * sx
+					k.box(Vector3(q.x - 0.025, p.y - 0.14, q.z - 0.025), Vector3(q.x + 0.025, 4.3, q.z + 0.025), steel)
+			else:
+				for sx: float in [-0.4, 0.4]:
+					var q := p + side * sx
+					k.box(Vector3(q.x - 0.04, 0.0, q.z - 0.04), Vector3(q.x + 0.04, p.y - 0.14, q.z + 0.04), steel)
 			next_leg += 2.4
-		run += l
-	for v: Vector3 in s:
-		pts.append(Vector3(v.x, h, v.z))
+		run += flat
 	n.add_child(k.instance("Band"))
-	if pts.size() >= 2:
-		var bags := MultiMeshInstance3D.new()
-		bags.name = "Koffer"
-		bags.set_script(BeltAnim)
-		n.add_child(bags)
-		bags.call("setup", pts, Models.bag_mesh(), 0.8, 1.7)
 	return n
 
 
@@ -350,8 +351,11 @@ static func make_wall(kind: String, a: Vector3, b: Vector3, cuts: Array = []) ->
 	var hl := length * 0.5 + 0.1
 	# Türöffnungen: t ab dem Anfang a (lokal z = +L/2) → lokales z
 	var holes := []
+	var windows := []   # Öffnungen nur in einer Höhe (Kofferband): [z0, z1, y0, y1]
 	for c: Array in cuts:
 		holes.append([length * 0.5 - float(c[1]), length * 0.5 - float(c[0])])
+		if c.size() >= 4:
+			windows.append([length * 0.5 - float(c[1]), length * 0.5 - float(c[0]), float(c[2]), float(c[3])])
 	holes.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) < float(y[0]))
 	var segs := []
 	var z := -hl
@@ -405,9 +409,37 @@ static func make_wall(kind: String, a: Vector3, b: Vector3, cuts: Array = []) ->
 					while jz < z1 - 0.3:
 						k.box(Vector3(-0.102, 0.1, jz - 0.005), Vector3(0.102, h - 0.03, jz + 0.005), wall_c.darkened(0.06))
 						jz += 1.25
+		# Wandöffnung für ein Kofferband: unten und oben bleibt die Wand, Rahmen aus Stahl
+		for wz: Array in windows:
+			var z0: float = wz[0]
+			var z1: float = wz[1]
+			var y0: float = minf(float(wz[2]), h)
+			var y1: float = minf(float(wz[3]), h)
+			if glass:
+				if y0 > 0.12:
+					k.box(Vector3(-0.07, 0, z0), Vector3(0.07, 0.12, z1), steel.darkened(0.2))
+					gk.box(Vector3(-0.02, 0.12, z0), Vector3(0.02, y0, z1), WHITE)
+				if y1 < h:
+					gk.box(Vector3(-0.02, y1, z0), Vector3(0.02, h - 0.08, z1), WHITE)
+					k.box(Vector3(-0.07, h - 0.08, z0), Vector3(0.07, h, z1), steel)
+			else:
+				if y0 > 0.0:
+					k.box(Vector3(-0.1, 0, z0), Vector3(0.1, y0, z1), wall_c)
+					k.box(Vector3(-0.115, 0, z0), Vector3(0.115, minf(0.1, y0), z1), skirt)
+				if y1 < h:
+					k.box(Vector3(-0.1, y1, z0), Vector3(0.1, h, z1), wall_c)
+					k.box(Vector3(-0.11, h - 0.03, z0), Vector3(0.11, h, z1), cap)
+			if y0 < h:
+				for zz: float in [z0, z1]:
+					k.box(Vector3(-0.13, y0, zz - 0.04), Vector3(0.13, y1, zz + 0.04), steel)
+				k.box(Vector3(-0.13, y0 - 0.04, z0), Vector3(0.13, y0, z1), steel)
+				if y1 < h:
+					k.box(Vector3(-0.13, y1, z0), Vector3(0.13, y1 + 0.04, z1), steel)
 		# Sturz über den Türen (nur in voller Höhe)
 		if h > 2.5:
 			for hz: Array in holes:
+				if windows.any(func(wz: Array) -> bool: return is_equal_approx(float(wz[0]), float(hz[0])) and is_equal_approx(float(wz[1]), float(hz[1]))):
+					continue
 				var z0: float = hz[0]
 				var z1: float = hz[1]
 				if glass:

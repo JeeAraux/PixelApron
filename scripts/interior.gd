@@ -27,7 +27,7 @@ const BRAND := Color(0.18, 0.3, 0.52)
 const BAG_COLS := [Color(0.62, 0.18, 0.16), Color(0.18, 0.28, 0.5), Color(0.14, 0.14, 0.15), Color(0.5, 0.4, 0.27),
 	Color(0.25, 0.45, 0.3), Color(0.78, 0.75, 0.7), Color(0.85, 0.6, 0.15), Color(0.4, 0.22, 0.45)]
 
-const IDS := ["eingang", "checkin", "gepaeckanlage", "sicherheit", "gate", "busgate", "gepaeckband", "wc", "sb_ausgang",
+const IDS := ["eingang", "checkin", "gepaecklift", "gepaeckanlage", "sicherheit", "gate", "busgate", "gepaeckband", "wc", "sb_ausgang",
 	"heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "tuer", "personalraum"]
 
 static var _glass: StandardMaterial3D
@@ -47,6 +47,8 @@ static func build(n: Node3D, id: String, opts: Dictionary) -> bool:
 		"gepaeckanlage":
 			_sorter(n, k)
 			anim = true
+		"gepaecklift":
+			_bag_lift(k)
 		"sicherheit":
 			_security(n, k)
 			if bool(opts.get("fastlane", false)):
@@ -290,11 +292,6 @@ static func _checkin(n: Node3D, k: Kit) -> void:
 		k.box(Vector3(float(x) * 0.55 - 0.02, 0.45, -1.34), Vector3(float(x) * 0.55 + 0.02, 0.452, -0.98), Color(0.2, 0.2, 0.21))
 	for z: float in [-1.4, -0.92]:
 		k.box(Vector3(-3.0, 0.45, z - 0.025), Vector3(3.0, 0.58, z + 0.025), CHROME)
-	var bags := MultiMeshInstance3D.new()
-	bags.name = "Abtransport"
-	bags.set_script(BeltAnim)
-	n.add_child(bags)
-	bags.call("setup", PackedVector3Array([Vector3(2.9, 0.45, -1.16), Vector3(-2.95, 0.45, -1.16)]), Models.bag_mesh(), 0.6, 1.4)
 	# Lichtportal: zwei schlanke Stelen mit Leuchtkasten und Fluginfo-Bildschirmen
 	for x: float in [-2.92, 2.92]:
 		k.rounded_box(Vector3(x - 0.08, 0.0, -0.86), Vector3(x + 0.08, 2.75, -0.7), 0.03, Color(0.24, 0.25, 0.27), 2)
@@ -349,8 +346,39 @@ static func _checkin(n: Node3D, k: Kit) -> void:
 	var bk := Kit.new()
 	bk.rounded_box(Vector3(-0.2, 0.0, -0.3), Vector3(0.2, 0.45, 0.3), 0.04, BAG_COLS[1], 2)
 	bk.box(Vector3(-0.06, 0.45, -0.02), Vector3(0.06, 0.5, 0.02), DARK)
-	_part(n, "Koffer_Waage", bk, Vector3(0, 0.37, 0.3))
+	_part(n, "Koffer_Waage", bk, Vector3(0, 0.37, 0.3)).visible = false
 	_queue(k, -2.8, 2.8, 1.85, 3, 0.95)
+
+
+## Gepäcklift: Senkrechtförderer durch zwei Ebenen, Stahlgerüst mit Gitter, Schalen innen,
+## unten und oben ein Bandanschluss (Ein- und Auslauf).
+static func _bag_lift(k: Kit) -> void:
+	var top := 5.0 + 0.9
+	k.box(Vector3(-1.0, 0.0, -1.0), Vector3(1.0, 0.08, 1.0), Color(0.3, 0.31, 0.33))
+	for c: Vector2 in [Vector2(-0.92, -0.92), Vector2(0.92, -0.92), Vector2(0.92, 0.92), Vector2(-0.92, 0.92)]:
+		k.box(Vector3(c.x - 0.06, 0.0, c.y - 0.06), Vector3(c.x + 0.06, top, c.y + 0.06), YELLOW)
+	var y := 0.6
+	while y < top - 0.3:
+		k.box(Vector3(-0.95, y, -0.95), Vector3(0.95, y + 0.05, -0.9), STEEL)
+		k.box(Vector3(-0.95, y, 0.9), Vector3(0.95, y + 0.05, 0.95), STEEL)
+		k.box(Vector3(-0.95, y, -0.95), Vector3(-0.9, y + 0.05, 0.95), STEEL)
+		k.box(Vector3(0.9, y, -0.95), Vector3(0.95, y + 0.05, 0.95), STEEL)
+		y += 0.7
+	# Gitter an drei Seiten, Schalen innen
+	for sx: float in [-0.93, 0.93]:
+		k.box(Vector3(sx - 0.01, 0.1, -0.88), Vector3(sx + 0.01, top - 0.1, 0.88), Color(0.5, 0.53, 0.56, 0.6))
+	k.box(Vector3(-0.88, 0.1, -0.94), Vector3(0.88, top - 0.1, -0.92), Color(0.5, 0.53, 0.56, 0.6))
+	var ty := 0.5
+	while ty < top - 0.4:
+		k.box(Vector3(-0.6, ty, -0.6), Vector3(0.6, ty + 0.06, 0.6), Color(0.62, 0.64, 0.67))
+		ty += 1.1
+	k.box(Vector3(-0.95, top, -0.95), Vector3(0.95, top + 0.5, 0.95), Color(0.28, 0.3, 0.33))
+	k.box(Vector3(0.3, top + 0.5, -0.4), Vector3(0.8, top + 0.85, 0.4), Color(0.2, 0.35, 0.6))
+	# Bandanschlüsse vorn (unten) und oben
+	for yy: float in [0.62, 5.62]:
+		k.box(Vector3(-0.45, yy - 0.12, 0.95), Vector3(0.45, yy, 1.0), STEEL)
+		k.box(Vector3(-0.42, yy, 0.6), Vector3(0.42, yy + 0.02, 1.0), DARK)
+	k.box(Vector3(-0.9, 0.08, 1.0), Vector3(0.9, 0.09, 1.3), YELLOW)
 
 
 # ---------------------------------------------------------------- Gepäcksortierung
@@ -384,6 +412,7 @@ static func _sorter(n: Node3D, k: Kit) -> void:
 	for p: Vector3 in loop:
 		path.append(p + Vector3(0, 0.0, 0))
 	bags.call("setup", path, Models.bag_mesh(), 0.9, 1.3, true)
+	bags.visible = false   # erst, wenn Koffer über die Bänder ankommen (terminal.gd)
 	# Rutschen zu vier Verladestellen
 	for e: Array in [[Vector3(-3.4, 0, -2.4), -1.0], [Vector3(3.4, 0, -2.4), 1.0], [Vector3(-3.4, 0, 2.4), -1.0], [Vector3(3.4, 0, 2.4), 1.0]]:
 		var p: Vector3 = e[0]

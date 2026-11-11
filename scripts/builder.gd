@@ -702,21 +702,7 @@ func _snap_belt(p: Vector3) -> Vector3:
 	snap_tan = Vector3.ZERO
 	var best := 2.2
 	var q := Vector3.INF
-	var hall := game.hall_at(p)
-	var spots := []
-	if not hall.is_empty():
-		for it: Dictionary in game.inside_of(hall):
-			if GameState.floor_of(it) != game.view_floor:
-				continue
-			var xf := (it["node"] as Node3D).transform
-			if it["id"] == "checkin":
-				for sx: float in [-3.45, 3.45]:
-					spots.append(xf * Vector3(sx, 0, -1.16))
-			elif it["id"] == "gepaeckanlage":
-				var r: Rect2 = it["rect"]
-				var c := r.get_center()
-				for e: Vector2 in [Vector2(r.position.x - 0.5, c.y), Vector2(r.end.x + 0.5, c.y), Vector2(c.x, r.position.y - 0.5), Vector2(c.x, r.end.y + 0.5)]:
-					spots.append(Vector3(e.x, 0, e.y))
+	var spots: Array = game.belt_spots(game.view_floor if game.interior_view else 0)
 	for l: Dictionary in game.lines:
 		if l["kind"] != "kofferband" or GameState.floor_of(l) != (game.view_floor if game.interior_view else 0):
 			continue
@@ -933,6 +919,8 @@ func _refresh_line() -> void:
 		preview.material_override = mat_ok if ok else mat_bad
 	else:
 		# Vorschau im echten Aussehen des Weges, getönt
+		if tool == "kofferband":
+			flat = game.belt_profile(flat, game.view_floor if game.interior_view else 0)
 		var look := Factory.make_line(tool, flat, y + 0.12)
 		if Catalog.has_sides(tool) and game.road_side != "ohne":
 			look.add_child(Streetscape.build(flat, w, game.road_side, y + 0.12, [], 0.12))

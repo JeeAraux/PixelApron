@@ -274,6 +274,7 @@ func _trim_mesh(l: Dictionary) -> void:
 		sm.set_shader_parameter("len", Spline.length(sub))
 		sm.set_shader_parameter("mark", int(Catalog.LINES[l["kind"]]["mark"]))
 		sm.set_shader_parameter("flip", 1 if bool(l.get("flip", false)) else 0)
+		sm.set_shader_parameter("kerb", 1 if String(l.get("side", "ohne")) != "ohne" else 0)
 	# Gehweg, Radweg, Bäume, Laternen und Haltebuchten
 	var old := mi.get_node_or_null("Seitenraum")
 	if old != null:
@@ -683,6 +684,9 @@ func _build_node_visuals(ni: int) -> void:
 			var q1 := zp + zr * (x + 0.25) - zo * 3.0
 			_flat_bar(k, q0, q1, zr, 0.5)
 			x += 1.0
+		# Verkehrszeichen Fußgängerüberweg (blaues Schild) auf beiden Seiten
+		for sg: float in [1.0, -1.0]:
+			_sign(k, zp - zo * 1.75 + zr * sg * (zw * 0.5 + 0.9), zo, "zebra")
 	var ctrl: String = n["control"]
 	var lamps := []
 	for ei in range(ends.size()):
@@ -699,6 +703,19 @@ func _build_node_visuals(ni: int) -> void:
 		var incoming_w := w * float(lanes(l, d_in)) / float(maxi(total_lanes(l), 1))
 		var from_center := 0.0 if lanes(l, -d_in) > 0 else -w * 0.5
 		var major := is_major(ni, ei)
+		# Richtungspfeile auf den ankommenden Spuren
+		var nin := lanes(l, d_in)
+		for kk in range(nin):
+			var lp := lane_path(l, d_in, kk)
+			var ll := Spline.length(lp)
+			if ll < 20.0:
+				continue
+			var ac := Spline.sample_at(lp, ll - 10.0)
+			var af := Spline.sample_at(lp, ll - 9.0) - ac
+			var kind := "gerade"
+			if nin >= 2:
+				kind = "links" if kk == 0 else "gerade_rechts"
+			_lane_arrow(k, ac, af, kind)
 		# Haltelinie (durchgezogen bei Ampel, gestrichelt bei Vorfahrt achten)
 		if ctrl == "ampel" or (ctrl == "vorfahrt" and not major):
 			var steps := 6 if ctrl == "vorfahrt" else 1
@@ -743,6 +760,12 @@ func _sign(k: Kit, pos: Vector3, face: Vector3, kind: String) -> void:
 		"achten":
 			_triangle(k, c, right, n, -1.0, 0.5, Color(0.85, 0.12, 0.1))
 			_triangle(k, c + n * 0.01, right, n, -1.0, 0.33, Color(0.95, 0.95, 0.92))
+		"zebra":
+			# Zeichen 350: blaues Quadrat, weißes Dreieck, schwarzer Fußgänger mit Streifen
+			k.panel(c, right * 0.3, Vector3.UP * 0.3, Color(0.12, 0.3, 0.68), n)
+			_triangle(k, c + n * 0.01 - Vector3.UP * 0.02, right, n, 1.0, 0.44, Color(0.95, 0.95, 0.92))
+			k.panel(c + n * 0.02 - Vector3.UP * 0.02, right * 0.04, Vector3.UP * 0.1, Color(0.08, 0.08, 0.08), n)
+			k.panel(c + n * 0.02 - Vector3.UP * 0.15, right * 0.16, Vector3.UP * 0.015, Color(0.08, 0.08, 0.08), n)
 		_:
 			_triangle(k, c, right, n, 1.0, 0.5, Color(0.85, 0.12, 0.1))
 			_triangle(k, c + n * 0.01, right, n, 1.0, 0.33, Color(0.95, 0.95, 0.92))
@@ -755,31 +778,75 @@ func _triangle(k: Kit, c: Vector3, right: Vector3, n: Vector3, up_sign: float, s
 	k.tri(top, a, b, col, c - n)
 
 
-## Ampel mit Mast und Ausleger. Gibt [Zufahrt, Lampe rot, gelb, grün] zurück.
-## face zeigt zu den ankommenden Autos.
+## Europäische Ampel: schlanker Mast direkt an der Haltelinie rechts, Signalgeber mit Schuten und
+## Kontrastblende, darunter ein Fußgängersignal quer zur Fahrbahn und ein Taster.
+## Gibt [Zufahrt, Lampe rot, gelb, grün] zurück. face zeigt zu den ankommenden Autos.
 func _traffic_light(k: Kit, pos: Vector3, face: Vector3, ei: int) -> Array:
-	var dark := Color(0.16, 0.17, 0.18)
-	var grey := Color(0.45, 0.47, 0.5)
-	k.cyl(pos, pos + Vector3(0, 4.6, 0), 0.09, 0.07, grey, 8)
+	var dark := Color(0.14, 0.15, 0.16)
+	var grey := Color(0.55, 0.57, 0.6)
+	k.cyl(pos, pos + Vector3(0, 0.12, 0), 0.14, 0.12, Color(0.4, 0.4, 0.4), 8)
+	k.cyl(pos, pos + Vector3(0, 3.6, 0), 0.06, 0.055, grey, 8)
 	var right := face.cross(Vector3.UP).normalized()
-	var arm_end := pos + Vector3(0, 4.5, 0) + right * 2.6
-	k.cyl(pos + Vector3(0, 4.5, 0), arm_end, 0.05, 0.05, grey, 6)
-	var head := arm_end + Vector3(0, -0.6, 0)
-	k.box(head - Vector3(0.22, 0.55, 0.22), head + Vector3(0.22, 0.55, 0.22), dark, Transform3D(Basis.looking_at(-face, Vector3.UP), Vector3.ZERO))
-	# zweite Signalgruppe am Mast
-	var low := pos + Vector3(0, 2.5, 0)
-	k.box(low - Vector3(0.18, 0.45, 0.18) + face * 0.15, low + Vector3(0.18, 0.45, 0.18) + face * 0.15, dark)
+	var head := pos + Vector3(0, 2.75, 0) + face * 0.14
+	# Gehäuse, Kontrastblende (schwarz mit weißem Rand)
+	var hb := Transform3D(Basis.looking_at(-face, Vector3.UP), head)
+	k.box(Vector3(-0.17, -0.5, -0.12), Vector3(0.17, 0.5, 0.12), dark, hb)
+	var plate := head - face * 0.13
+	k.panel(plate, right * 0.26, Vector3.UP * 0.6, Color(0.92, 0.92, 0.9), face)
+	k.panel(plate + face * 0.01, right * 0.23, Vector3.UP * 0.57, Color(0.08, 0.08, 0.09), face)
 	var entry := [ei]
 	var cols := ["rot", "gelb", "gruen"]
 	for j in range(3):
+		var c := head + Vector3(0, 0.32 - 0.32 * float(j), 0) + face * 0.13
+		# Schute über jeder Lampe
+		k.box(c + Vector3(0, 0.12, 0) - right * 0.13, c + Vector3(0, 0.14, 0) + right * 0.13 + face * 0.16, dark)
 		var lamp := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(0.24, 0.24, 0.08)
-		lamp.mesh = bm
-		lamp.basis = Basis.looking_at(-face, Vector3.UP)
-		lamp.position = head + Vector3(0, 0.33 - 0.33 * float(j), 0) + face * 0.24
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.1
+		cm.bottom_radius = 0.1
+		cm.height = 0.03
+		cm.radial_segments = 12
+		lamp.mesh = cm
+		lamp.basis = Basis.looking_at(-face, Vector3.UP) * Basis(Vector3.RIGHT, PI * 0.5)
+		lamp.position = c
 		lamp.material_override = lamp_mats["aus"]
 		lamp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		lamp.name = cols[j]
 		entry.append(lamp)
+	# Fußgängersignal (rotes und grünes Männchen) quer zur Fahrbahn, Anforderungstaster
+	var ped := pos + Vector3(0, 2.0, 0) - right * 0.12
+	k.box(ped - Vector3(0.11, 0.24, 0.09), ped + Vector3(0.11, 0.24, 0.09), dark)
+	k.panel(ped + Vector3(0, 0.11, 0) - right * 0.115, face * 0.07, Vector3.UP * 0.09, Color(0.85, 0.15, 0.1, 0.3), -right)
+	k.panel(ped - Vector3(0, 0.11, 0) - right * 0.115, face * 0.07, Vector3.UP * 0.09, Color(0.2, 0.6, 0.3), -right)
+	k.box(pos + Vector3(0, 1.0, 0) - right * 0.1 - Vector3(0.06, 0.1, 0.05), pos + Vector3(0, 1.0, 0) - right * 0.1 + Vector3(0.06, 0.1, 0.05), Color(0.95, 0.8, 0.15))
 	return entry
+
+
+## Richtungspfeil auf der Fahrbahn (weiß), c Mitte, fwd Fahrtrichtung, kind: "gerade", "links", "rechts", "gerade_rechts".
+func _lane_arrow(k: Kit, c: Vector3, fwd: Vector3, kind: String) -> void:
+	var f := Vector3(fwd.x, 0, fwd.z).normalized()
+	var r := f.cross(Vector3.UP)
+	var y := 0.08
+	var white := Color(0.9, 0.9, 0.86)
+	var base := Vector3(c.x, y, c.z) - f * 2.5
+	var stem_end := base + f * 3.0
+	_bar(k, base, stem_end, 0.15, white)
+	if kind == "gerade" or kind == "gerade_rechts":
+		var tip := stem_end + f * 1.6
+		k.tri(stem_end + r * 0.42, stem_end - r * 0.42, tip, white, stem_end + Vector3(0, -1, 0))
+	if kind == "links" or kind == "rechts" or kind == "gerade_rechts":
+		var sgn := -1.0 if kind == "links" else 1.0
+		var from := base + f * (1.4 if kind == "gerade_rechts" else 2.85)
+		var bend := from + r * sgn * 0.75 + f * 0.35
+		_bar(k, from, bend, 0.14, white)
+		var t0 := bend + r * sgn * 0.7
+		var perp := (r * sgn).cross(Vector3.UP)
+		k.tri(bend + perp * 0.38, bend - perp * 0.38, t0, white, bend + Vector3(0, -1, 0))
+
+
+func _bar(k: Kit, a: Vector3, b: Vector3, w: float, col: Color) -> void:
+	var d := Vector3(b.x - a.x, 0, b.z - a.z)
+	if d.length() < 0.01:
+		return
+	var s := d.normalized().cross(Vector3.UP) * w * 0.5
+	k.quad(a - s, b - s, b + s, a + s, col, a + Vector3(0, -1, 0))

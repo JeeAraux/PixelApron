@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.17: Kofferwege und europäische Straßen**
+  - **Kofferbänder** laufen zwischen den Anschlüssen unter der Decke (Fluggäste gehen darunter durch) und brechen sich durch Wände eine Öffnung. Der neue **Gepäcklift** bringt Koffer in den Keller oder ins Obergeschoss, die Sortierung darf im Keller stehen.
+  - **Check-in nur mit Band:** Fluggäste gehen nur an Schalter, die über Kofferbänder mit der Sortierung verbunden sind. Koffer laufen nur, wenn wirklich jemand eincheckt, und folgen ihrem Weg bis zur Sortierung; erst dann läuft deren Ring. Ältere Spielstände behalten die alte Regel.
+  - **Straßen im europäischen Stil:** Ampeln am Mast an der Haltelinie mit Kontrastblende und Fußgängersignal, Richtungspfeile auf den Spuren, Schilder am Zebrastreifen, Leitlinien 3 m/6 m, an Hochbordstraßen eine gepflasterte Rinne statt weißer Randlinie.
 - **Update 0.16: Bauen wie in Aufbauspielen mit Grundriss, Kofferbänder, Stockwerke**
   - **Sandkasten:** Geld ist unbegrenzt (Einstellung, Standard an; Szenarien bleiben mit Budget).
   - **Ziehen statt Klicken:** Hallen, Bereiche, Wände und das neue Werkzeug **Raum** zieht man mit gedrückter Maustaste auf. Ein Raum bekommt automatisch Wände, Tür und auf Wunsch einen Bereich (öffentlich, Sicherheit, Personal). Abriss auf freiem Boden zieht eine Fläche auf.
