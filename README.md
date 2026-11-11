@@ -22,6 +22,11 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.31: Personentunnel zu weiter entfernten Terminals**
+  - Neu unter Terminal → Ebenen: **Personentunnel**. Er läuft im Untergeschoss von einer Terminalhalle zu einer anderen (z. B. einem Satelliten auf dem Vorfeld), darüber darf weiter gebaut werden. Beide Hallen bekommen automatisch einen Keller und eine Öffnung in der Kellerwand.
+  - In beiden Hallen eine Rolltreppe, Treppe oder einen Aufzug ins Untergeschoss bauen. Tunnel ab 100 m haben Rollsteige in beide Richtungen.
+  - Verbundene Hallen zählen als ein Terminal: Ein Satellit braucht keinen eigenen Eingang, Check-in oder Gepäckband. Abfliegende checken in der Haupthalle ein, gehen durch die Kontrolle, fahren ins Untergeschoss, durch den Tunnel und im Satelliten hinauf zum Gate. Ankommende gehen den Weg zurück zum Gepäckband.
+  - Die Fluggäste sind in der Ansicht Untergeschoss im Tunnel zu sehen.
 - **Update 0.30: 30 Verbesserungen**
   - **Gepäck:** Rolltore im Terminal sind Andockstellen mit gelber Fläche, auch Abflugzüge stehen mit den Wagen vor dem Tor. Gepäckzüge fahren nie mehr unter der Tragfläche durch (außen um die Flügelspitze, der hintere Zug steht hinter dem Flügel). Im Gepäckumschlag laufen die Koffer sichtbar vom Wagen übers Band nach oben, an jeder Spur arbeitet ein Lader. Große Hallen wenden auch in die übernächste Spur. Sind alle Spuren belegt, warten Züge neben der Halle. Schlepper bleiben nach dem Pushback eine Weile in Bereitschaft am Stand.
   - **Flugbetrieb:** Blockieren sich zwei Flugzeuge, wird eines ein Stück zurückgeschleppt, statt durch das andere hindurchzufahren. Starts werden nach Wirbelschleppen gestaffelt (hinter A380 und Großraumflugzeugen länger warten). Großraumflugzeuge rollen, beschleunigen und steigen gemächlicher. Verspätungen wandern mit dem Flugzeug in den nächsten Umlauf. Airlines bekommen bevorzugt ihre gewohnten Gates.

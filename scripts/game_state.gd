@@ -278,6 +278,13 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 		if not wall_cuts(rec).is_empty() and not (rec.get("hall", {}) as Dictionary).is_empty():
 			refresh_walls(rec["hall"], view_floor)
 		_apply_visibility(rec)
+	elif kind == "personentunnel":
+		# beide Hallen bekommen einen Keller, in dem der Tunnel endet, und eine Öffnung in der Kellerwand
+		for e: Vector3 in [samples[0], samples[samples.size() - 1]]:
+			var th := hall_at(Vector3(e.x, 0, e.z))
+			ensure_basement(th, -1)
+			if not th.is_empty():
+				queue_facade(th)
 	elif Catalog.is_floor_line(kind):
 		# Kofferband: auf der gezeigten Ebene, wenn es in einer Halle liegt; Höhenverlauf und Wandöffnungen
 		var fl := view_floor if interior_view and not hall_at(samples[0]).is_empty() else 0
@@ -304,6 +311,9 @@ static func line_samples(kind: String, points: Array) -> PackedVector3Array:
 	elif kind == "foerderband":
 		for i in range(s.size()):
 			s[i] = Vector3(s[i].x, -4.2, s[i].z)
+	elif kind == "personentunnel":
+		for i in range(s.size()):
+			s[i] = Vector3(s[i].x, -Catalog.FLOOR_H, s[i].z)
 	return s
 
 
@@ -472,6 +482,10 @@ func _ensure_grid() -> void:
 func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 	blocker = {}
 	var out := {"why": "", "decor": [], "junctions": []}
+	if kind == "personentunnel" and samples.size() >= 2:
+		out["why"] = ped_tunnel_why(samples)
+		if out["why"] != "":
+			return out
 	for v: Vector3 in samples:
 		if not on_map(v):
 			out["why"] = "Außerhalb der Karte"
@@ -1121,6 +1135,51 @@ func hall_at(p: Vector3) -> Dictionary:
 	return {}
 
 
+## Personentunnel: beide Enden in verschiedenen Terminalhallen (im Untergeschoss). "" = ok.
+func ped_tunnel_why(samples: PackedVector3Array) -> String:
+	var a := samples[0]
+	var b := samples[samples.size() - 1]
+	var ha := hall_at(Vector3(a.x, 0, a.z))
+	var hb := hall_at(Vector3(b.x, 0, b.z))
+	if ha.is_empty() or hb.is_empty():
+		return "Beide Enden in eine Terminalhalle legen (Untergeschoss)"
+	if is_same(ha, hb):
+		return "Der Tunnel muss zwei verschiedene Hallen verbinden"
+	for h: Dictionary in [ha, hb]:
+		var fr: Rect2 = (h["rect"] as Rect2).grow(-1.5)
+		var e := a if is_same(h, ha) else b
+		if not fr.has_point(Vector2(e.x, e.z)):
+			return "Tunnelende mindestens 1,5 m innerhalb der Halle setzen"
+	return ""
+
+
+## Personentunnel zwischen Hallen: Instanz-ID der Halle -> [[ID der anderen Halle, Weg von hier nach dort], …]
+func ped_links() -> Dictionary:
+	var out := {}
+	for l: Dictionary in lines:
+		if l["kind"] != "personentunnel":
+			continue
+		var s: PackedVector3Array = l["samples"]
+		if s.size() < 2:
+			continue
+		var ha := hall_at(Vector3(s[0].x, 0, s[0].z))
+		var hb := hall_at(Vector3(s[s.size() - 1].x, 0, s[s.size() - 1].z))
+		if ha.is_empty() or hb.is_empty() or is_same(ha, hb):
+			continue
+		var ia := (ha["node"] as Node).get_instance_id()
+		var ib := (hb["node"] as Node).get_instance_id()
+		var rev := PackedVector3Array()
+		for i in range(s.size() - 1, -1, -1):
+			rev.append(s[i])
+		if not out.has(ia):
+			out[ia] = []
+		if not out.has(ib):
+			out[ib] = []
+		(out[ia] as Array).append([ib, s])
+		(out[ib] as Array).append([ia, rev])
+	return out
+
+
 ## Halle, die das Rechteck ganz enthält (oder leer).
 func hall_for_rect(r: Rect2) -> Dictionary:
 	for it: Dictionary in items:
@@ -1573,7 +1632,30 @@ func facade_cuts(hall: Dictionary) -> Array:
 			continue
 		var c: Vector3 = hs[2]
 		out.append([Vector2(c.x - cen.x, c.z - cen.y), 3.4, 6.4])
+	# Personentunnel: Öffnung in der Kellerwand, wo der Tunnel die Halle betritt (Oberkante unter null)
+	for l: Dictionary in lines:
+		if l["kind"] != "personentunnel":
+			continue
+		var s: PackedVector3Array = l["samples"]
+		for i in range(1, s.size()):
+			var ia := hr.has_point(Vector2(s[i - 1].x, s[i - 1].z))
+			var ib := hr.has_point(Vector2(s[i].x, s[i].z))
+			if ia == ib:
+				continue
+			var p := _rect_cross(hr, Vector2(s[i - 1].x, s[i - 1].z), Vector2(s[i].x, s[i].z))
+			if p != Vector2.INF:
+				out.append([p - cen, 6.6, -Catalog.FLOOR_H + 3.3])
 	return out
+
+
+## Schnittpunkt der Strecke a–b mit dem Rand eines Rechtecks (INF, wenn keiner).
+static func _rect_cross(r: Rect2, a: Vector2, b: Vector2) -> Vector2:
+	var corners := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
+	for i in range(4):
+		var hit: Variant = Geometry2D.segment_intersects_segment(a, b, corners[i], corners[(i + 1) % 4])
+		if hit != null:
+			return hit
+	return Vector2.INF
 
 
 var _facade_queue: Array = []
@@ -3593,6 +3675,13 @@ func describe(rec: Dictionary) -> String:
 func remove(rec: Dictionary, refund: float = 0.5) -> void:
 	var any_line: bool = rec["type"] == "line"
 	var was_belt: bool = rec.get("kind", "") == "kofferband"
+	if rec.get("kind", "") == "personentunnel":
+		# Kellerwände der beiden Hallen wieder schließen
+		var ts: PackedVector3Array = rec["samples"]
+		for e: Vector3 in [ts[0], ts[ts.size() - 1]]:
+			var th := hall_at(Vector3(e.x, 0, e.z))
+			if not th.is_empty():
+				queue_facade(th)
 	if rec.get("id", "") == "halle":
 		var walls := walls_of(rec)
 		any_line = any_line or not walls.is_empty()

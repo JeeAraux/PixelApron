@@ -38,6 +38,9 @@ const LINES := {
 	"tunnel": {"name": "Straßentunnel", "width": 8.5, "cost_m": 2400, "min_r": 25.0, "min_len": 170.0, "lanes": [1, 1],
 		"color": Color(0.24, 0.235, 0.22), "mark": 1, "y": 0.06, "straight": false, "utility": "", "underground": true,
 		"desc": "Straße unter der Erde, eine Spur je Richtung. Rampen von je 70 m an beiden Enden, dazwischen darf darüber gebaut werden: unter Pisten, Rollwegen und Gebäuden hindurch. Die Enden schließen an Straßen an."},
+	"personentunnel": {"name": "Personentunnel", "width": 6.0, "cost_m": 3200, "min_r": 10.0, "min_len": 20.0,
+		"color": Color(0.82, 0.8, 0.74), "mark": 0, "y": 0.03, "straight": false, "utility": "", "underground": true,
+		"desc": "Fußgängertunnel im Untergeschoss zwischen zwei Terminalhallen (z. B. zu einem Satelliten auf dem Vorfeld). Beide Enden in eine Halle legen, sie bekommt dafür einen Keller. In beiden Hallen Rolltreppe, Treppe oder Aufzug ins Untergeschoss bauen. Ab 100 m mit Rollsteigen. Fluggäste checken in der Halle mit Eingang ein und gehen durch den Tunnel zum Gate; Ankommende gehen zurück zum Gepäckband. Darüber darf gebaut werden."},
 	"foerderband": {"name": "Gepäckförderband", "width": 2.4, "cost_m": 900, "min_r": 4.0, "min_len": 10.0,
 		"color": Color(0.18, 0.18, 0.19), "mark": 9, "y": 0.06, "straight": false, "utility": "", "underground": true,
 		"desc": "Gepäcktunnel unter dem Vorfeld: verbindet die Gepäcksortierung einer Terminalhalle mit einem Gepäckumschlag. Die Koffer laufen sichtbar in der Ansicht Untergeschoss. Abfertigung 10 % schneller."},
@@ -353,7 +356,7 @@ const ITEMS := {
 const CATEGORIES := [
 	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "vorfeldflaeche", "rolllinie", "piste", "betriebsstrasse"]],
 	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "wendeplatte", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
-	["terminal", "Terminal", ["halle", "geschoss", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum",
+	["terminal", "Terminal", ["halle", "geschoss", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personentunnel", "personalraum",
 		"raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "wegweiser", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
@@ -375,7 +378,7 @@ const GROUPS := {
 		["Bereiche", ["bereich_oeffentlich", "bereich_sicherheit", "bereich_personal"]],
 		["Abflug", ["checkin", "kofferband", "gepaecklift", "gepaeckanlage", "gepaeckroentgen", "sicherheit", "passkontrolle", "gate", "busgate"]],
 		["Ankunft", ["gepaeckband", "gepaeckermittlung", "zoll", "sb_ausgang"]],
-		["Ebenen", ["rolltreppe", "aufzug", "treppe"]], ["Personal", ["personalraum"]],
+		["Ebenen", ["rolltreppe", "aufzug", "treppe", "personentunnel"]], ["Personal", ["personalraum"]],
 		["Räume", ["raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]]],
 	"ausstattung": [["Service", ["wc", "infoschalter", "anzeige", "wegweiser", "heizkoerper"]], ["Gastro und Shops", ["cafe", "shop", "kiosk", "airline_lounge"]],
 		["Warten", ["sitzreihe", "rollsteig"]], ["Deko", ["pflanze", "kunst"]]],
@@ -615,7 +618,7 @@ static func is_underground(kind: String) -> bool:
 
 ## Liegt dieser Stützpunkt eines Weges unter der Erde (dann darf man darüber bauen)?
 static func covered(kind: String, v: Vector3) -> bool:
-	if kind == "foerderband":
+	if kind == "foerderband" or kind == "personentunnel":
 		return true
 	return kind == "tunnel" and v.y < TUNNEL_COVER
 

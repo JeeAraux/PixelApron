@@ -194,6 +194,11 @@ func set_tool(id: String) -> void:
 		game.set_utility_view(true)
 	if Catalog.is_terminal_tool(id) and not game.interior_view:
 		game.set_interior_view(true)
+	if id == "personentunnel":
+		# Personentunnel liegen im Untergeschoss: dorthin schauen
+		if not game.interior_view:
+			game.set_interior_view(true)
+		game.set_view_floor(-1)
 	if is_item_tool():
 		ghost = Factory.make_item(id)
 		_paint(ghost, mat_ok)

@@ -149,6 +149,8 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 		mi.add_child(_tunnel_build(samples, w))
 	elif kind == "foerderband":
 		mi.add_child(_belt_build(samples, w))
+	elif kind == "personentunnel":
+		mi.add_child(_ped_tunnel_build(samples, w))
 	# Schultern neben Rollweg und Piste (liegen unter allen anderen Belägen)
 	if kind == "rollweg" or kind == "rollweg_breit" or kind == "piste":
 		var sh := 3.5 if kind == "rollweg" else (5.0 if kind == "rollweg_breit" else 7.5)
@@ -362,6 +364,72 @@ static func _belt_build(s: PackedVector3Array, w: float) -> Node3D:
 	bags.set_script(BeltAnim)
 	root.add_child(bags)
 	bags.call("setup", pts, Models.bag_mesh(), 1.6, 2.6)
+	return root
+
+
+## Personentunnel im Untergeschoss: helle Wände mit Lichtband, Bodenleitstreifen, ab 100 m zwei
+## Rollsteige (je Richtung einer) in der Mitte. Ohne Decke, damit man in der Untergeschoss-Ansicht hineinsieht.
+static func _ped_tunnel_build(s: PackedVector3Array, w: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Bauwerk"
+	var k := Kit.new()
+	var wall := Color(0.86, 0.85, 0.8)
+	var n := s.size()
+	var total := 0.0
+	for i in range(1, n):
+		total += s[i - 1].distance_to(s[i])
+	var walkway := total >= 100.0
+	for i in range(0, n - 1):
+		var a := s[i]
+		var b := s[i + 1]
+		var dir := Vector3(b.x - a.x, 0.0, b.z - a.z)
+		if dir.length() < 0.01:
+			continue
+		var bas := Basis.looking_at(dir.normalized(), Vector3.UP)
+		var mid := (a + b) * 0.5
+		var seg := dir.length() * 0.5 + 0.05
+		var xf := Transform3D(bas, Vector3(mid.x, 0.0, mid.z))
+		var y := mid.y
+		# Bodenplatte etwas tiefer als der Belag, Wände links und rechts
+		k.box(Vector3(-w * 0.5 - 0.4, y - 0.4, -seg), Vector3(w * 0.5 + 0.4, y + 0.0, seg), Color(0.5, 0.49, 0.46), xf)
+		for sx: float in [-1.0, 1.0]:
+			k.box(Vector3(sx * (w * 0.5 + 0.2) - 0.2, y - 0.4, -seg), Vector3(sx * (w * 0.5 + 0.2) + 0.2, y + 3.2, seg), wall, xf)
+			k.box(Vector3(sx * (w * 0.5) - 0.03, y + 2.7, -seg), Vector3(sx * (w * 0.5) + 0.03, y + 2.85, seg), Color(1.0, 0.95, 0.82, 0.3), xf)
+			k.box(Vector3(sx * (w * 0.5) - 0.02, y + 0.0, -seg), Vector3(sx * (w * 0.5) + 0.02, y + 0.15, seg), Color(0.4, 0.42, 0.45), xf)
+		if not walkway:
+			# taktiles Leitsystem in der Mitte
+			k.box(Vector3(-0.15, y + 0.02, -seg), Vector3(0.15, y + 0.035, seg), Color(0.75, 0.72, 0.6), xf)
+		else:
+			for sx2: float in [-1.0, 1.0]:
+				var cx := sx2 * 1.15
+				k.box(Vector3(cx - 0.9, y, -seg), Vector3(cx + 0.9, y + 0.12, seg), Color(0.5, 0.52, 0.55), xf)
+				for e: float in [-0.95, 0.95]:
+					k.box(Vector3(cx + e - 0.05, y + 0.12, -seg), Vector3(cx + e + 0.05, y + 1.0, seg), Color(0.62, 0.66, 0.7, 0.6), xf)
+					k.box(Vector3(cx + e - 0.06, y + 1.0, -seg), Vector3(cx + e + 0.06, y + 1.07, seg), Color(0.14, 0.14, 0.16), xf)
+		# alle 20 m ein Wegweiser über dem Gang
+		if i % 10 == 5:
+			k.box(Vector3(-1.2, y + 2.3, -0.05), Vector3(1.2, y + 2.75, 0.05), Color(0.98, 0.8, 0.12), xf)
+	root.add_child(k.instance("Tunnel"))
+	if walkway:
+		var pk := Kit.new()
+		pk.box(Vector3(-0.72, 0.0, -0.18), Vector3(0.72, 0.03, 0.18), Color(0.42, 0.44, 0.47))
+		for sx3: float in [-1.0, 1.0]:
+			var pts := PackedVector3Array()
+			for i in range(n):
+				var d := s[mini(i + 1, n - 1)] - s[maxi(i - 1, 0)]
+				d.y = 0.0
+				var side := d.normalized().cross(Vector3.UP) if d.length() > 0.01 else Vector3.RIGHT
+				pts.append(s[i] + side * (-sx3 * 1.15) + Vector3(0, 0.12, 0))
+			if sx3 < 0.0:
+				var rev := PackedVector3Array()
+				for i in range(pts.size() - 1, -1, -1):
+					rev.append(pts[i])
+				pts = rev
+			var slats := MultiMeshInstance3D.new()
+			slats.name = "Rollsteig%d" % int(sx3 + 1.0)
+			slats.set_script(BeltAnim)
+			root.add_child(slats)
+			slats.call("setup", pts, pk.commit(), 0.75, 0.4)
 	return root
 
 
@@ -628,7 +696,9 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 			# Deckenstirn: dunkle Kante, damit die Öffnung als Loch erkennbar ist
 			k.box(Vector3(hr.position.x, y0 - 0.25, hr.position.y), Vector3(hr.end.x, y0 - 0.2, hr.end.y), Color(0.3, 0.3, 0.32))
 		if f == -1:
-			_wall_ring(k, ring, -fh, -0.25, CONCRETE, 0.4)
+			# Kellerwand mit Öffnungen für Personentunnel (Schnitte mit Oberkante unter null)
+			var low := cuts.filter(func(c: Array) -> bool: return float(c[2]) < 0.0)
+			_wall_ring(k, ring, -fh, -0.25, CONCRETE, 0.4, low)
 		slab.add_child(k.instance("Boden"))
 	# Fassade außen (volle Höhe)
 	var high := Node3D.new()

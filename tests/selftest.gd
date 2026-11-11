@@ -1245,6 +1245,29 @@ func run(main: Node) -> void:
 	check(game.items_of("baum").size() == trees_before - 1, "Baum im Weg wird weggeräumt")
 	b.set_tool("")
 
+	# 0.31: Personentunnel zwischen zwei Hallen (Keller, Wandöffnung, Verbindung für die Fluggäste)
+	var ha: Dictionary = game.build_hall(Rect2(1500, 1500, 30, 20))
+	var hb: Dictionary = game.build_hall(Rect2(1500, 1600, 30, 20))
+	var bad_s: PackedVector3Array = game.line_samples("personentunnel", [Vector3(1515, 0, 1510), Vector3(1515, 0, 1560)])
+	check(game.ped_tunnel_why(bad_s) != "", "Personentunnel: ein Ende außerhalb einer Halle geht nicht")
+	var pt: Dictionary = game.build_line("personentunnel", [Vector3(1515, 0, 1510), Vector3(1515, 0, 1555), Vector3(1515, 0, 1610)])
+	check(not pt.is_empty() and game.hall_basement(ha) and game.hall_basement(hb), "Personentunnel gebaut, beide Hallen haben einen Keller")
+	check((pt.get("samples", PackedVector3Array([Vector3.ZERO])) as PackedVector3Array)[0].y < -4.0, "Personentunnel liegt im Untergeschoss")
+	var pl: Dictionary = game.ped_links()
+	check(pl.has((ha["node"] as Node).get_instance_id()) and pl.has((hb["node"] as Node).get_instance_id()), "Personentunnel verbindet die beiden Hallen")
+	var low_cut := false
+	for c: Array in game.facade_cuts(ha):
+		low_cut = low_cut or float(c[2]) < 0.0
+	check(low_cut, "Kellerwand bekommt eine Öffnung für den Tunnel")
+	tb.dirty = true
+	tb._analyze()
+	check(int(tb.group_of.get((ha["node"] as Node).get_instance_id(), -1)) == int(tb.group_of.get((hb["node"] as Node).get_instance_id(), -2)), "Verbundene Hallen gelten als ein Terminal")
+	check(tb._tunnel_hops((ha["node"] as Node).get_instance_id(), (hb["node"] as Node).get_instance_id()).size() == 1, "Weg durch den Tunnel gefunden")
+	game.remove(pt, 1.0)
+	game.remove(ha, 1.0)
+	game.remove(hb, 1.0)
+	game.flush_facades()
+
 	# Speichern und Laden
 	var sides_before := 0
 	for l: Dictionary in game.lines:

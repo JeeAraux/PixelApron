@@ -95,7 +95,7 @@ func _process(delta: float) -> void:
 			continue   # sitzt gerade im Bus o. Ä.
 		var p := node.global_position
 		var key := "draussen"
-		if not game.hall_at(p).is_empty():
+		if not game.hall_at(p).is_empty() or p.y < -1.0:
 			key = "E%d" % floori((p.y + 1.0) / Catalog.FLOOR_H)
 		var lay := _layer(key)
 		if par != lay:
@@ -164,6 +164,7 @@ func _analyze() -> void:
 			"desk_eff": desk_eff,
 		}
 		halls.append(info)
+	_link_groups()
 	_rebuild_bridges()
 	var old_open := {}
 	for d: Array in doors:
@@ -172,12 +173,152 @@ func _analyze() -> void:
 	for it: Dictionary in game.items:
 		if Catalog.is_door(String(it["id"])):
 			doors.append([it, float(old_open.get(it.get("node"), 0.0))])
+	# Hallen, deren Knoten neu gebaut wurde (Fassade, Keller, Ebenen), bekommen eine neue Instanz-ID:
+	# die Menschen darin (und ihre Tunnel-Ziele) wandern mit
+	var remap := {}
+	for e: Array in _last_ids:
+		if is_instance_valid((e[0] as Dictionary).get("node")):
+			var nid := ((e[0] as Dictionary)["node"] as Node).get_instance_id()
+			if nid != int(e[1]):
+				remap[int(e[1])] = nid
+	_last_ids = []
+	for h: Dictionary in game.items_of("halle"):
+		_last_ids.append([h, (h["node"] as Node).get_instance_id()])
 	# Personen in abgerissenen Hallen verschwinden, die anderen suchen ihren Weg neu
 	for per: Dictionary in people.duplicate():
+		if remap.has(int(per["hall_id"])):
+			per["hall_id"] = remap[int(per["hall_id"])]
+		for st: Variant in per.get("plan", []):
+			if st is Array and (st as Array).size() > 2 and String((st as Array)[0]) == "tunnel" and remap.has(int((st as Array)[2])):
+				(st as Array)[2] = remap[int((st as Array)[2])]
 		if not grids.has(int(per["hall_id"])):
 			_drop(per)
-		else:
-			per["path"] = []
+		elif not per.has("tun"):
+			per["path"] = []   # im Personentunnel geht der Weg weiter
+
+
+# ---------------------------------------------------------------- Personentunnel zwischen Hallen
+
+var links: Dictionary = {}    # Halle (Instanz-ID) -> [[andere Halle, Weg], …] (aus game.ped_links)
+var group_of: Dictionary = {} # Halle (Instanz-ID) -> Gruppen-Nummer (durch Tunnel verbundene Hallen)
+
+
+## Durch Personentunnel verbundene Hallen gelten zusammen als ein Terminal: ein Satellit ohne Eingang,
+## Check-in und Gepäckband ist vollständig, wenn die Haupthalle das hat. Tunnel brauchen in beiden
+## Hallen einen Weg ins Untergeschoss (Rolltreppe, Treppe oder Aufzug).
+func _link_groups() -> void:
+	links = game.ped_links()
+	group_of = {}
+	var by_id := {}
+	for info: Dictionary in halls:
+		by_id[(info["hall"]["node"] as Node).get_instance_id()] = info
+	var g := 0
+	for hid: int in by_id:
+		if group_of.has(hid):
+			continue
+		var stack := [hid]
+		group_of[hid] = g
+		while not stack.is_empty():
+			var cur: int = stack.pop_back()
+			for e: Array in links.get(cur, []):
+				var o := int(e[0])
+				if by_id.has(o) and not group_of.has(o):
+					group_of[o] = g
+					stack.append(o)
+		g += 1
+	for hid: int in by_id:
+		if not links.has(hid):
+			continue
+		var info: Dictionary = by_id[hid]
+		var h: Dictionary = info["hall"]
+		var tunnel_why := ""
+		var down := false
+		for it: Dictionary in game.inside_of(h):
+			if bool(Catalog.ITEMS[it["id"]].get("connector", false)) and GameState.floor_of(it) == -1:
+				down = true
+		if not down:
+			tunnel_why = "Personentunnel: in der Halle fehlt eine Rolltreppe, Treppe oder ein Aufzug ins Untergeschoss"
+		# fehlende Teile gemeinsam mit den verbundenen Hallen
+		var union := {}
+		for o: int in by_id:
+			if group_of.get(o, -1) != group_of[hid]:
+				continue
+			var c: Dictionary = by_id[o]["counts"]
+			for id: String in c:
+				union[id] = int(union.get(id, 0)) + int(c[id])
+		var missing := []
+		for e: Array in ESSENTIAL:
+			var have := int(union.get(e[0], 0))
+			if e[0] == "gate":
+				have += int(union.get("busgate", 0))
+			if have == 0:
+				missing.append(e[1])
+		info["missing"] = missing
+		var problems: Array = info["problems"]
+		if missing.is_empty() and problems.is_empty():
+			problems = _security_problems(h, grids[hid])
+			info["problems"] = problems
+		if tunnel_why != "":
+			problems.append(tunnel_why)
+		info["complete"] = bool(info["powered"]) and missing.is_empty() and problems.is_empty() and int(union.get("gepaeckanlage", 0)) > 0
+
+
+## Halle mit Eingang (und möglichst Check-in bzw. Gepäckband) in derselben Tunnelgruppe; die Halle
+## selbst, wenn sie das hat.
+func _land_hall(h: Dictionary, need: String) -> Dictionary:
+	if not _any(h, "eingang").is_empty() and not _any(h, need).is_empty():
+		return h
+	var hid := (h["node"] as Node).get_instance_id()
+	var best: Dictionary = {}
+	var bd := INF
+	for info: Dictionary in halls:
+		var o: Dictionary = info["hall"]
+		var oid := (o["node"] as Node).get_instance_id()
+		if oid == hid or group_of.get(oid, -2) != group_of.get(hid, -1):
+			continue
+		if _any(o, "eingang").is_empty() or _any(o, need).is_empty():
+			continue
+		var d := (o["pos"] as Vector3).distance_to(h["pos"])
+		if d < bd:
+			bd = d
+			best = o
+	return h if best.is_empty() else best
+
+
+## Tunnelweg von Halle a nach Halle b: [[nächste Halle, Weg], …] (Breitensuche), leer = keiner.
+func _tunnel_hops(a: int, b: int) -> Array:
+	if a == b:
+		return []
+	var prev := {a: null}
+	var queue := [a]
+	while not queue.is_empty():
+		var cur: int = queue.pop_front()
+		if cur == b:
+			break
+		for e: Array in links.get(cur, []):
+			var o := int(e[0])
+			if not prev.has(o):
+				prev[o] = [cur, e[1]]
+				queue.append(o)
+	if not prev.has(b):
+		return []
+	var hops := []
+	var cur2 := b
+	while cur2 != a:
+		var pv: Array = prev[cur2]
+		hops.push_front([cur2, pv[1]])
+		cur2 = int(pv[0])
+	return hops
+
+
+## Planschritte durch die Tunnel: zum Tunnelanfang im Untergeschoss (mit Rolltreppe, Treppe oder Aufzug),
+## durch den Tunnel, in der nächsten Halle weiter.
+func _through_tunnels(plan: Array, from_h: Dictionary, to_h: Dictionary) -> void:
+	for hop: Array in _tunnel_hops((from_h["node"] as Node).get_instance_id(), (to_h["node"] as Node).get_instance_id()):
+		var pts: PackedVector3Array = hop[1]
+		var lane := randf_range(-1.6, 1.6)
+		plan.append(["go", pts[0] + Vector3(randf_range(-1.0, 1.0), 0, randf_range(-1.0, 1.0))])
+		plan.append(["tunnel", pts, int(hop[0]), lane])
 
 
 func _complete() -> Array:
@@ -806,7 +947,12 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 	var br := _bridge_for_gate(gate)
 	if not br.is_empty() and not bool(p.get("bus", false)):
 		br["plane"] = p
-	var hall: Dictionary = gate["hall"]
+	var gh: Dictionary = gate["hall"]
+	if dirty:
+		_analyze()
+	# Eingang, Check-in und Kontrolle in der Halle mit Eingang (bei einem Satelliten die Haupthalle),
+	# dann durch den Personentunnel zum Gate
+	var hall := _land_hall(gh, "checkin")
 	var n := ceili(float(Catalog.PLANES[p["kind"]]["pax"]) / float(PAX_PER_FIGURE))
 	if not bool(p.get("bus", false)):
 		_arrivals(p, gate, n, _pt(gate, Vector3(3.5, 0, -3.2)), 0.45)
@@ -829,16 +975,20 @@ func flight_parked(p: Dictionary, gate: Dictionary) -> void:
 			plan.append(["go", _pt(sec, Vector3(lane, 0, -ss.y * 0.5 - 0.7))])
 			plan.append(["wait", randf_range(0.5, 1.5)])
 		_maybe(plan, hall, "shop", 0.25)
-		if not bool(p.get("schengen", true)):
+		if not bool(p.get("schengen", true)) and (is_same(hall, gh) or _any(gh, "passkontrolle").is_empty()):
 			_through(plan, hall, "passkontrolle", true, 1.5)
-		# Bedürfnisse: Hunger (Café, Kiosk, Automat), Toilette; Vielflieger in die Lounge
-		if i % 10 == 0 and not _any(hall, "airline_lounge").is_empty():
-			_maybe(plan, hall, "airline_lounge", 1.0)
+		if not is_same(hall, gh):
+			_through_tunnels(plan, hall, gh)
+			if not bool(p.get("schengen", true)) and not _any(gh, "passkontrolle").is_empty():
+				_through(plan, gh, "passkontrolle", true, 1.5)
+		# Bedürfnisse: Hunger (Café, Kiosk, Automat), Toilette; Vielflieger in die Lounge (am Gate)
+		if i % 10 == 0 and not _any(gh, "airline_lounge").is_empty():
+			_maybe(plan, gh, "airline_lounge", 1.0)
 			plan.append(["wait", randf_range(4.0, 8.0)])
-		elif not _maybe(plan, hall, "cafe", 0.25):
-			if not _maybe(plan, hall, "kiosk", 0.15):
-				_maybe(plan, hall, "snackautomat", 0.1)
-		_maybe(plan, hall, "wc", 0.18)
+		elif not _maybe(plan, gh, "cafe", 0.25):
+			if not _maybe(plan, gh, "kiosk", 0.15):
+				_maybe(plan, gh, "snackautomat", 0.1)
+		_maybe(plan, gh, "wc", 0.18)
 		# freien Sitzplatz am Gate belegen (3 Reihen à 8); sind alle besetzt, wird gestanden
 		var seat := _free_seat(gate, int(p["id"]))
 		if seat >= 0:
@@ -1064,7 +1214,11 @@ var transfer_taken := 0
 
 ## Ankommende betreten das Terminal am Gate (oder durch die Tür des Bus-Gates) und gehen zum Band.
 func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing: float) -> void:
-	var hall: Dictionary = gate["hall"]
+	var gh: Dictionary = gate["hall"]
+	if dirty:
+		_analyze()
+	# Gepäckband und Ausgang in der Halle mit Eingang (Satellit: durch den Tunnel zur Haupthalle)
+	var hall := _land_hall(gh, "gepaeckband")
 	var band := belt_for(hall, gate)
 	if not band.is_empty():
 		belt_load[(band["node"] as Node).get_instance_id()] = int(p["id"])
@@ -1073,7 +1227,12 @@ func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing:
 	var desk := _any(hall, "gepaeckermittlung")
 	for i in range(n):
 		var plan := [["wait", float(i) * spacing], ["show"], ["hide_bag"]]
-		if not bool(p.get("schengen", true)):
+		var pk_hall := gh if not _any(gh, "passkontrolle").is_empty() else hall
+		if not bool(p.get("schengen", true)) and is_same(pk_hall, gh):
+			_through(plan, gh, "passkontrolle", false, 1.2)
+		if not is_same(hall, gh):
+			_through_tunnels(plan, gh, hall)
+		if not bool(p.get("schengen", true)) and not is_same(pk_hall, gh):
 			_through(plan, hall, "passkontrolle", false, 1.2)
 		var lost := randf() < rate
 		if betrieb != null:
@@ -1102,7 +1261,7 @@ func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing:
 		if not door.is_empty():
 			plan.append(["go", _pt(door, Vector3(randf_range(-2.0, 2.0), 0, 0))])
 		plan.append(["end"])
-		_spawn(p, hall, false, start + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5)), plan)
+		_spawn(p, gh, false, start + Vector3(randf_range(-0.5, 0.5), 0, randf_range(-0.5, 0.5)), plan)
 
 
 ## Ein Bus hat Ankommende an der Haltestelle abgesetzt; n Figuren kommen durch das Bus-Gate herein.
@@ -1325,6 +1484,7 @@ func flight_left(p: Dictionary) -> void:
 			_drop(per)
 
 
+var _last_ids: Array = []   # [Hallen-Datensatz, Instanz-ID ihres Knotens] beim letzten _analyze
 func _drop(per: Dictionary) -> void:
 	per["gone"] = true
 	var node: Variant = per["node"]
@@ -1752,6 +1912,62 @@ func _update_person(per: Dictionary, sim: float) -> void:
 			node.position = pos
 			Factory.walk(node, float(per["walk"]), look, sim)
 			if pi >= path.size():
+				per["path"] = []
+				per["si"] = si + 1
+				Factory.set_pose(node, 0)
+		"tunnel":
+			# durch den Personentunnel zur nächsten Halle (ab 100 m meist auf dem Rollsteig)
+			if not per.has("tun"):
+				var pts: PackedVector3Array = st[1]
+				var total := 0.0
+				for i in range(1, pts.size()):
+					total += pts[i - 1].distance_to(pts[i])
+				var lane: float = st[3]
+				var ride := total >= 100.0 and randf() < 0.75
+				if ride:
+					lane = -1.15
+				var tp := []
+				for i in range(pts.size()):
+					var dd := pts[mini(i + 1, pts.size() - 1)] - pts[maxi(i - 1, 0)]
+					dd.y = 0.0
+					var side := dd.normalized().cross(Vector3.UP) if dd.length() > 0.01 else Vector3.RIGHT
+					var fade := clampf(minf(float(i), float(pts.size() - 1 - i)) / 3.0, 0.0, 1.0)
+					tp.append(pts[i] + side * lane * fade + Vector3(0, 0.12 if ride and fade >= 1.0 else 0.0, 0))
+				per["path"] = tp
+				per["pi"] = 0
+				per["tun"] = 1.8 if ride else 1.0
+			var tpath: Array = per["path"]
+			var tpos: Vector3 = per["pos"]
+			if not per.has("spd"):
+				per["spd"] = WALK * randf_range(0.95, 1.35)
+			var tv := float(per["spd"]) * float(per["tun"])
+			var tb := tv * sim
+			var tpi: int = per["pi"]
+			var tlook := Vector3.ZERO
+			while tb > 0.0 and tpi < tpath.size():
+				var tt: Vector3 = tpath[tpi]
+				var td := tpos.distance_to(tt)
+				if td <= tb:
+					tb -= td
+					tlook = tt - tpos
+					tpos = tt
+					tpi += 1
+				else:
+					tlook = tt - tpos
+					tpos += tlook / td * tb
+					tb = 0.0
+			per["pos"] = tpos
+			per["pi"] = tpi
+			node.position = tpos
+			if float(per["tun"]) > 1.0:
+				Factory.set_pose(node, 0)
+				Factory.face(node, tlook, sim)
+			else:
+				per["walk"] = float(per.get("walk", 0.0)) + tv * sim - tb
+				Factory.walk(node, float(per["walk"]), tlook, sim)
+			if tpi >= tpath.size():
+				per.erase("tun")
+				per["hall_id"] = int(st[2])
 				per["path"] = []
 				per["si"] = si + 1
 				Factory.set_pose(node, 0)
