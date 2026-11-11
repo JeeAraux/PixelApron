@@ -26,7 +26,7 @@ func run(main: Node) -> void:
 			if ready:
 				g.set_interior_view(true)
 				var cam = main.cam_rig
-				cam.target = Vector3(100, 0, -22)
+				cam.target = Vector3(93, 0, -20)
 				cam.zoom = 24.0
 				cam.zoom_goal = 24.0
 				for a: String in args:

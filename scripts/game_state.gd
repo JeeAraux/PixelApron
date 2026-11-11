@@ -2591,7 +2591,7 @@ const CLAIM_INLET := Vector3(-5.5, 0, 0)   # Einlauf des Gepäckbands (lokal)
 const GATE_INLET := Vector3(2.1, 0, -1.5)  # Rollenbahn hinter dem Rolltor (lokal, innen, neben der Fahrspur)
 const XRAY_INLET := 4.5                    # Ein-/Auslauf der Gepäckdurchleuchtung (lokal ±X)
 const BELT_CAP := 6                        # so viele Check-in-Schalter verkraftet ein Kofferband
-const GATE_BAY := Vector2(4.0, 10.0)       # Einfahrt hinter einem Rolltor (Breite, Tiefe) für Gepäckzüge
+const GATE_BAY := Vector2(4.0, 16.0)       # Einfahrt hinter einem Rolltor (Breite, Tiefe) für Gepäckzüge
 
 
 ## Anschlussstellen für Kofferbänder auf Ebene f: Seiten der Check-ins, Kanten der Sortierung,
@@ -3894,7 +3894,7 @@ func _starter_terminal(V: Callable) -> void:
 	# Personalbereich: Gepäcksortierung und Personalraum
 	put.call("gepaeckanlage", 90, -20)
 	put.call("gepaeckroentgen", 90, -12.5, 1)
-	put.call("personalraum", 100, -10.5)
+	put.call("personalraum", 104, -10.5)
 	# Lager im Personalbereich: Regale, von hier bringen Mitarbeiter Ware in Läden und Cafés
 	build_room(Rect2(80, -16, 6, 8), "", "personal", "lager", true)
 	put.call("regal", 83, -14.9)
@@ -3919,6 +3919,7 @@ func _starter_terminal(V: Callable) -> void:
 	build_line("kofferband", [V.call(74, -7), V.call(39.5, -7)], true)
 	build_line("kofferband", [V.call(39.5, -7), V.call(39.5, -1.5)], true)
 	build_line("kofferband", [V.call(54.5, -1.5), V.call(54.5, -7)], true)
-	# Rolltor hinter der Sortierung: hier halten die Gepäckzüge, die Koffer laufen über die Rollenbahn hinein
-	put.call("rolltor", 105, -23, 2)
-	build_line("kofferband", [V.call(102.9, -21.5), V.call(94.5, -21.5)], true)
+	# Rolltor direkt neben der Sortierung: die Gepäckzüge fahren hinein und halten längs am Ring (Ablage),
+	# die Rollenbahn führt um die Ecke auf die Sortierung
+	put.call("rolltor", 98, -23, 2)
+	build_line("kofferband", [V.call(95.9, -21.5), V.call(94.6, -21.5)], true)

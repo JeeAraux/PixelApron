@@ -2168,7 +2168,7 @@ func _to_sorting(v: Dictionary) -> bool:
 	if inside:
 		n_out = -(sp[1] as Vector3)
 		end_dir = -n_out
-		target = door_point(gate) - n_out * (float(gate["depth"]) * 0.62 if gate.has("umschlag") else 7.0)
+		target = door_point(gate) - n_out * (float(gate["depth"]) * 0.62 if gate.has("umschlag") else 12.5)
 	var road := net.route(v["pos"], (door_point(gate) + n_out * 12.0) if inside else target, 60.0)
 	if road.size() < 2:
 		return false

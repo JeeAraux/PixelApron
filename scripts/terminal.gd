@@ -1541,7 +1541,7 @@ func _update_person(per: Dictionary, sim: float) -> void:
 				per["pi"] = 0
 			var pos: Vector3 = per["pos"]
 			if not per.has("spd"):
-				per["spd"] = WALK * randf_range(0.8, 1.2)
+				per["spd"] = WALK * randf_range(0.95, 1.35)
 			var budget := float(per["spd"]) * sim
 			var pi: int = per["pi"]
 			var look := Vector3.ZERO

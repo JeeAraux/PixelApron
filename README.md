@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.29.1: Gepäckzüge fahren bis an die Sortierung**
+  - Die Einfahrt hinter einem Rolltor ist jetzt 16 m tief, der ganze Gepäckzug fährt in die Halle und hält längs an der Sortierung (Kofferablage). Im Startflughafen sitzt das Rolltor direkt neben dem Ring, die Rollenbahn führt um die Ecke darauf.
+  - In eigenen Flughäfen das Rolltor mit „Verschieben“ neben die Gepäcksortierung setzen; ist die Einfahrt dahinter frei (keine Einrichtung, keine niedrigen Bänder), fahren die Züge hinein.
+  - Fluggäste gehen im Schnitt etwas zügiger, damit sie trotz freierer Wege rechtzeitig am Gate sitzen.
 - **Update 0.29: Fahrwege, Laufwege, Wetter drinnen**
   - **Kein Regen und Schnee in den Hallen:** In der Innenansicht fällt im Gebäude nichts mehr, draußen schon. Der graue Schleier bleibt draußen.
   - **Fahrzeuge bleiben auf Belag:** Vor Garagen, Gerätehalle, Tanklager, Catering, Feuerwache und Rettungswache gibt es einen Vorplatz mit Zufahrt zum nächsten Weg. Die Fahrwege folgen Kurven enger (keine Abkürzung über die Wiese), Verbindungen gibt es nur, wo Wege sich wirklich berühren. Die Feuerwehr stellt sich bei Kontrollfahrten und Bereitschaft an den Rand des Rollwegs statt auf die Wiese.
