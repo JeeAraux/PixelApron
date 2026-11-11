@@ -67,6 +67,7 @@ func _analyze() -> void:
 			if Catalog.is_zone(String(it["id"])):
 				continue
 			counts[it["id"]] = int(counts.get(it["id"], 0)) + 1
+		counts["checkin_band"] = game.checkins_linked(h).size()
 		var missing := []
 		for e: Array in ESSENTIAL:
 			var have := int(counts.get(e[0], 0))
@@ -80,6 +81,8 @@ func _analyze() -> void:
 		var heated := float(counts.get("heizkoerper", 0)) * float(Catalog.ITEMS["heizkoerper"]["heats"]) if heat_ok else 0.0
 		var decor := 0
 		for id: String in counts:
+			if not Catalog.ITEMS.has(id):
+				continue
 			var pts := int(Catalog.ITEMS[id].get("decor", 0))
 			if id == "anzeige" and not powered:
 				pts = 0
@@ -153,7 +156,8 @@ func _sum(key: String) -> int:
 
 
 func capacity_dep() -> float:
-	return minf(float(_sum("checkin") * int(Catalog.ITEMS["checkin"]["cap"])),
+	# Schalter am Kofferband schaffen ein Viertel mehr
+	return minf(float(_sum("checkin") * int(Catalog.ITEMS["checkin"]["cap"])) + float(_sum("checkin_band")) * float(Catalog.ITEMS["checkin"]["cap"]) * 0.25,
 		float(_sum("sicherheit") * int(Catalog.ITEMS["sicherheit"]["cap"])))
 
 
@@ -203,6 +207,8 @@ func lost_rate(hall: Dictionary) -> float:
 		r -= 0.02
 	if not game.baggage_link(hall).is_empty():
 		r -= 0.015
+	if game.checkins_linked(hall).size() > 0:
+		r -= 0.01
 	for it: Dictionary in game.inside_of(hall):
 		if it["id"] == "gepaeckband" and int(game.opt(it, "gate")) > 0:
 			r -= 0.005
@@ -386,6 +392,9 @@ func hall_summary(h: Dictionary) -> String:
 			lines.append("Sicherheitsbereich: geschlossen, nur über die Kontrolle erreichbar")
 		lines.append("Check-in %d · Kontrolle %d · Gates %d · Bänder %d · WC %d" % [int(c.get("checkin", 0)),
 			int(c.get("sicherheit", 0)), int(c.get("gate", 0)), int(c.get("gepaeckband", 0)), int(c.get("wc", 0))])
+		if int(c.get("checkin", 0)) > 0:
+			lines.append("Check-in am Kofferband zur Sortierung: %d von %d%s" % [int(c.get("checkin_band", 0)), int(c.get("checkin", 0)),
+				"" if int(c.get("checkin_band", 0)) >= int(c.get("checkin", 0)) else " (Kofferband anschließen: +25 % Durchsatz)"])
 		lines.append("Abflug %d/h von %d/h möglich, Ankunft %d/h von %d/h" % [roundi(demand_dep), roundi(capacity_dep()),
 			roundi(demand_arr), roundi(capacity_arr())])
 		lines.append("Beheizt: %d %%" % roundi(float(info["warm"]) * 100.0))
@@ -1254,7 +1263,7 @@ func _gate_near(it: Dictionary) -> Dictionary:
 		for g: Dictionary in game.inside_of(info["hall"]):
 			if g["id"] != "gate":
 				continue
-			var d := (g["pos"] as Vector3).distance_to(it["pos"])
+			var d := (g["pos"] as Vector3).distance_to(game.bridge_anchor(it))
 			if d < bd:
 				bd = d
 				best = g

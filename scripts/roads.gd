@@ -204,7 +204,13 @@ func _setup_node(ni: int) -> void:
 	for e: Dictionary in ends:
 		wmax = maxf(wmax, float(e["w"]))
 		kinds[e["line"]["kind"]] = true
-	if deg >= 3 or (deg == 2 and kinds.size() > 1):
+	# Knick zwischen zwei Stücken derselben Straße: ebenfalls zurücknehmen und rund ausbilden,
+	# sonst überlappen sich Fahrbahn und Gehwege an der Ecke
+	var bend := false
+	if deg == 2 and kinds.size() == 1 and Catalog.has_sides(String(kinds.keys()[0])):
+		var dot := (ends[0]["out"] as Vector3).dot(ends[1]["out"])
+		bend = dot > -0.995   # mehr als etwa 6 Grad
+	if deg >= 3 or (deg == 2 and kinds.size() > 1) or bend:
 		# so weit zurücknehmen, dass sich die Straßenbänder spitzwinkliger Zufahrten nicht überlappen
 		var min_ang := PI
 		for a in range(deg):

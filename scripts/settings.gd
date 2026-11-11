@@ -5,6 +5,7 @@ const PATH := "user://einstellungen.cfg"
 
 ## Schlüssel, Standardwert, Anzeigename, Art (bool, choice, slider), Optionen
 const DEFS := [
+	["sandkasten", true, "Sandkasten: unbegrenztes Geld (nicht in Szenarien)", "bool", []],
 	["vollbild", false, "Vollbild", "bool", []],
 	["schatten", 3, "Schatten", "choice", ["Aus", "Normal", "Hoch", "Sehr hoch"]],
 	["kantenglaettung", 2, "Kantenglättung", "choice", ["Aus", "2×", "4×", "8×"]],

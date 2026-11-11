@@ -51,6 +51,7 @@ const OPTIONS := {
 	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
 	"sicherheit": [["fastlane", "Fast-Lane", [false, true]]],
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
+	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
 }
 const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
@@ -66,6 +67,7 @@ var satisfaction_factors: Array = []
 var extra: Dictionary = {}       # Zustand weiterer Systeme (Wetter, Betrieb, Flotte) für den Spielstand
 var atc_manual := false          # Lotsenmodus: Freigaben gibt der Spieler
 var road_side := "gehweg"        # Querschnitt neuer Straßen (Catalog.SIDES)
+var sandbox := false             # Sandkasten: Bauen kostet nichts, Geld ist unbegrenzt
 var traffic_demand := 0      # Landungen und Starts in der letzten Spielstunde
 var day_income := 0
 var last_day := 0
@@ -102,8 +104,16 @@ static func fmt_short(v: int) -> String:
 
 
 func _spend(amount: int) -> void:
+	if sandbox and amount > 0:
+		money_changed.emit(money)   # Sandkasten: Ausgaben werden nicht abgebucht
+		return
 	money -= amount
 	money_changed.emit(money)
+
+
+## Reicht das Geld? Im Sandkasten immer.
+func can_afford(cost: int) -> bool:
+	return sandbox or cost <= money
 
 
 var income_cb: Callable          # Betrieb: Einnahmen nach Bereich zählen (Bereich, Betrag)
@@ -227,7 +237,7 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	if Catalog.has_sides(kind) and not Catalog.SIDES.has(side):
 		side = road_side
 	var cost := 0 if free else line_cost(kind, samples, side)
-	if cost > money:
+	if not can_afford(cost):
 		toast.emit("Nicht genug Geld: " + fmt_money(cost) + " nötig")
 		return {}
 	var check := {"why": "", "decor": [], "junctions": []}
@@ -246,8 +256,15 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	if Catalog.is_wall(kind):
 		rec["floor"] = view_floor
 		(rec["node"] as Node3D).position.y = float(view_floor) * Catalog.FLOOR_H
+		_apply_interior(rec["node"], true)
 		if not wall_cuts(rec).is_empty() and not (rec.get("hall", {}) as Dictionary).is_empty():
 			refresh_walls(rec["hall"], view_floor)
+		_apply_visibility(rec)
+	elif Catalog.is_floor_line(kind):
+		# Kofferband: auf der gezeigten Ebene, wenn es in einer Halle liegt
+		var fl := view_floor if interior_view and not hall_at(samples[0]).is_empty() else 0
+		rec["floor"] = fl
+		(rec["node"] as Node3D).position.y = float(fl) * Catalog.FLOOR_H
 		_apply_visibility(rec)
 	_spend(cost)
 	var group := [rec]
@@ -311,7 +328,7 @@ func can_upgrade(rec: Dictionary, new_kind: String, flip: bool = false, side: St
 	if kind == new_kind and flip == bool(rec.get("flip", false)) and side == String(rec.get("side", "")):
 		return "Ist schon " + Catalog.label(kind)
 	var extra := upgrade_cost(rec, new_kind, side)
-	if extra > money:
+	if not can_afford(extra):
 		return "Nicht genug Geld: " + fmt_money(extra) + " nötig"
 	# breiterer Weg darf nicht in Gebäude ragen (Deko wird weggeräumt)
 	var w: float = Catalog.LINES[new_kind]["width"]
@@ -422,7 +439,7 @@ func _ensure_grid() -> void:
 	for li in range(lines.size()):
 		var l: Dictionary = lines[li]
 		var k: String = l["kind"]
-		if Catalog.utility_of(k) != "" or Catalog.is_wall(k):
+		if Catalog.utility_of(k) != "" or Catalog.is_floor_line(k):
 			continue
 		var s: PackedVector3Array = l["samples"]
 		for j in range(s.size()):
@@ -440,7 +457,7 @@ func check_line(kind: String, samples: PackedVector3Array) -> Dictionary:
 		if not on_map(v):
 			out["why"] = "Außerhalb der Karte"
 			return out
-	if Catalog.utility_of(kind) != "" or Catalog.is_wall(kind) or samples.size() < 2:
+	if Catalog.utility_of(kind) != "" or Catalog.is_floor_line(kind) or samples.size() < 2:
 		return out
 	if Catalog.is_marking(kind):
 		# Rollführungslinie: nur auf Vorfeld oder Rollweg, darf alles kreuzen
@@ -622,7 +639,7 @@ func _apply_visibility(l: Dictionary) -> void:
 	var node := l["node"] as Node3D
 	if not is_instance_valid(node):
 		return
-	if Catalog.is_wall(kind):
+	if Catalog.is_floor_line(kind):
 		node.visible = (floor_of(l) == view_floor) if interior_view else floor_of(l) >= 0
 		return
 	var basement := interior_view and view_floor < 0
@@ -753,6 +770,7 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 	var i := values.find(cur)
 	var v: Variant = values[(i + dir + values.size()) % values.size()]
 	var cost := 0
+	var move_to: Array = []
 	if rec["id"] == "halle":
 		var area := (rec["rect"] as Rect2).get_area()
 		if key == "etagen":
@@ -772,8 +790,26 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 			cost = int(area * float(Catalog.ITEMS["halle"]["cost_m2"]) * 0.6) * (1 if bool(v) else -1)
 	if rec["id"] == "parkhaus" and key == "etagen":
 		cost = 70000 * (int(v) - int(cur))
-	if cost > money:
+	if rec["id"] == "fluggastbruecke" and key == "steg":
+		# Rotunde nach außen verschieben; der Steg darf über Straßen und Betriebsstraßen gehen
+		var anchor := bridge_anchor(rec)
+		var np := anchor + bridge_normal(rec) * float(int(v))
+		var nr := footprint("fluggastbruecke", np, int(rec["rot"]))
+		for it: Dictionary in items:
+			if it != rec and not Catalog.is_inside(String(it["id"])) and not String(it["id"]).begins_with("stand") \
+					and nr.grow(-0.05).intersects(it["rect"]):
+				return "Die Rotunde stößt dort an: " + Catalog.label(String(it["id"]))
+		var on_line := _rect_on_lines(nr, "vorfeld")
+		if on_line != "":
+			return "Die Rotunde stünde auf einem Weg – anderen Steg wählen"
+		cost = 9000 * (int(v) - int(cur))
+		move_to = [np, nr]
+	if not can_afford(cost):
 		return "Nicht genug Geld: " + fmt_money(cost) + " nötig"
+	if not move_to.is_empty():
+		rec["pos"] = move_to[0]
+		rec["rect"] = move_to[1]
+		(rec["node"] as Node3D).position = move_to[0]
 	if not rec.has("opts"):
 		rec["opts"] = {}
 	rec["opts"][key] = v
@@ -886,7 +922,7 @@ static func hall_rect(a: Vector3, b: Vector3) -> Rect2:
 func _rect_on_lines(r: Rect2, on: String) -> String:
 	for l: Dictionary in lines:
 		var kind: String = l["kind"]
-		if kind == "gehweg" or kind == on or Catalog.utility_of(kind) != "" or Catalog.is_wall(kind) or Catalog.is_marking(kind):
+		if kind == "gehweg" or kind == on or Catalog.utility_of(kind) != "" or Catalog.is_floor_line(kind) or Catalog.is_marking(kind):
 			continue
 		var b: Rect2 = l["bounds"]
 		if not b.intersects(r):
@@ -937,6 +973,18 @@ func hall_side(p: Vector3) -> Array:
 
 
 const BRIDGE_OFF := 4.8   # Mitte der Rotunde vor der Fassade (Treppenturm liegt dazwischen)
+
+
+## Außennormale einer Brücke (zeigt von der Fassade weg).
+static func bridge_normal(rec: Dictionary) -> Vector3:
+	return Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
+
+
+## Wo die Brücke ohne Steg stünde (am Treppenturm vor der Fassade). Mit Steg steht die Rotunde
+## weiter draußen, z. B. jenseits einer Straße.
+func bridge_anchor(rec: Dictionary) -> Vector3:
+	var steg := float(int(opt(rec, "steg")))
+	return (rec["pos"] as Vector3) - bridge_normal(rec) * steg
 
 ## Fluggastbrücke einrasten: bündig vor die nächste Außenwand, auf Höhe eines Gates innen,
 ## sonst im 1-m-Raster. Rückgabe [Lage, Drehung] oder leer.
@@ -1123,7 +1171,7 @@ func facade_cuts(hall: Dictionary) -> Array:
 			3:
 				out.append([Vector2(rc.x, hr.size.y * 0.5), r.size.x - 0.2, 3.35])
 	for b: Dictionary in items_of("fluggastbruecke"):
-		var hs := hall_side(b["pos"])
+		var hs := hall_side(bridge_anchor(b))
 		if hs.is_empty() or not is_same(hs[0], hall):
 			continue
 		var c: Vector3 = hs[2]
@@ -1201,7 +1249,7 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 				return "Hier ist schon eine " + Catalog.label(id)
 		if not on_map(mp):
 			return "Außerhalb der Karte"
-		if int(Catalog.ITEMS[id]["cost"]) > money:
+		if not can_afford(int(Catalog.ITEMS[id]["cost"])):
 			return "Nicht genug Geld"
 		return ""
 	if id == "befeuerungsstation" and runway_dist(pos) > 450.0:
@@ -1257,7 +1305,7 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 		if on_line != "":
 			return on_line
 	var cost: int = def["cost"]
-	if cost > money:
+	if not can_afford(cost):
 		return "Nicht genug Geld"
 	return ""
 
@@ -1308,14 +1356,14 @@ func can_place_hall(r: Rect2) -> String:
 	var on_line := _rect_on_lines(r, "")
 	if on_line != "":
 		return on_line
-	if hall_cost(r) > money:
+	if not can_afford(hall_cost(r)):
 		return "Nicht genug Geld"
 	return ""
 
 
 func build_hall(r: Rect2, free: bool = false, opts: Dictionary = {}) -> Dictionary:
 	var cost := 0 if free else hall_cost(r)
-	if cost > money:
+	if not can_afford(cost):
 		toast.emit("Nicht genug Geld")
 		return {}
 	var node := Factory.make_hall(r.size.x, r.size.y, opts)
@@ -1335,7 +1383,7 @@ func build_hall(r: Rect2, free: bool = false, opts: Dictionary = {}) -> Dictiona
 
 func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Dictionary = {}, floor: int = -99) -> Dictionary:
 	var cost: int = 0 if free else int(Catalog.ITEMS[id]["cost"])
-	if cost > money:
+	if not can_afford(cost):
 		toast.emit("Nicht genug Geld")
 		return {}
 	if bool(Catalog.ITEMS[id].get("bridge", false)):
@@ -1364,7 +1412,7 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 	if id == "eingang" and rec.has("hall"):
 		queue_facade(rec["hall"])
 	elif bool(Catalog.ITEMS[id].get("bridge", false)):
-		var hsb := hall_side(rec["pos"])
+		var hsb := hall_side(bridge_anchor(rec))
 		if not hsb.is_empty():
 			queue_facade(hsb[0])
 	items.append(rec)
@@ -1467,6 +1515,144 @@ func zone_at(hall: Dictionary, p: Vector2, f: int) -> String:
 	return ""
 
 
+## Flächenabriss: alles im Rechteck (auf der gezeigten Ebene). Hallen nur, wenn sie ganz drin liegen.
+func area_victims(r: Rect2) -> Array:
+	var out := []
+	for it: Dictionary in items:
+		var id: String = it["id"]
+		var ir: Rect2 = it["rect"]
+		if id == "halle":
+			if r.encloses(ir):
+				out.append(it)
+		elif Catalog.is_inside(id):
+			if interior_view and floor_of(it) == view_floor and (r.has_point(ir.get_center()) if not Catalog.is_zone(id) else r.encloses(ir)):
+				if not out.has(it.get("hall", {})):
+					out.append(it)
+		elif not (interior_view and view_floor < 0) and r.has_point(ir.get_center()):
+			out.append(it)
+	for l: Dictionary in lines:
+		var kind: String = l["kind"]
+		if Catalog.utility_of(kind) != "" and not utility_view:
+			continue
+		if Catalog.is_floor_line(kind) and interior_view and floor_of(l) != view_floor:
+			continue
+		if Catalog.is_wall(kind) and not interior_view:
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		var inside := 0
+		for v: Vector3 in sm:
+			if r.has_point(Vector2(v.x, v.z)):
+				inside += 1
+		if inside * 2 >= sm.size():
+			out.append(l)
+	return out
+
+
+func demolish_area(r: Rect2) -> int:
+	var n := 0
+	for rec: Dictionary in area_victims(r):
+		if rec in items or rec in lines:
+			remove(rec, 0.5)
+			n += 1
+	return n
+
+
+## Raum-Werkzeug (wie in Aufbauspielen mit Grundriss): Rechteck auf der gezeigten Ebene einer Halle.
+## Wände entstehen auf allen Seiten, die nicht an der Außenwand oder einer bestehenden Wand liegen,
+## eine Tür auf der längsten neuen Seite (Mitte, sonst versetzt), optional ein Bereich darüber.
+## Gibt "" oder den Grund zurück.
+func room_problem(r: Rect2) -> String:
+	if r.size.x < 3.0 or r.size.y < 3.0:
+		return "Raum mindestens 3 × 3 m"
+	var hall := hall_for_rect(r)
+	if hall.is_empty():
+		return "Räume nur innerhalb einer Terminalhalle"
+	if view_floor >= hall_levels(hall) or (view_floor < 0 and not hall_basement(hall)):
+		return "Diese Halle hat keine " + floor_name(view_floor)
+	return ""
+
+
+func room_edges(r: Rect2) -> Array:
+	var hall := hall_for_rect(r)
+	var hr: Rect2 = hall.get("rect", Rect2())
+	var out := []
+	var corners := [Vector2(r.position.x, r.position.y), Vector2(r.end.x, r.position.y), Vector2(r.end.x, r.end.y), Vector2(r.position.x, r.end.y)]
+	for i in range(4):
+		var a: Vector2 = corners[i]
+		var b: Vector2 = corners[(i + 1) % 4]
+		var horizontal := absf(a.y - b.y) < 0.01
+		# an der Außenwand: keine Innenwand nötig
+		if horizontal and (absf(a.y - hr.position.y) < 0.6 or absf(a.y - hr.end.y) < 0.6):
+			continue
+		if not horizontal and (absf(a.x - hr.position.x) < 0.6 or absf(a.x - hr.end.x) < 0.6):
+			continue
+		# schon eine Wand auf dieser Linie, die die Seite ganz abdeckt?
+		var covered := false
+		for l: Dictionary in walls_of(hall):
+			if floor_of(l) != view_floor:
+				continue
+			var sm: PackedVector3Array = l["samples"]
+			var la := Vector2(sm[0].x, sm[0].z)
+			var lb := Vector2(sm[sm.size() - 1].x, sm[sm.size() - 1].z)
+			if horizontal and absf(la.y - a.y) < 0.3 and absf(lb.y - a.y) < 0.3:
+				covered = covered or (minf(la.x, lb.x) <= minf(a.x, b.x) + 0.3 and maxf(la.x, lb.x) >= maxf(a.x, b.x) - 0.3)
+			elif not horizontal and absf(la.x - a.x) < 0.3 and absf(lb.x - a.x) < 0.3:
+				covered = covered or (minf(la.y, lb.y) <= minf(a.y, b.y) + 0.3 and maxf(la.y, lb.y) >= maxf(a.y, b.y) - 0.3)
+		if not covered:
+			# Enden an der Außenwand knapp nach innen ziehen (sonst liegt der Punkt nicht in der Halle)
+			var lo := hr.grow(-0.05)
+			a = Vector2(clampf(a.x, lo.position.x, lo.end.x), clampf(a.y, lo.position.y, lo.end.y))
+			b = Vector2(clampf(b.x, lo.position.x, lo.end.x), clampf(b.y, lo.position.y, lo.end.y))
+			out.append([Vector3(a.x, 0, a.y), Vector3(b.x, 0, b.y)])
+	return out
+
+
+func room_cost(r: Rect2, zone_id: String) -> int:
+	var total := 0
+	for e: Array in room_edges(r):
+		total += line_cost("innenwand", PackedVector3Array([e[0], e[1]]))
+	total += int(Catalog.ITEMS["tuer"]["cost"])
+	if zone_id != "":
+		total += zone_cost(zone_id, r)
+	return total
+
+
+func build_room(r: Rect2, zone_id: String, door_art: String) -> String:
+	var why := room_problem(r)
+	if why != "":
+		return why
+	if not can_afford(room_cost(r, zone_id)):
+		return "Nicht genug Geld"
+	var edges := room_edges(r)
+	var built := []
+	for e: Array in edges:
+		var wy := can_place_wall(e[0], e[1])
+		if wy != "":
+			continue
+		var rec := build_line("innenwand", [e[0], e[1]])
+		if not rec.is_empty():
+			built.append(rec)
+	if zone_id != "":
+		build_zone(zone_id, r)
+	# Tür: längste neue Wand, Mitte; geht das nicht, ein Stück daneben
+	built.sort_custom(func(x: Dictionary, y: Dictionary) -> bool: return Spline.length(x["samples"]) > Spline.length(y["samples"]))
+	for w: Dictionary in built:
+		var sm: PackedVector3Array = w["samples"]
+		var a := sm[0]
+		var b := sm[sm.size() - 1]
+		var length := a.distance_to(b)
+		if length < 3.0:
+			continue
+		var rot := 0 if absf(b.z - a.z) < 0.01 else 1
+		for f: float in [0.5, 0.3, 0.7, 0.15, 0.85]:
+			var p := a.lerp(b, f)
+			p = Vector3(snappedf(p.x, 0.5), 0, snappedf(p.z, 0.5))
+			if can_place("tuer", p, rot) == "":
+				build_item("tuer", p, rot, false, {"art": door_art})
+				return ""
+	return "" if not built.is_empty() else "Hier stehen schon alle Wände"
+
+
 static func zone_rect(a: Vector3, b: Vector3) -> Rect2:
 	var x0 := floorf(minf(a.x, b.x))
 	var z0 := floorf(minf(a.z, b.z))
@@ -1488,7 +1674,7 @@ func can_place_zone(id: String, r: Rect2, f: int = -99) -> String:
 		return "Diese Halle hat keine " + floor_name(fl)
 	if r.size.x < 1.0 or r.size.y < 1.0:
 		return "Zu klein"
-	if zone_cost(id, r) > money:
+	if not can_afford(zone_cost(id, r)):
 		return "Nicht genug Geld"
 	return ""
 
@@ -1496,7 +1682,7 @@ func can_place_zone(id: String, r: Rect2, f: int = -99) -> String:
 func build_zone(id: String, r: Rect2, free: bool = false, f: int = -99) -> Dictionary:
 	var fl := view_floor if f == -99 else f
 	var cost := 0 if free else zone_cost(id, r)
-	if cost > money:
+	if not can_afford(cost):
 		toast.emit("Nicht genug Geld")
 		return {}
 	var node := Factory.make_zone(id, r.size.x, r.size.y)
@@ -1530,6 +1716,81 @@ func items_of(id: String) -> Array:
 
 
 # ---------------------------------------------------------------- Versorgung (Strom, Wasser)
+
+## Check-in-Schalter einer Halle, die über Kofferbänder an eine Gepäcksortierung (oder einen
+## Gepäckumschlag) angeschlossen sind: Instanz-ID des Schalters -> true.
+func checkins_linked(hall: Dictionary) -> Dictionary:
+	var out := {}
+	var belts := []
+	for l: Dictionary in lines:
+		if l["kind"] == "kofferband":
+			belts.append(l)
+	if belts.is_empty():
+		return out
+	var sorters := []
+	var desks := []
+	for it: Dictionary in inside_of(hall):
+		if it["id"] == "gepaeckanlage":
+			sorters.append(it)
+		elif it["id"] == "checkin":
+			desks.append(it)
+	sorters.append_array(items_of("gepaeckumschlag"))
+	var seen := {}
+	var stack := []
+	for i in range(belts.size()):
+		for so: Dictionary in sorters:
+			if not seen.has(i) and floor_of(belts[i]) == floor_of(so) and _belt_near(belts[i], so["rect"], 1.5):
+				seen[i] = true
+				stack.append(i)
+	while not stack.is_empty():
+		var i: int = stack.pop_back()
+		for j in range(belts.size()):
+			if not seen.has(j) and floor_of(belts[i]) == floor_of(belts[j]) and _belts_touch(belts[i], belts[j]):
+				seen[j] = true
+				stack.append(j)
+	for d: Dictionary in desks:
+		for i: int in seen:
+			if floor_of(belts[i]) == floor_of(d) and _belt_near(belts[i], d["rect"], 0.9):
+				out[(d["node"] as Node).get_instance_id()] = true
+				break
+	# Schalter Seite an Seite bilden ein durchgehendes Sammelband
+	var grew := true
+	while grew:
+		grew = false
+		for d: Dictionary in desks:
+			var did := (d["node"] as Node).get_instance_id()
+			if out.has(did):
+				continue
+			for o: Dictionary in desks:
+				if out.has((o["node"] as Node).get_instance_id()) and int(o["rot"]) % 2 == int(d["rot"]) % 2 \
+						and floor_of(o) == floor_of(d) and (d["rect"] as Rect2).grow(0.3).intersects(o["rect"]):
+					out[did] = true
+					grew = true
+					break
+	return out
+
+
+func _belt_near(l: Dictionary, r: Rect2, grow: float) -> bool:
+	var g := r.grow(grow)
+	for v: Vector3 in (l["samples"] as PackedVector3Array):
+		if g.has_point(Vector2(v.x, v.z)):
+			return true
+	return false
+
+
+func _belts_touch(a: Dictionary, b: Dictionary) -> bool:
+	var sa: PackedVector3Array = a["samples"]
+	var sb: PackedVector3Array = b["samples"]
+	for e: Vector3 in [sa[0], sa[sa.size() - 1]]:
+		for v: Vector3 in sb:
+			if Vector2(e.x - v.x, e.z - v.z).length() < 1.3:
+				return true
+	for e: Vector3 in [sb[0], sb[sb.size() - 1]]:
+		for v: Vector3 in sa:
+			if Vector2(e.x - v.x, e.z - v.z).length() < 1.3:
+				return true
+	return false
+
 
 func _touches_item(l: Dictionary, it: Dictionary) -> bool:
 	var r: Rect2 = (it["rect"] as Rect2).grow(2.5)
@@ -1843,7 +2104,7 @@ func remove(rec: Dictionary, refund: float = 0.5) -> void:
 	if rec.get("id", "") == "eingang":
 		facade_hall = rec.get("hall", {})
 	elif rec.get("id", "") == "fluggastbruecke":
-		var hsr := hall_side(rec["pos"])
+		var hsr := hall_side(bridge_anchor(rec))
 		if not hsr.is_empty():
 			facade_hall = hsr[0]
 	_remove_one(rec, refund)
@@ -1873,7 +2134,8 @@ func _remove_one(rec: Dictionary, refund: float) -> void:
 	if rec["type"] == "line":
 		_grid_dirty = true
 	var cost: int = rec["cost"]
-	_spend(-int(float(cost) * refund))
+	if not sandbox:
+		_spend(-int(float(cost) * refund))
 
 
 func undo_last() -> void:
@@ -1987,6 +2249,10 @@ func load_game() -> bool:
 		if not rec.is_empty():
 			rec["cost"] = int(l.get("cost", 0))
 			rec["flip"] = bool(l.get("flip", false))
+			if Catalog.is_floor_line(String(l["kind"])) and not Catalog.is_wall(String(l["kind"])):
+				rec["floor"] = int(l.get("floor", 0))
+				(rec["node"] as Node3D).position.y = float(rec["floor"]) * Catalog.FLOOR_H
+				_apply_visibility(rec)
 			if Catalog.has_sides(String(l["kind"])):
 				# vor 0.15 gespeicherte Straßen bekommen Gehwege
 				var sd := String(l.get("side", "gehweg"))

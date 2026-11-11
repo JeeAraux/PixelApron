@@ -58,6 +58,9 @@ var mat_tint_bad: StandardMaterial3D
 var mat_guide: StandardMaterial3D
 var mat_upgrade: StandardMaterial3D
 var snapping := true          # Winkel und Länge einrasten (Shift kehrt es um)
+var room_zone := ""           # Raum-Werkzeug: Bereich, der mit angelegt wird ("" = keiner)
+var room_door := "automatik"  # Raum-Werkzeug: Türart
+var area_from := Vector3.INF  # Flächenabriss: Startecke beim Ziehen
 
 
 func setup(g: GameState, r: Node3D) -> void:
@@ -158,7 +161,8 @@ func set_snapping(on: bool) -> void:
 
 
 func is_drawing() -> bool:
-	return (is_line_tool() or is_rect_tool() or tool == "kopieren") and not points.is_empty()
+	return ((is_line_tool() or is_rect_tool() or tool == "kopieren" or tool == "raum") and not points.is_empty()) \
+		or area_from != Vector3.INF
 
 
 func set_tool(id: String) -> void:
@@ -290,6 +294,16 @@ func on_click(p: Vector3) -> void:
 		var ctrl: String = roads.cycle_control(p)
 		game.toast.emit("Kreuzung: " + String(roads.CONTROL_NAMES.get(ctrl, "")) if ctrl != "" else "Klicke auf eine Kreuzung (mindestens drei Straßen)")
 		_refresh()
+	elif tool == "raum":
+		if points.is_empty():
+			points.append(hover)
+			_refresh()
+			return
+		var rr := room_rect(points[0], hover)
+		var why := game.build_room(rr, room_zone, room_door)
+		game.toast.emit(why if why != "" else "Raum %d × %d m gebaut" % [int(rr.size.x), int(rr.size.y)])
+		points.clear()
+		_refresh()
 	elif tool == "abriss":
 		_refresh()
 		if not target.is_empty():
@@ -298,9 +312,52 @@ func on_click(p: Vector3) -> void:
 			game.toast.emit(game.describe(t) + " abgerissen")
 			game.remove(t, 0.5)
 			_refresh()
+		elif area_from == Vector3.INF:
+			area_from = hover   # auf freiem Boden: Fläche aufziehen
+		else:
+			_finish_area()
+
+
+## Maustaste losgelassen: Rechtecke und Wände, die man aufgezogen hat, werden gebaut (wie in
+## Aufbauspielen mit Grundriss). Ohne Ziehen bleibt es beim Klicken von Ecke zu Ecke.
+func on_release(p: Vector3) -> void:
+	if area_from != Vector3.INF and tool == "abriss":
+		if Vector2(p.x - area_from.x, p.z - area_from.z).length() > 2.0:
+			hover = p
+			_finish_area()
+		return
+	if points.size() != 1:
+		return
+	var drag := (is_rect_tool() or tool == "raum" or (is_line_tool() and Catalog.is_wall(tool)) or (tool == "kopieren" and clip.is_empty()))
+	if drag and Vector2(p.x - (points[0] as Vector3).x, p.z - (points[0] as Vector3).z).length() > 1.5:
+		on_click(p)
+
+
+func _finish_area() -> void:
+	var r := _area_rect()
+	area_from = Vector3.INF
+	var n := game.demolish_area(r)
+	game.toast.emit("%d Teile abgerissen" % n if n > 0 else "Hier war nichts zum Abreißen")
+	_refresh()
+
+
+func _area_rect() -> Rect2:
+	var a := area_from
+	var b := hover
+	return Rect2(minf(a.x, b.x), minf(a.z, b.z), absf(a.x - b.x), absf(a.z - b.z))
+
+
+static func room_rect(a: Vector3, b: Vector3) -> Rect2:
+	var x0 := snappedf(minf(a.x, b.x), 1.0)
+	var z0 := snappedf(minf(a.z, b.z), 1.0)
+	return Rect2(x0, z0, maxf(snappedf(maxf(a.x, b.x), 1.0) - x0, 1.0), maxf(snappedf(maxf(a.z, b.z), 1.0) - z0, 1.0))
 
 
 func on_right() -> void:
+	if area_from != Vector3.INF:
+		area_from = Vector3.INF
+		_refresh()
+		return
 	if tool == "kopieren" and not clip.is_empty() and points.is_empty():
 		clip = {}
 		game.toast.emit("Blaupause verworfen")
@@ -330,6 +387,7 @@ func rotate() -> void:
 
 
 func cancel() -> void:
+	area_from = Vector3.INF
 	points.clear()
 	start_tan = Vector3.ZERO
 	ref_dir = Vector3.ZERO
@@ -481,6 +539,8 @@ func finish() -> void:
 # ---------------------------------------------------------------- Raster und Einrasten
 
 func _snap(p: Vector3) -> Vector3:
+	if tool == "raum":
+		return Vector3(snappedf(p.x, 1.0), 0.0, snappedf(p.z, 1.0))
 	if is_rect_tool():
 		var g: float = Catalog.ITEMS[tool]["grid"]
 		return Vector3(snappedf(p.x, g), 0.0, snappedf(p.z, g))
@@ -552,6 +612,8 @@ func _snap_door(p: Vector3) -> Vector3:
 ## zum letzten Punkt (Shift hält den Winkel frei) und auf ganze Meter.
 func _snap_line(p: Vector3) -> Vector3:
 	snap_kind = ""
+	if tool == "kofferband":
+		return _snap_belt(p)
 	var util := Catalog.utility_of(tool)
 	var group: Array = SNAP_GROUPS.get(tool, [tool])
 	var candidates := []
@@ -634,6 +696,51 @@ func _snap_line(p: Vector3) -> Vector3:
 	return Vector3(snappedf(p.x, 0.5), 0.0, snappedf(p.z, 0.5))
 
 
+## Kofferband: rastet an den Seiten der Check-in-Schalter, an den Kanten der Gepäcksortierung und an
+## anderen Kofferbändern ein; sonst gerade Stücke in 15-Grad-Schritten.
+func _snap_belt(p: Vector3) -> Vector3:
+	snap_tan = Vector3.ZERO
+	var best := 2.2
+	var q := Vector3.INF
+	var hall := game.hall_at(p)
+	var spots := []
+	if not hall.is_empty():
+		for it: Dictionary in game.inside_of(hall):
+			if GameState.floor_of(it) != game.view_floor:
+				continue
+			var xf := (it["node"] as Node3D).transform
+			if it["id"] == "checkin":
+				for sx: float in [-3.45, 3.45]:
+					spots.append(xf * Vector3(sx, 0, -1.16))
+			elif it["id"] == "gepaeckanlage":
+				var r: Rect2 = it["rect"]
+				var c := r.get_center()
+				for e: Vector2 in [Vector2(r.position.x - 0.5, c.y), Vector2(r.end.x + 0.5, c.y), Vector2(c.x, r.position.y - 0.5), Vector2(c.x, r.end.y + 0.5)]:
+					spots.append(Vector3(e.x, 0, e.y))
+	for l: Dictionary in game.lines:
+		if l["kind"] != "kofferband" or GameState.floor_of(l) != (game.view_floor if game.interior_view else 0):
+			continue
+		var sm: PackedVector3Array = l["samples"]
+		spots.append(sm[0])
+		spots.append(sm[sm.size() - 1])
+	for sp: Vector3 in spots:
+		var d := Vector2(sp.x - p.x, sp.z - p.z).length()
+		if d < best:
+			best = d
+			q = Vector3(sp.x, 0, sp.z)
+	if q != Vector3.INF:
+		snap_kind = "ende"
+		return q
+	if not points.is_empty() and snapping != Input.is_key_pressed(KEY_SHIFT):
+		var last: Vector3 = points[points.size() - 1]
+		var ref := Vector3.RIGHT
+		if points.size() >= 2:
+			var pr: Vector3 = points[points.size() - 2]
+			ref = Vector3(last.x - pr.x, 0.0, last.z - pr.z).normalized()
+		return _snap_dir(last, ref, p)
+	return Vector3(snappedf(p.x, 0.5), 0.0, snappedf(p.z, 0.5))
+
+
 ## Richtung des nächsten Weges derselben Art in der Nähe (oder Null).
 func _nearby_dir(p: Vector3, max_d: float) -> Vector3:
 	var group: Array = SNAP_GROUPS.get(tool, [tool])
@@ -711,15 +818,25 @@ func _line_state(pts: Array) -> Dictionary:
 		why = "Zu kurz: mindestens %d m" % int(min_len)
 	elif minr < need:
 		why = "Kurve zu eng: Radius %d m, nötig sind %d m" % [int(minr), int(need)]
-	elif cost > game.money:
+	elif not game.can_afford(cost):
 		why = "Nicht genug Geld"
 	return {"ok": why == "", "why": why, "samples": samples, "length": length, "minr": minr, "cost": cost,
 		"decor": (check["decor"] as Array).size(), "junctions": check["junctions"]}
 
 
+## Höhe der gezeigten Ebene für Vorschauen von Einrichtung, Wänden und Bereichen.
+func _lift() -> float:
+	if not game.interior_view:
+		return 0.0
+	if tool == "raum" or Catalog.is_floor_line(tool) or (Catalog.ITEMS.has(tool) and Catalog.is_inside(tool)):
+		return float(game.view_floor) * Catalog.FLOOR_H
+	return 0.0
+
+
 func _refresh() -> void:
 	preview.mesh = null
 	preview.position = Vector3.ZERO
+	marker_root.position = Vector3(0, _lift(), 0)
 	for c in marker_root.get_children():
 		c.queue_free()
 	if ghost != null:
@@ -738,6 +855,8 @@ func _refresh() -> void:
 		_refresh_item()
 	elif tool == "abriss":
 		_refresh_demolish()
+	elif tool == "raum":
+		_refresh_room()
 	elif tool == "kopieren":
 		_refresh_copy()
 	elif tool == "spuren":
@@ -810,6 +929,7 @@ func _refresh_line() -> void:
 	var ok := bool(st["ok"])
 	if Catalog.utility_of(tool) != "" or Catalog.is_wall(tool):
 		preview.mesh = Spline.ribbon(flat, w, y + 0.25)
+		preview.position.y = _lift()
 		preview.material_override = mat_ok if ok else mat_bad
 	else:
 		# Vorschau im echten Aussehen des Weges, getönt
@@ -949,9 +1069,9 @@ func _refresh_rect() -> void:
 func _refresh_zone(def: Dictionary) -> void:
 	var title := String(def["name"]) + " anlegen"
 	if has_hover:
-		_marker(hover + Vector3(0, float(game.view_floor) * Catalog.FLOOR_H, 0), 1.0)
+		_marker(hover, 1.0)
 	for p: Vector3 in points:
-		_marker(p + Vector3(0, float(game.view_floor) * Catalog.FLOOR_H, 0), 1.4)
+		_marker(p, 1.4)
 	var per := "%s pro m²" % GameState.fmt_money(int(def.get("cost_m2", 0)))
 	if points.is_empty() or not has_hover:
 		info.emit(title, String(def.get("desc", "")) + "\nKlicke die erste Ecke (" + game.floor_name(game.view_floor) + ").\n" + per, 0)
@@ -977,7 +1097,7 @@ func _refresh_item() -> void:
 		info.emit(title, head, 0)
 		return
 	ghost.visible = true
-	ghost.position = hover
+	ghost.position = hover + Vector3(0, _lift(), 0)
 	ghost.rotation.y = float(rot) * PI * 0.5
 	reason = game.can_place(tool, hover, rot)
 	_paint(ghost, mat_ok if reason == "" else mat_bad)
@@ -989,14 +1109,72 @@ func _refresh_item() -> void:
 	info.emit(title, body, 1 if reason == "" else 2)
 
 
+## Vorschau des Raums: Boden, neue Wände, Tür, Kosten.
+func _refresh_room() -> void:
+	var title := "Raum anlegen"
+	if has_hover:
+		_marker(hover, 1.0)
+	for p: Vector3 in points:
+		_marker(p, 1.4)
+	var zone_txt := "ohne Bereich" if room_zone == "" else Catalog.label(room_zone)
+	if points.is_empty() or not has_hover:
+		info.emit(title, "Ziehe ein Rechteck in einer Halle auf (oder klicke zwei Ecken). Wände entstehen ringsum, außer an der Außenwand und an vorhandenen Wänden, dazu eine Tür.\nAuf der %s · %s" % [game.floor_name(game.view_floor), zone_txt], 0)
+		steps.emit("Erste Ecke drücken und ziehen")
+		hint.emit("")
+		return
+	var r := room_rect(points[0], hover)
+	var why := game.room_problem(r)
+	var bm := BoxMesh.new()
+	bm.size = Vector3(maxf(r.size.x, 0.2), 0.2, maxf(r.size.y, 0.2))
+	preview.mesh = bm
+	preview.position = Vector3(r.get_center().x, _lift() + 0.15, r.get_center().y)
+	preview.material_override = mat_ok if why == "" else mat_bad
+	var edges := game.room_edges(r) if why == "" else []
+	for e: Array in edges:
+		var a: Vector3 = e[0]
+		var b: Vector3 = e[1]
+		var mi := MeshInstance3D.new()
+		var wb := BoxMesh.new()
+		var d := b - a
+		wb.size = Vector3(0.35, 2.4, d.length())
+		mi.mesh = wb
+		mi.material_override = mat_ok
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.basis = Basis.looking_at(d.normalized(), Vector3.UP)
+		mi.position = (a + b) * 0.5 + Vector3(0, 1.2, 0)
+		marker_root.add_child(mi)
+	var cost := game.room_cost(r, room_zone) if why == "" else 0
+	var tip := "%d × %d m" % [int(r.size.x), int(r.size.y)]
+	if why == "":
+		tip += " · %d Wände · %s" % [edges.size(), GameState.fmt_money(cost)]
+		info.emit(title, "%s, %s, Tür: %s\nLoslassen oder Klick baut den Raum" % [tip, zone_txt, String(GameState.OPTION_TEXT.get(room_door, room_door))], 1)
+		steps.emit("Loslassen baut den Raum · Rechtsklick bricht ab")
+	else:
+		tip += " · " + why
+		info.emit(title, why, 2)
+		steps.emit(why)
+	hint.emit(tip)
+
+
 func _refresh_demolish() -> void:
 	_clear_highlight()
+	if area_from != Vector3.INF and has_hover:
+		var r := _area_rect()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(maxf(r.size.x, 0.2), 0.3, maxf(r.size.y, 0.2))
+		preview.mesh = bm
+		preview.position = Vector3(r.get_center().x, float(game.view_floor if game.interior_view else 0) * Catalog.FLOOR_H + 0.2, r.get_center().y)
+		preview.material_override = mat_bad
+		var vic := game.area_victims(r)
+		info.emit("Fläche abreißen", "%d Teile im Rechteck · Loslassen reißt ab, Rechtsklick bricht ab" % vic.size(), 2)
+		hint.emit("%d Teile" % vic.size())
+		return
 	if not has_hover:
-		info.emit("Abriss", "Klicke auf ein Gebäude oder einen Weg.", 0)
+		info.emit("Abriss", "Klicke auf ein Gebäude oder einen Weg, oder ziehe auf freiem Boden eine Fläche auf.", 0)
 		return
 	target = game.pick(hover)
 	if target.is_empty():
-		info.emit("Abriss", "Klicke auf ein Gebäude oder einen Weg.\nDu bekommst die Hälfte der Baukosten zurück.", 0)
+		info.emit("Abriss", "Klicke auf ein Gebäude oder einen Weg, oder drücke hier und ziehe eine Fläche auf.\nDu bekommst die Hälfte der Baukosten zurück.", 0)
 		return
 	_highlight(target)
 	var cost: int = target["cost"]
@@ -1023,6 +1201,15 @@ func _replace_flip(rec: Dictionary) -> bool:
 
 func _replace_side() -> String:
 	return game.road_side if Catalog.has_sides(tool) else ""
+
+
+## Raum-Werkzeug: Bereich und Türart wählen.
+func set_room_option(key: String, value: String) -> void:
+	if key == "bereich":
+		room_zone = value
+	elif key == "tuer":
+		room_door = value
+	_refresh()
 
 
 ## Querschnitt neuer Straßen wählen (Fahrbahn, Gehweg, Radweg, Allee).

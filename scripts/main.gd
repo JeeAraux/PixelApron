@@ -283,6 +283,7 @@ func _connect() -> void:
 	hud.draw_mode_selected.connect(builder.set_mode)
 	hud.snap_toggled.connect(builder.set_snapping)
 	hud.side_selected.connect(builder.set_side)
+	hud.room_option.connect(builder.set_room_option)
 	builder.side_changed.connect(hud.show_side)
 	builder.steps.connect(hud.set_steps)
 	hud.ops_ref = betrieb
@@ -342,6 +343,7 @@ func _start_scenario(key: String) -> void:
 	game.load_starter()
 	game.minutes = 6.0 * 60.0
 	betrieb.start_scenario(key)
+	_apply_sandbox()
 	traffic.dirty = true
 
 
@@ -362,6 +364,7 @@ func _arg(args: PackedStringArray, prefix: String, fallback: String) -> String:
 ## Ältere Spielstände: Bereiche im Terminal aus Wänden und Kontrolle ableiten.
 ## Wetter, Betrieb (Statistik, Verträge, Szenario) und Flotte aus dem Spielstand übernehmen.
 func _after_load() -> void:
+	_apply_sandbox.call_deferred()
 	for h: Dictionary in game.items_of("halle"):
 		terminal.auto_zones(h)
 	var ex: Dictionary = game.extra
@@ -452,6 +455,16 @@ func _apply_setting(key: String, v: Variant) -> void:
 			_update_grid()
 		"hilfe":
 			hud.set_help_visible(bool(v))
+		"sandkasten":
+			_apply_sandbox()
+
+
+## Sandkasten nach Einstellung, in Szenarien immer aus.
+func _apply_sandbox() -> void:
+	game.sandbox = bool(settings.get_value("sandkasten")) and betrieb.scenario == ""
+	hud.sandbox = game.sandbox
+	hud.set_money(game.money)
+	builder._refresh()
 
 
 func _update_grid() -> void:
@@ -548,8 +561,23 @@ func _on_floor_step(d: int) -> void:
 			game.set_view_floor(-1)
 		return
 	if d > 0 and game.view_floor >= game.floor_range().y:
-		game.set_interior_view(false)
-		return
+		# oberste Ebene: der Halle unter der Kamera (sonst der größten) ein Stockwerk aufsetzen
+		var h := game.hall_at(cam_rig.target)
+		if h.is_empty():
+			for it: Dictionary in game.items_of("halle"):
+				if h.is_empty() or (it["rect"] as Rect2).get_area() > (h["rect"] as Rect2).get_area():
+					h = it
+		if h.is_empty():
+			game.toast.emit("Erst eine Terminalhalle bauen")
+			return
+		if game.hall_levels(h) >= 3:
+			game.toast.emit("Höchstens drei Ebenen je Halle")
+			return
+		var why := game.cycle_option(h, "etagen", 1)
+		if why != "":
+			game.toast.emit(why)
+			return
+		game.toast.emit("Neue Ebene: " + game.floor_name(game.hall_levels(h) - 1) + " – Rolltreppe, Treppe oder Aufzug im Geschoss darunter verbinden")
 	game.set_view_floor(game.view_floor + d)
 
 
@@ -626,6 +654,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if not mb.pressed:
+			# Ziehen beenden (Räume, Hallen, Bereiche, Wände, Flächenabriss)
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				var rp: Variant = ground_at(mb.position)
+				if rp != null:
+					builder.on_release(rp)
 			return
 		hud.release_search()
 		if mb.button_index == MOUSE_BUTTON_LEFT:

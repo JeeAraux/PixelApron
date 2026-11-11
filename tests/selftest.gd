@@ -19,6 +19,13 @@ func run(main: Node) -> void:
 	main.set_process(false)
 	main.weather.force("klar")
 	var game = main.game
+	# Sandkasten prüfen, dann für die Geldtests ausschalten
+	game.sandbox = true
+	var m_sb: int = game.money
+	game.build_item("bank", Vector3(950, 0, 950), 0)
+	check(game.money == m_sb and game.can_afford(999999999999), "Sandkasten: Bauen kostet nichts")
+	game.undo_last()
+	game.sandbox = false
 	var b = main.builder
 	var lines0: int = game.lines.size()
 	var items0: int = game.items.size()
@@ -639,6 +646,77 @@ func run(main: Node) -> void:
 	if not stop_rec.is_empty():
 		game.remove(stop_rec, 1.0)
 	game.remove(rad_road, 1.0)
+
+	# 0.16: Sandkasten, Knicke, Brücken mit Steg, Ebenen, Räume, Kofferband, Flächenabriss
+	game.sandbox = true
+	var kn_a: Dictionary = game.build_line("strasse", [Vector3(700, 0, 560), Vector3(760, 0, 560)])
+	var kn_b: Dictionary = game.build_line("strasse", [Vector3(760, 0, 560), Vector3(800, 0, 590)])
+	rd2.ensure()
+	var bend_r := 0.0
+	for nd: Dictionary in rd2.nodes:
+		if (nd["pos"] as Vector3).distance_to(Vector3(760, 0, 560)) < 1.0:
+			bend_r = float(nd["radius"])
+	check(bend_r > 0.0, "Knick zwischen zwei Straßenstücken wird rund ausgebildet (%.1f m)" % bend_r)
+	game.remove(kn_a, 1.0)
+	game.remove(kn_b, 1.0)
+	var br0: Dictionary = game.items_of("fluggastbruecke")[0]
+	var br_pos: Vector3 = br0["pos"]
+	var br_anchor: Vector3 = game.bridge_anchor(br0)
+	check(game.cycle_option(br0, "steg", 1) == "" and (br0["pos"] as Vector3).distance_to(br_pos) > 11.0
+		and game.bridge_anchor(br0).distance_to(br_anchor) < 0.01, "Fluggastbrücke mit Steg: Rotunde weiter draußen")
+	tb.dirty = true
+	tb._analyze()
+	var br_ok := false
+	for bid: int in tb.bridges:
+		br_ok = br_ok or not (tb.bridges[bid]["gate"] as Dictionary).is_empty()
+	check(br_ok, "Brücke mit Steg findet ihr Gate")
+	game.cycle_option(br0, "steg", -1)
+	check((br0["pos"] as Vector3).distance_to(br_pos) < 0.01, "Steg wieder entfernt")
+	# Ebenen: über der obersten Ebene setzt der Pfeil der Halle ein Geschoss auf
+	var th: Dictionary = game.items_of("halle")[0]
+	game.set_interior_view(true)
+	main.cam_rig.target = Vector3((th["rect"] as Rect2).get_center().x, 0, (th["rect"] as Rect2).get_center().y)
+	main._on_floor_step(1)
+	check(game.hall_levels(th) == 2 and game.view_floor == 1, "Neue Ebene über den Pfeil (%d Ebenen)" % game.hall_levels(th))
+	b.set_tool("cafe")
+	b.on_move(Vector3(-60, 0, 0))
+	check(b.ghost != null and absf(b.ghost.position.y - Catalog.FLOOR_H) < 0.01, "Vorschau steht auf der oberen Ebene")
+	b.set_tool("")
+	game.set_view_floor(0)
+	game.cycle_option(th, "etagen", -1)
+	game.set_interior_view(false)
+	# Raum ziehen in einer neuen Halle, Kofferband vom Check-in zur Sortierung
+	var rh: Dictionary = game.build_hall(Rect2(-640, 640, 64, 40))
+	game.set_interior_view(true)
+	var doors0: int = game.items_of("tuer").size()
+	b.set_tool("raum")
+	b.room_zone = "bereich_personal"
+	b.on_move(Vector3(-600, 0, 640))
+	b.on_click(Vector3(-600, 0, 640))
+	b.on_move(Vector3(-576, 0, 658))
+	b.on_release(Vector3(-576, 0, 658))
+	check(game.walls_of(rh).size() == 2 and game.items_of("tuer").size() == doors0 + 1 and game.zones_of(rh).size() == 1,
+		"Raum aufgezogen: zwei Wände, Tür und Personalbereich")
+	game.build_item("gepaeckanlage", Vector3(-588, 0, 648), 0)
+	for x: float in [-628.0, -622.0, -616.0]:
+		game.build_item("checkin", Vector3(x, 0, 666.5), 0)
+	check(game.checkins_linked(rh).size() == 0, "Ohne Kofferband ist kein Schalter angeschlossen")
+	b.set_tool("kofferband")
+	b.set_mode("gerade")
+	b.on_move(Vector3(-612.4, 0, 665.3))
+	check(b.snap_kind == "ende", "Kofferband rastet an der Seite des Check-ins ein")
+	b.set_tool("")
+	game.build_line("kofferband", [Vector3(-612.55, 0, 665.34), Vector3(-606, 0, 665.34), Vector3(-606, 0, 648), Vector3(-592.5, 0, 648)])
+	check(game.checkins_linked(rh).size() == 3, "Kofferband verbindet alle drei Schalter mit der Sortierung")
+	var vic: int = game.area_victims(Rect2(-632, 662, 22, 8)).size()
+	check(vic >= 3, "Flächenabriss erfasst die Schalter (%d)" % vic)
+	b.set_tool("")
+	game.remove(rh, 1.0)
+	for l: Dictionary in game.lines.duplicate():
+		if l["kind"] == "kofferband":
+			game.remove(l, 1.0)
+	game.set_interior_view(false)
+	game.sandbox = false
 
 	# Rollführungslinie: nur auf Belag
 	var nl0: int = game.lines.size()

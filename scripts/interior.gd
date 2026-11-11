@@ -279,47 +279,78 @@ static func _entrance(n: Node3D, k: Kit, tuer: String) -> void:
 # ---------------------------------------------------------------- Check-in
 
 static func _checkin(n: Node3D, k: Kit) -> void:
-	# Rückwand mit Airline-Feld, Abtransportband für Koffer dahinter
-	k.box(Vector3(-3.0, 0, -1.5), Vector3(3.0, 2.9, -1.36), BRAND)
-	k.box(Vector3(-3.0, 2.2, -1.36), Vector3(3.0, 2.25, -1.34), YELLOW)
-	k.box(Vector3(-2.6, 2.35, -1.36), Vector3(2.6, 2.75, -1.33), Color(0.95, 0.95, 0.92, 0.3))
-	PixelFont.draw(k, "CHECK-IN", Vector3(0, 2.55, -1.32), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.05, BRAND)
-	k.box(Vector3(-3.0, 0, -1.34), Vector3(3.0, 0.42, -0.98), STEEL)
-	k.box(Vector3(-3.0, 0.42, -1.3), Vector3(3.0, 0.45, -1.02), DARK)
-	k.box(Vector3(-3.0, 0.0, -1.36), Vector3(-2.7, 0.9, -0.95), Color(0.3, 0.3, 0.32))
+	# Hinten: Sammelband auf Stahlgestell, das die Koffer seitlich zum Kofferband (Gepäcksortierung) bringt
+	k.box(Vector3(-3.0, 0.0, -1.42), Vector3(3.0, 0.06, -0.9), Color(0.3, 0.31, 0.33))
+	for x: float in [-2.85, -1.0, 1.0, 2.85]:
+		for z: float in [-1.36, -0.96]:
+			k.box(Vector3(x - 0.04, 0.06, z - 0.04), Vector3(x + 0.04, 0.4, z + 0.04), STEEL)
+	k.box(Vector3(-3.0, 0.38, -1.4), Vector3(3.0, 0.43, -0.92), STEEL)
+	k.box(Vector3(-3.0, 0.43, -1.34), Vector3(3.0, 0.45, -0.98), Color(0.1, 0.1, 0.11))
+	for x in range(-5, 6):
+		k.box(Vector3(float(x) * 0.55 - 0.02, 0.45, -1.34), Vector3(float(x) * 0.55 + 0.02, 0.452, -0.98), Color(0.2, 0.2, 0.21))
+	for z: float in [-1.4, -0.92]:
+		k.box(Vector3(-3.0, 0.45, z - 0.025), Vector3(3.0, 0.58, z + 0.025), CHROME)
 	var bags := MultiMeshInstance3D.new()
 	bags.name = "Abtransport"
 	bags.set_script(BeltAnim)
 	n.add_child(bags)
-	bags.call("setup", PackedVector3Array([Vector3(2.9, 0.45, -1.16), Vector3(-2.8, 0.45, -1.16)]), Models.bag_mesh(), 0.6, 1.4)
-	for x: float in [-1.5, 1.5]:
-		# Schalter: Korpus mit Holzblende, Arbeitsplatte, Gepäckwaage davor
-		k.rounded_box(Vector3(x - 1.2, 0, -0.2), Vector3(x + 1.2, 1.02, 0.5), 0.03, WHITE, 2)
-		k.box(Vector3(x - 1.15, 0.12, 0.5), Vector3(x + 1.15, 0.92, 0.52), OAK)
-		for i in range(10):
-			k.box(Vector3(x - 1.1 + float(i) * 0.23, 0.14, 0.52), Vector3(x - 1.06 + float(i) * 0.23, 0.9, 0.53), OAK.darkened(0.15))
-		k.box(Vector3(x - 1.25, 1.02, -0.25), Vector3(x + 1.25, 1.07, 0.56), Color(0.22, 0.22, 0.24))
-		k.box(Vector3(x - 0.38, 1.07, -0.12), Vector3(x + 0.38, 1.47, -0.08), DARK)
-		k.box(Vector3(x - 0.35, 1.1, -0.08), Vector3(x + 0.35, 1.44, -0.07), Color(0.35, 0.6, 0.85, 0.3))
-		k.box(Vector3(x - 0.04, 1.07, -0.16), Vector3(x + 0.04, 1.12, -0.04), CHROME)
-		k.box(Vector3(x + 0.5, 1.07, 0.05), Vector3(x + 0.9, 1.12, 0.4), Color(0.85, 0.85, 0.82))
-		k.box(Vector3(x - 0.9, 1.07, 0.1), Vector3(x - 0.6, 1.1, 0.35), Color(0.95, 0.95, 0.92))
-		# Monitor mit Flugnummer über dem Schalter
-		k.box(Vector3(x - 0.05, 1.5, -1.3), Vector3(x + 0.05, 2.0, -1.2), STEEL)
-		k.box(Vector3(x - 0.55, 1.95, -1.32), Vector3(x + 0.55, 2.2, -1.18), DARK)
-		k.box(Vector3(x - 0.5, 1.98, -1.18), Vector3(x + 0.5, 2.17, -1.17), Color(0.95, 0.8, 0.3, 0.3))
-		_staff(n, BRAND, Vector3(x, 0, -0.72), 0 if x < 0.0 else 2)
-	# Gepäckwaage mit Förderband in der Mitte
-	k.box(Vector3(-0.3, 0, -0.95), Vector3(0.3, 0.38, 0.55), STEEL)
-	k.box(Vector3(-0.28, 0.38, -0.95), Vector3(0.28, 0.42, 0.55), DARK)
-	for i in range(6):
-		k.box(Vector3(-0.28, 0.42, -0.9 + float(i) * 0.25), Vector3(0.28, 0.43, -0.86 + float(i) * 0.25), Color(0.3, 0.3, 0.32))
-	k.box(Vector3(-0.3, 0.38, 0.55), Vector3(0.3, 0.55, 0.6), DARK)
-	k.box(Vector3(-0.2, 0.45, 0.6), Vector3(0.2, 0.52, 0.61), Color(0.3, 1.0, 0.5, 0.3))
+	bags.call("setup", PackedVector3Array([Vector3(2.9, 0.45, -1.16), Vector3(-2.95, 0.45, -1.16)]), Models.bag_mesh(), 0.6, 1.4)
+	# Lichtportal: zwei schlanke Stelen mit Leuchtkasten und Fluginfo-Bildschirmen
+	for x: float in [-2.92, 2.92]:
+		k.rounded_box(Vector3(x - 0.08, 0.0, -0.86), Vector3(x + 0.08, 2.75, -0.7), 0.03, Color(0.24, 0.25, 0.27), 2)
+	k.rounded_box(Vector3(-3.0, 2.28, -0.88), Vector3(3.0, 2.78, -0.68), 0.04, Color(0.2, 0.21, 0.23), 2)
+	k.box(Vector3(-2.85, 2.34, -0.68), Vector3(2.85, 2.72, -0.665), BRAND)
+	k.box(Vector3(-2.85, 2.34, -0.665), Vector3(-1.2, 2.72, -0.66), Color(0.95, 0.95, 0.92, 0.3))
+	PixelFont.draw(k, "CHECK-IN", Vector3(-2.02, 2.53, -0.655), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.035, BRAND)
+	_screen(n, "Fluginfo1", Vector2(1.15, 0.32), Vector3(-0.05, 2.53, -0.655), Vector3(0, 0, 1), 2)
+	_screen(n, "Fluginfo2", Vector2(1.15, 0.32), Vector3(1.55, 2.53, -0.655), Vector3(0, 0, 1), 2)
+	# Teppichläufer vor den Schaltern
+	k.box(Vector3(-2.9, 0.0, 0.55), Vector3(2.9, 0.012, 1.5), Color(0.22, 0.26, 0.36))
+	k.box(Vector3(-2.9, 0.012, 0.55), Vector3(2.9, 0.014, 0.6), YELLOW.darkened(0.2))
+	for x: float in [-1.55, 1.55]:
+		# Schalter: weiße, vorn gerundete Theke mit Holzblende und Markenstreifen
+		k.rounded_box(Vector3(x - 1.12, 0.0, -0.3), Vector3(x + 1.12, 1.0, 0.45), 0.12, WHITE, 3)
+		k.box(Vector3(x - 1.0, 0.1, 0.45), Vector3(x + 1.0, 0.82, 0.48), OAK)
+		for i in range(9):
+			k.box(Vector3(x - 0.96 + float(i) * 0.24, 0.12, 0.48), Vector3(x - 0.93 + float(i) * 0.24, 0.8, 0.49), OAK.darkened(0.18))
+		k.box(Vector3(x - 1.0, 0.84, 0.46), Vector3(x + 1.0, 0.9, 0.485), BRAND)
+		# Glasblende auf der Theke
+		k.box(Vector3(x - 1.05, 1.0, 0.3), Vector3(x + 1.05, 1.18, 0.34), Color(0.62, 0.78, 0.85, 0.6))
+		k.box(Vector3(x - 1.15, 1.0, -0.32), Vector3(x + 1.15, 1.04, 0.47), Color(0.2, 0.2, 0.22))
+		# Arbeitsplatz: flacher Bildschirm, Drucker für Bordkarten und Banderolen, Kartenleser
+		var sx := x - 0.35 if x < 0.0 else x + 0.35
+		k.box(Vector3(sx - 0.02, 1.04, -0.12), Vector3(sx + 0.02, 1.32, -0.08), CHROME)
+		k.box(Vector3(sx - 0.3, 1.18, -0.1), Vector3(sx + 0.3, 1.52, -0.07), DARK)
+		k.box(Vector3(sx - 0.27, 1.21, -0.07), Vector3(sx + 0.27, 1.49, -0.065), Color(0.4, 0.65, 0.9, 0.3))
+		var px := x + 0.55 if x < 0.0 else x - 0.55
+		k.rounded_box(Vector3(px - 0.18, 1.04, -0.05), Vector3(px + 0.18, 1.2, 0.22), 0.03, Color(0.82, 0.82, 0.8), 2)
+		k.box(Vector3(px - 0.12, 1.2, 0.02), Vector3(px + 0.12, 1.205, 0.15), Color(0.97, 0.97, 0.95))
+		k.box(Vector3(x - 0.05, 1.04, 0.2), Vector3(x + 0.08, 1.12, 0.3), Color(0.16, 0.16, 0.17))
+		k.box(Vector3(x - 0.03, 1.12, 0.21), Vector3(x + 0.06, 1.13, 0.27), Color(0.3, 0.9, 0.5, 0.3))
+		# Bürostuhl
+		k.cyl(Vector3(x, 0, -0.62), Vector3(x, 0.45, -0.62), 0.04, 0.04, CHROME, 6)
+		k.cyl(Vector3(x, 0.45, -0.62), Vector3(x, 0.5, -0.62), 0.24, 0.24, DARK, 10)
+		_staff(n, BRAND, Vector3(x, 0, -0.62), 0 if x < 0.0 else 2)
+	# Gepäckaufgabe in der Mitte: Waage mit Edelstahlplatte, Einzugsband nach hinten, Gewichtsanzeige
+	k.rounded_box(Vector3(-0.36, 0.0, -0.95), Vector3(0.36, 0.34, 0.62), 0.04, STEEL, 2)
+	k.box(Vector3(-0.32, 0.34, 0.05), Vector3(0.32, 0.37, 0.58), CHROME)
+	k.box(Vector3(-0.32, 0.34, -0.95), Vector3(0.32, 0.38, 0.05), Color(0.1, 0.1, 0.11))
+	for i in range(4):
+		k.box(Vector3(-0.32, 0.38, -0.9 + float(i) * 0.24), Vector3(0.32, 0.385, -0.87 + float(i) * 0.24), Color(0.22, 0.22, 0.23))
+	k.box(Vector3(-0.36, 0.34, -0.95), Vector3(-0.32, 0.6, 0.6), CHROME)
+	k.box(Vector3(0.32, 0.34, -0.95), Vector3(0.36, 0.6, 0.6), CHROME)
+	# Gummivorhang in die Rückwand
+	for i in range(5):
+		k.box(Vector3(-0.3 + float(i) * 0.12, 0.4, -0.86), Vector3(-0.2 + float(i) * 0.12, 0.85, -0.84), Color(0.08, 0.08, 0.08))
+	k.box(Vector3(-0.38, 0.85, -0.9), Vector3(0.38, 0.95, -0.8), Color(0.25, 0.26, 0.28))
+	k.cyl(Vector3(0.48, 0.0, 0.55), Vector3(0.48, 1.25, 0.55), 0.03, 0.03, CHROME, 6)
+	k.box(Vector3(0.36, 1.2, 0.5), Vector3(0.6, 1.36, 0.58), DARK)
+	k.box(Vector3(0.38, 1.22, 0.58), Vector3(0.58, 1.34, 0.585), Color(0.3, 1.0, 0.5, 0.3))
 	var bk := Kit.new()
 	bk.rounded_box(Vector3(-0.2, 0.0, -0.3), Vector3(0.2, 0.45, 0.3), 0.04, BAG_COLS[1], 2)
-	_part(n, "Koffer_Waage", bk, Vector3(0, 0.43, 0.1))
-	_queue(k, -2.8, 2.8, 1.35, 3, 0.95)
+	bk.box(Vector3(-0.06, 0.45, -0.02), Vector3(0.06, 0.5, 0.02), DARK)
+	_part(n, "Koffer_Waage", bk, Vector3(0, 0.37, 0.3))
+	_queue(k, -2.8, 2.8, 1.85, 3, 0.95)
 
 
 # ---------------------------------------------------------------- Gepäcksortierung

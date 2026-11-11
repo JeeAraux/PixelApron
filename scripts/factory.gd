@@ -121,6 +121,8 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 		var fm := Landscape.fence(samples)
 		fm.name = kind
 		return fm
+	if kind == "kofferband":
+		return _baggage_belt(samples)
 	var mi := MeshInstance3D.new()
 	mi.name = kind
 	mi.mesh = Spline.ribbon(samples, w, y)
@@ -163,6 +165,50 @@ static func make_line(kind: String, samples: PackedVector3Array, y: float) -> No
 		smi.material_override = shm
 		mi.add_child(smi)
 	return mi
+
+
+## Kofferband im Terminal: Stahlrahmen auf Stützen, schwarzes Gurtband mit Rollenstößen,
+## Seitenführungen; Koffer laufen darauf (belt_anim.gd).
+static func _baggage_belt(s: PackedVector3Array) -> Node3D:
+	var n := Node3D.new()
+	n.name = "kofferband"
+	var k := Kit.new()
+	var steel := Color(0.42, 0.45, 0.48)
+	var chrome := Color(0.74, 0.76, 0.79)
+	var h := 0.62
+	var run := 0.0
+	var next_leg := 0.0
+	var pts := PackedVector3Array()
+	for i in range(s.size() - 1):
+		var a := Vector3(s[i].x, 0.0, s[i].z)
+		var b := Vector3(s[i + 1].x, 0.0, s[i + 1].z)
+		var d := b - a
+		var l := d.length()
+		if l < 0.01:
+			continue
+		var xf := Transform3D(Basis.looking_at(d / l, Vector3.UP), (a + b) * 0.5)
+		var hl := l * 0.5 + 0.03
+		k.box(Vector3(-0.5, h - 0.14, -hl), Vector3(0.5, h - 0.02, hl), steel, xf)
+		k.box(Vector3(-0.42, h - 0.02, -hl), Vector3(0.42, h, hl), Color(0.08, 0.08, 0.09), xf)
+		for sx: float in [-0.48, 0.48]:
+			k.box(Vector3(sx - 0.025, h - 0.02, -hl), Vector3(sx + 0.025, h + 0.16, hl), chrome, xf)
+		while next_leg <= run + l:
+			var p := a + d / l * (next_leg - run)
+			for sx: float in [-0.4, 0.4]:
+				var q := p + Basis.looking_at(d / l, Vector3.UP) * Vector3(sx, 0, 0)
+				k.box(Vector3(q.x - 0.04, 0.0, q.z - 0.04), Vector3(q.x + 0.04, h - 0.14, q.z + 0.04), steel)
+			next_leg += 2.4
+		run += l
+	for v: Vector3 in s:
+		pts.append(Vector3(v.x, h, v.z))
+	n.add_child(k.instance("Band"))
+	if pts.size() >= 2:
+		var bags := MultiMeshInstance3D.new()
+		bags.name = "Koffer"
+		bags.set_script(BeltAnim)
+		n.add_child(bags)
+		bags.call("setup", pts, Models.bag_mesh(), 0.8, 1.7)
+	return n
 
 
 ## Bauwerk eines Straßentunnels: Stützwände der offenen Rampen mit Geländer, Portale mit Sturz
@@ -1071,6 +1117,7 @@ static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
 ## Fluggastbrücke, fester Teil (lokal +Z zeigt vom Terminal weg): Brückenkopf an der Fassade,
 ## verglaster Verbindungsgang und Rotunde auf einer Säule. Tunnel, Kabine und Fahrwerk bewegt terminal.gd.
 static func _bridge_base(n: Node3D) -> void:
+	var steg := float(int((n.get_meta("opts", {}) as Dictionary).get("steg", 0)))
 	var k := Kit.new()
 	var grey := Color(0.74, 0.75, 0.76)
 	var dark := Color(0.26, 0.27, 0.29)
@@ -1082,8 +1129,10 @@ static func _bridge_base(n: Node3D) -> void:
 	k.cyl(Vector3(0, 3.0, 0), Vector3(0, 6.1, 0), 2.1, 2.1, grey, 24)
 	k.cyl(Vector3(0, 6.1, 0), Vector3(0, 6.35, 0), 2.2, 2.0, dark, 24)
 	k.cyl(Vector3(0, 4.0, 0), Vector3(0, 5.1, 0), 2.12, 2.12, glass, 24, false)
-	# Treppenturm direkt an der Fassade (lokal -Z = Wand bei z = -4,8): Glaskasten mit Treppe
+	var rot_k := k
+	# Treppenturm direkt an der Fassade (lokal -Z = Wand bei z = -4,8 - Steg): Glaskasten mit Treppe
 	# und Aufzug, unten offen zur Halle. Er füllt die Öffnung in der Hallenwand.
+	k = Kit.new()
 	var z0 := -4.85
 	var z1 := -2.2
 	k.box(Vector3(-2.0, 0.0, z0), Vector3(2.0, 0.12, z1), CONCRETE)
@@ -1110,7 +1159,7 @@ static func _bridge_base(n: Node3D) -> void:
 	lift.box(Vector3(-0.42, 0.0, -0.4), Vector3(0.42, 2.2, 0.4), Color(0.78, 0.8, 0.82))
 	lift.box(Vector3(-0.38, 0.4, 0.4), Vector3(0.38, 2.0, 0.42), glass)
 	var cab := lift.instance("HubAufzug")
-	cab.position = Vector3(1.4, 0.15, -4.25)
+	cab.position = Vector3(1.4, 0.15, -4.25 - steg)
 	cab.set_meta("lift", 2.85)
 	cab.set_meta("speed", 0.25)
 	cab.set_meta("no_bake", true)
@@ -1119,9 +1168,20 @@ static func _bridge_base(n: Node3D) -> void:
 	k.box(Vector3(-1.2, 5.2, z1 + 0.02), Vector3(1.2, 5.8, z1 + 0.08), Color(0.14, 0.24, 0.45))
 	k.box(Vector3(-0.9, 5.35, z1 + 0.08), Vector3(0.9, 5.65, z1 + 0.1), Color(1.0, 0.95, 0.8, 0.3))
 	k.box(Vector3(-0.3, 2.55, z0 - 0.06), Vector3(0.3, 2.75, z0), Color(0.2, 0.85, 0.4, 0.3))
-	# kurzer Übergang Turm – Rotunde
-	k.box(Vector3(-1.45, 3.05, z1), Vector3(1.45, 6.0, -1.6), grey)
-	k.box(Vector3(-1.47, 4.0, z1 + 0.05), Vector3(1.47, 5.1, -1.7), glass)
+	rot_k.add_mesh(k.commit(), Transform3D(Basis(), Vector3(0, 0, -steg)))
+	k = rot_k
+	# Übergang Turm – Rotunde; mit Steg ein Fachwerk-Glasgang über Straße oder Betriebsstraße
+	var za := z1 - steg
+	k.box(Vector3(-1.45, 3.05, za), Vector3(1.45, 6.0, -1.6), grey)
+	k.box(Vector3(-1.47, 4.0, za + 0.05), Vector3(1.47, 5.1, -1.7), glass)
+	if steg > 0.0:
+		k.box(Vector3(-1.5, 2.75, za), Vector3(1.5, 3.05, -1.6), dark)
+		var zz := za
+		while zz < -1.9:
+			var zn := minf(zz + 3.0, -1.6)
+			for sx: float in [-1.5, 1.5]:
+				k.cyl(Vector3(sx, 2.9, zz), Vector3(sx, 4.0, zn), 0.05, 0.05, steel, 5)
+			zz = zn
 	# Personaltreppe von der Rotunde hinunter aufs Vorfeld mit Geländer
 	for i in range(8):
 		var yy := 3.0 - float(i) * 0.375
@@ -1456,6 +1516,18 @@ static func make_tool_thumb(id: String) -> Node3D:
 			var z := -4.6 + float(i) * 2.3
 			blk(c, Vector3(0.6, 0.02, z), Vector3(8.6, 0.12, z + 1.0), Color(0.62, 0.86, 0.92))
 		return c
+	if id == "raum":
+		# Grundriss: Boden, drei Wände und eine Tür
+		var rm := Node3D.new()
+		blk(rm, Vector3(-7, -0.2, -5), Vector3(7, 0, 5), FLOOR)
+		blk(rm, Vector3(-4.5, 0, -3.5), Vector3(4.5, 0.05, 3.5), Color(0.62, 0.78, 0.68))
+		blk(rm, Vector3(-4.6, 0, -3.6), Vector3(4.6, 2.6, -3.3), Color(0.88, 0.86, 0.8))
+		blk(rm, Vector3(-4.6, 0, -3.6), Vector3(-4.3, 2.6, 3.6), Color(0.88, 0.86, 0.8))
+		blk(rm, Vector3(4.3, 0, -3.6), Vector3(4.6, 2.6, 3.6), Color(0.88, 0.86, 0.8))
+		blk(rm, Vector3(-4.6, 0, 3.3), Vector3(-1.2, 2.6, 3.6), Color(0.88, 0.86, 0.8))
+		blk(rm, Vector3(1.2, 0, 3.3), Vector3(4.6, 2.6, 3.6), Color(0.88, 0.86, 0.8))
+		blk(rm, Vector3(-1.2, 2.2, 3.3), Vector3(1.2, 2.6, 3.6), Color(0.3, 0.45, 0.6))
+		return rm
 	if id == "spuren":
 		var n := make_line_thumb("strasse4")
 		blk(n, Vector3(-1.5, 0.3, -5), Vector3(1.5, 0.6, 3), Color(0.95, 0.8, 0.2))

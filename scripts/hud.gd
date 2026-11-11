@@ -21,6 +21,7 @@ signal option_changed(key: String, dir: int)
 signal draw_mode_selected(mode: String)
 signal snap_toggled(on: bool)
 signal side_selected(side: String)
+signal room_option(key: String, value: String)
 signal clearance_requested(id: int)
 signal atc_toggled(on: bool)
 signal contract_requested(code: String)
@@ -110,10 +111,12 @@ var step_label: Label
 var step_text := ""
 var snap_button: Button
 var side_box: HBoxContainer
+var room_box: HBoxContainer
 var side_buttons: Dictionary = {}
 var road_side := "gehweg"
 var modes_shown := false
 var current_tool := ""
+var sandbox := false
 var top_row: HBoxContainer
 var title_box: Control
 var view_buttons: Array = []      # [Knopf, langer Text, kurzer Text]
@@ -340,11 +343,10 @@ func _build_top() -> void:
 	fb.add_child(floor_label)
 	var up := _button("▲", false)
 	up.custom_minimum_size = Vector2(34, 40)
-	up.tooltip_text = "Ebene höher (Bild auf)"
+	up.tooltip_text = "Ebene höher (Bild auf). Über der obersten Ebene: der Halle unter der Kamera eine neue Ebene aufsetzen"
 	up.pressed.connect(func() -> void: floor_step.emit(1))
 	fb.add_child(up)
 	floor_box = fb
-	fb.visible = false
 	row.add_child(fb)
 	var menu_b := _button("Menü", false)
 	menu_b.custom_minimum_size = Vector2(76, 40)
@@ -1150,6 +1152,27 @@ func _build_line_bar() -> void:
 		side_buttons[key] = b
 	side_box.add_child(_dock_sep())
 	(side_buttons[road_side] as Button).set_pressed_no_signal(true)
+	# Raum-Werkzeug: Bereich und Tür
+	room_box = HBoxContainer.new()
+	room_box.add_theme_constant_override("separation", 3)
+	row.add_child(room_box)
+	for grp: Array in [["bereich", "Bereich", [["", "ohne"], ["bereich_oeffentlich", "Öffentlich"], ["bereich_sicherheit", "Sicherheit"], ["bereich_personal", "Personal"]]],
+			["tuer", "Tür", [["automatik", "Automatik"], ["fluegel", "Flügel"], ["personal", "Personal"]]]]:
+		room_box.add_child(_dock_sep())
+		var gl := _label(String(grp[1]), 13, C_DIM)
+		gl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		room_box.add_child(gl)
+		var bg := ButtonGroup.new()
+		var first := true
+		for opt: Array in grp[2]:
+			var b := _button(String(opt[1]), true)
+			b.button_group = bg
+			b.custom_minimum_size = Vector2(0, 34)
+			b.set_pressed_no_signal(first)
+			first = false
+			b.pressed.connect(_room_pick.bind(String(grp[0]), String(opt[0])))
+			room_box.add_child(b)
+	room_box.add_child(_dock_sep())
 	step_label = _label("", 14, Color(0.62, 0.9, 1.0))
 	step_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(step_label)
@@ -1162,6 +1185,10 @@ func show_draw_modes(mode: String, shown: bool, upgrade: bool = false) -> void:
 	for key: String in mode_buttons:
 		(mode_buttons[key] as Button).set_pressed_no_signal(key == mode)
 	_update_line_bar()
+
+
+func _room_pick(key: String, value: String) -> void:
+	room_option.emit(key, value)
 
 
 func show_side(side: String) -> void:
@@ -1183,9 +1210,13 @@ func set_steps(text: String) -> void:
 
 
 func _update_line_bar() -> void:
-	var on := step_text != "" and Catalog.LINES.has(current_tool)
+	var on := step_text != "" and (Catalog.LINES.has(current_tool) or current_tool == "raum")
 	line_bar.visible = on
-	if on:
+	room_box.visible = current_tool == "raum"
+	if on and current_tool == "raum":
+		line_title.text = "Raum"
+		side_box.visible = false
+	elif on:
 		var price := _price(current_tool)
 		if Catalog.has_sides(current_tool):
 			price = "%d €/m" % (int(Catalog.LINES[current_tool]["cost_m"]) + int(Catalog.SIDES[road_side]["cost_m"]))
@@ -1319,7 +1350,6 @@ func show_utility(on: bool) -> void:
 
 func show_interior(on: bool) -> void:
 	interior_button.set_pressed_no_signal(on)
-	floor_box.visible = on   # Ebenenwahl nur in der Innenansicht
 	_queue_layout()
 
 
@@ -1564,6 +1594,11 @@ func set_economy(sat: float, factors: Array, day_income: int, upkeep: int) -> vo
 
 
 func set_money(v: int) -> void:
+	if sandbox:
+		money_label.text = "∞  Sandkasten"
+		money_label.add_theme_color_override("font_color", C_OK)
+		money_label.tooltip_text = "Sandkasten: Bauen kostet nichts (Einstellungen)"
+		return
 	money_label.text = GameState.fmt_money(v)
 	money_label.add_theme_color_override("font_color", C_TEXT if v >= 0 else C_BAD)
 

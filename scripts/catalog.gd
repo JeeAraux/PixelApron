@@ -41,6 +41,9 @@ const LINES := {
 	"foerderband": {"name": "Gepäckförderband", "width": 2.4, "cost_m": 900, "min_r": 4.0, "min_len": 10.0,
 		"color": Color(0.18, 0.18, 0.19), "mark": 9, "y": 0.06, "straight": false, "utility": "", "underground": true,
 		"desc": "Gepäcktunnel unter dem Vorfeld: verbindet die Gepäcksortierung einer Terminalhalle mit einem Gepäckumschlag. Die Koffer laufen sichtbar in der Ansicht Untergeschoss. Abfertigung 10 % schneller."},
+	"kofferband": {"name": "Kofferband", "width": 1.0, "cost_m": 650, "min_r": 1.0, "min_len": 1.0,
+		"color": Color(0.18, 0.18, 0.19), "mark": 0, "y": 0.0, "straight": false, "utility": "", "floor_line": true,
+		"desc": "Förderband auf Stützen im Terminal: bringt die Koffer vom Check-in zur Gepäcksortierung. Rastet an der Seite der Check-in-Schalter und an der Sortierung ein. Angeschlossene Schalter schaffen 25 % mehr Fluggäste, es gehen weniger Koffer verloren."},
 	"zaun": {"name": "Sicherheitszaun", "width": 0.6, "cost_m": 45, "min_r": 1.0, "min_len": 2.0,
 		"color": Color(0.3, 0.35, 0.32), "mark": 0, "y": 0.05, "straight": false, "utility": "", "fence": true,
 		"desc": "2,5 m hoher Stabgitterzaun mit Stacheldraht. Trennt das Vorfeld von der Landseite."},
@@ -169,7 +172,7 @@ const ITEMS := {
 		"desc": "Automatische Schiebetür in der Außenwand. Hier kommen die Passagiere herein und gehen hinaus."},
 	"checkin": {"name": "Check-in", "size": Vector2(6, 3), "h": 2.9, "cost": 60000, "grid": 1.0, "inside": true,
 		"needs": {"strom": 6}, "cap": 80,
-		"desc": "Zwei Schalter, 80 Passagiere pro Stunde. Braucht eine Gepäcksortierung in der Halle."},
+		"desc": "Zwei Schalter und Gepäckaufgabe, 80 Passagiere pro Stunde. Braucht eine Gepäcksortierung in der Halle; mit Kofferband dorthin 100 pro Stunde."},
 	"gepaeckanlage": {"name": "Gepäcksortierung", "short": "Gepäckanlage", "size": Vector2(8, 6), "h": 3.0, "cost": 420000, "grid": 1.0,
 		"inside": true, "needs": {"strom": 40},
 		"desc": "Bringt die Koffer vom Check-in zu den Flugzeugen. Ohne sie kein Check-in."},
@@ -301,7 +304,7 @@ const ITEMS := {
 const CATEGORIES := [
 	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]],
 	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "personalgebaeude", "frachtterminal", "winterdienst"]],
-	["terminal", "Terminal", ["halle", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum"]],
+	["terminal", "Terminal", ["halle", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "checkin", "kofferband", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
 		"ladestation", "kofferwagen", "massagesessel", "muelltrennung", "spielecke", "aquarium", "palme", "baumbeet", "gruenwand",
@@ -318,9 +321,9 @@ const GROUPS := {
 		["Befeuerung", ["flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi"]],
 		["Betrieb", ["tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "personalgebaeude"]],
 		["Werft und Dienste", ["hangar", "feuerwache", "frachtterminal", "winterdienst"]]],
-	"terminal": [["Halle", ["halle", "innenwand", "glaswand", "tuer", "eingang"]],
+	"terminal": [["Halle", ["halle", "raum", "innenwand", "glaswand", "tuer", "eingang"]],
 		["Bereiche", ["bereich_oeffentlich", "bereich_sicherheit", "bereich_personal"]],
-		["Abflug", ["checkin", "gepaeckanlage", "gepaeckroentgen", "sicherheit", "passkontrolle", "gate", "busgate"]],
+		["Abflug", ["checkin", "kofferband", "gepaeckanlage", "gepaeckroentgen", "sicherheit", "passkontrolle", "gate", "busgate"]],
 		["Ankunft", ["gepaeckband", "gepaeckermittlung", "zoll", "sb_ausgang"]],
 		["Ebenen", ["rolltreppe", "aufzug", "treppe"]], ["Personal", ["personalraum"]]],
 	"ausstattung": [["Service", ["wc", "infoschalter", "anzeige", "heizkoerper"]], ["Gastro und Shops", ["cafe", "shop", "kiosk", "airline_lounge"]],
@@ -405,6 +408,7 @@ static func label(id: String) -> String:
 const TOOLS := {
 	"spuren": {"name": "Spuren ändern", "desc": "Klicke auf eine Straße: 2-spurig, 4-spurig, Einbahnstraße und umgekehrte Einbahnstraße im Wechsel."},
 	"kreuzung": {"name": "Kreuzung regeln", "desc": "Klicke auf eine Kreuzung: rechts vor links, Vorfahrtsstraße oder Ampel im Wechsel."},
+	"raum": {"name": "Raum", "desc": "Rechteck in einer Halle aufziehen: Wände entstehen ringsum (außer an Außen- und vorhandenen Wänden), dazu eine Tür und auf Wunsch ein Bereich (öffentlich, Sicherheit, Personal)."},
 	"kopieren": {"name": "Blaupause", "desc": "Bereich kopieren und beliebig oft einfügen: Gates, Stände, ganze Terminalmodule mit Einrichtung."},
 }
 const ROADS := ["strasse", "strasse4", "einbahn", "tunnel"]
@@ -473,9 +477,14 @@ static func is_wall(kind: String) -> bool:
 	return LINES.has(kind) and bool(LINES[kind].get("wall", false))
 
 
+## Linie, die auf einer Terminal-Ebene liegt (Wände, Kofferbänder)
+static func is_floor_line(kind: String) -> bool:
+	return is_wall(kind) or (LINES.has(kind) and bool(LINES[kind].get("floor_line", false)))
+
+
 ## Gehört dieses Werkzeug zum Terminalbau (dann Innenansicht einschalten)?
 static func is_terminal_tool(id: String) -> bool:
-	return id == "halle" or is_inside(id) or is_wall(id)
+	return id == "halle" or id == "raum" or is_inside(id) or is_floor_line(id)
 
 
 static func is_underground(kind: String) -> bool:
