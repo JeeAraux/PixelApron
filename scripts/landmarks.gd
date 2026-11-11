@@ -1509,9 +1509,10 @@ static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
 				k.box(Vector3(c.x - 2.0, 0.95, z0 + 0.3), Vector3(c.x + 2.0, 1.0, z0 + 1.0), Color(0.55, 0.42, 0.28))
 				k.box(Vector3(c.x - 1.8, 1.3, z0 + 0.3), Vector3(c.x + 1.8, 2.6, z0 + 0.36), Color(0.5, 0.52, 0.55))
 			"gepaeckumschlag":
-				# Entladeband längs der Spur (Koffer vom Gepäckzug), mündet hinten ins Sammelband
+				# Entladeband längs der Spur (Koffer vom Gepäckzug), am Spurende ein Steilförderer hinauf
+				# zum Sammelband unter der Decke. Dahinter bleibt der Quergang frei: dort wendet der Zug.
 				var bx := c.x + dw * 0.5 + 1.2
-				var bz0 := z0 + 1.6
+				var bz0 := z1 - dd + 2.5
 				var bz1 := z1 - 2.0
 				k.box(Vector3(bx - 0.5, 0.0, bz0), Vector3(bx + 0.5, 0.75, bz1), Color(0.45, 0.47, 0.5))
 				k.box(Vector3(bx - 0.42, 0.75, bz0), Vector3(bx + 0.42, 0.8, bz1), Color(0.13, 0.13, 0.14))
@@ -1523,13 +1524,57 @@ static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
 					var bz := bz0 + 1.5 + float(q) * 3.4
 					if bz < bz1 - 1.0:
 						k.box(Vector3(bx - 0.25, 0.8, bz), Vector3(bx + 0.25, 1.2, bz + 0.6), [Color(0.15, 0.2, 0.45), Color(0.6, 0.1, 0.1), Color(0.1, 0.1, 0.1), Color(0.3, 0.55, 0.35)][(q + i) % 4])
+				# Steilförderer am Spurende bis unter die Decke
+				k.box(Vector3(bx - 0.55, 0.0, bz0 - 1.1), Vector3(bx + 0.55, 4.3, bz0), Color(0.42, 0.44, 0.47))
+				k.box(Vector3(bx - 0.45, 0.8, bz0 - 0.02), Vector3(bx + 0.45, 4.2, bz0 + 0.02), Color(0.13, 0.13, 0.14))
+				k.box(Vector3(bx - 0.6, 1.6, bz0 - 1.15), Vector3(bx + 0.6, 1.75, bz0 + 0.05), YELLOW)
 				# Gehweg zwischen Spur und Band
 				k.box(Vector3(c.x + dw * 0.5 + 0.3, 0.08, bz0 + 1.2), Vector3(bx - 0.6, 0.18, bz1), Color(0.62, 0.62, 0.6))
+				# Leitlinie in der Spurmitte
+				var lz := z1 - 1.0
+				while lz > z1 - dd + 0.5:
+					k.box(Vector3(c.x - 0.07, 0.08, lz - 1.2), Vector3(c.x + 0.07, 0.09, lz), Color(0.92, 0.92, 0.9))
+					lz -= 2.4
 	if id == "gepaeckumschlag":
-		# Sammelband entlang der Rückwand zum Förderbandtunnel im Seitenteil
-		k.box(Vector3(xs - 3.0, 0.0, z0 + 1.6), Vector3(x1 - 1.0, 0.75, z0 + 2.6), Color(0.45, 0.47, 0.5))
-		k.box(Vector3(xs - 3.0, 0.75, z0 + 1.7), Vector3(x1 - 1.0, 0.8, z0 + 2.5), Color(0.13, 0.13, 0.14))
-		k.box(Vector3(x0 + 1.2, 0.0, z0 + 0.3), Vector3(xs - 2.6, 3.0, z0 + 3.6), Color(0.08, 0.08, 0.09))     # Tunnelmund
+		# Sammelband unter der Decke quer über die Spurenden (Züge passen darunter durch), im Seitenteil
+		# hinab zum Förderbandtunnel
+		var dd0 := float(sz["dd"])
+		var cz := z1 - dd0 + 1.4
+		k.box(Vector3(xs - 2.6, 4.3, cz - 0.5), Vector3(x1 - 1.0, 4.65, cz + 0.5), Color(0.45, 0.47, 0.5))
+		k.box(Vector3(xs - 2.6, 4.65, cz - 0.42), Vector3(x1 - 1.0, 4.7, cz + 0.42), Color(0.13, 0.13, 0.14))
+		var hx := xs + 1.0
+		while hx < x1 - 1.0:
+			k.box(Vector3(hx - 0.04, 4.65, cz - 0.04), Vector3(hx + 0.04, hh - 0.3, cz + 0.04), STEEL)
+			hx += 4.5
+		for q2 in range(int((x1 - xs) / 2.2)):
+			var kx := xs + 0.8 + float(q2) * 2.2
+			k.box(Vector3(kx, 4.7, cz - 0.25), Vector3(kx + 0.6, 5.05, cz + 0.25), [Color(0.15, 0.2, 0.45), Color(0.6, 0.1, 0.1), Color(0.1, 0.1, 0.1), Color(0.3, 0.55, 0.35)][q2 % 4])
+		# im Seitenteil: Schräge vom Sammelband hinab zum Tunnelmund an der Rückwand
+		var sx0 := xs - 2.6
+		var sx1 := xs - 1.6
+		var steps := 10
+		for q3 in range(steps):
+			var t0 := float(q3) / float(steps)
+			var t1 := float(q3 + 1) / float(steps)
+			var za := lerpf(cz, z0 + 3.8, t0)
+			var zb := lerpf(cz, z0 + 3.8, t1)
+			var ya := lerpf(4.3, 0.9, t1)
+			k.box(Vector3(sx0, ya - 0.35, minf(za, zb)), Vector3(sx1, ya, maxf(za, zb)), Color(0.45, 0.47, 0.5))
+		k.box(Vector3(x0 + 1.2, 0.0, z0 + 0.3), Vector3(xs - 1.2, 3.0, z0 + 3.6), Color(0.08, 0.08, 0.09))     # Tunnelmund
+		# Quergang hinter den Spuren: Wendebögen in Gelb zwischen benachbarten Spuren, Schraffur an der Rückwand
+		for i2 in range(doors.size() - 1):
+			var xa := ((doors[i2] as Array)[0] as Vector3).x
+			var xb := ((doors[i2 + 1] as Array)[0] as Vector3).x
+			var shp := uturn_shape(xb - xa, dd0 - 2.0)
+			for q4 in range(0, shp.size() - 1, 2):
+				var u0: Vector2 = shp[q4]
+				var u1: Vector2 = shp[q4 + 1]
+				_floor_strip(k, Vector3(xa + u0.x, 0.0, z1 - u0.y), Vector3(xa + u1.x, 0.0, z1 - u1.y), 0.16, YELLOW)
+		var hz := xs + 0.5
+		while hz < x1 - 1.0:
+			_floor_strip(k, Vector3(hz, 0.0, z0 + 0.6), Vector3(hz + 1.2, 0.0, z0 + 1.8), 0.22, YELLOW)
+			hz += 1.6
+		k.box(Vector3(xs + 0.2, 0.08, z0 + 2.2), Vector3(x1 - 0.5, 0.09, z0 + 2.36), YELLOW)
 		k.box(Vector3(x0 + 1.0, 3.0, z0 + 0.3), Vector3(xs - 2.4, 3.4, z0 + 3.8), CONCRETE)
 		PixelFont.draw(k, "GEPAECK", Vector3((xs + x1) * 0.5, hh - 1.0, z1 + 0.02), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.16, Color(0.14, 0.24, 0.45))
 		# Leitstand mit Glasfront
@@ -1595,6 +1640,38 @@ static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
 	roof.set_meta("no_bake", true)
 	n.add_child(roof)
 	n.add_child(k.instance("Halle"))
+
+
+## Wendeschleife im Gepäckumschlag von einer Spur in die Nachbarspur (seitlicher Abstand dx), ab Tiefe d0
+## hinter dem Tor: erst 1,5 m zur Gegenseite ausholen, dann im Halbkreis (Radius |dx|/2 + 1,5 m) hinüber
+## und zurück in die Spur. Punkte als (seitlich, Tiefe hinter dem Tor).
+static func uturn_shape(dx: float, d0: float) -> Array:
+	var sg := signf(dx)
+	var sw := 1.5
+	var r := absf(dx) * 0.5 + sw
+	var dc := d0 + 4.0
+	var out := []
+	for k in range(7):
+		var t := float(k) / 6.0
+		out.append(Vector2(-sg * sw * smoothstep(0.0, 1.0, t), d0 + 4.0 * t))
+	for k in range(1, 16):
+		var a := PI * float(k) / 16.0
+		out.append(Vector2(dx * 0.5 - sg * r * cos(a), dc + r * sin(a)))
+	for k in range(1, 7):
+		var t2 := float(k) / 6.0
+		out.append(Vector2(dx + sg * sw * (1.0 - smoothstep(0.0, 1.0, t2)), dc - 4.0 * t2))
+	return out
+
+
+## Bodenmarkierung als flacher Streifen von a nach b (Breite w).
+static func _floor_strip(k: Kit, a: Vector3, b: Vector3, w: float, col: Color) -> void:
+	var d := b - a
+	d.y = 0.0
+	if d.length() < 0.01:
+		return
+	var s := d.normalized().cross(Vector3.UP) * (w * 0.5)
+	var y := Vector3(0, 0.09, 0)
+	k.quad(a - s + y, b - s + y, b + s + y, a + s + y, col, (a + b) * 0.5 - Vector3(0, 1, 0))
 
 
 static func j_hash(x: Variant) -> int:

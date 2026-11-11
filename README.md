@@ -22,6 +22,11 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.29.2: Gepäckzüge wenden im Gepäckumschlag**
+  - Die Züge fahren nicht mehr in kleine Räume im Terminal. Am Rolltor eines Terminals halten sie draußen an der Wand, in den Gepäckumschlag fahren sie hinein (er wird bevorzugt).
+  - Im Gepäckumschlag fährt ein Zug durch ein Tor in seine Spur, hält mit dem Schlepper am Spurende, die Wagen stehen am Entladeband. Danach holt er im Quergang hinter den Spuren aus, wendet im großen Bogen in die Nachbarspur und fährt vorwärts durch deren Tor hinaus. Beide Spuren sind dafür reserviert, die Tore gehen rechtzeitig auf und hinter dem letzten Wagen wieder zu, in der Halle fährt der Zug langsam.
+  - Abflugzüge laden genauso in einer Spur und wenden dann.
+  - Neue Einrichtung: Entladebänder nur längs der Spuren, am Spurende ein Steilförderer zum Sammelband unter der Decke (die Züge fahren darunter durch), gelbe Wendebögen im Quergang.
 - **Update 0.29.1: Gepäckzüge fahren bis an die Sortierung**
   - Die Einfahrt hinter einem Rolltor ist jetzt 16 m tief, der ganze Gepäckzug fährt in die Halle und hält längs an der Sortierung (Kofferablage). Im Startflughafen sitzt das Rolltor direkt neben dem Ring, die Rollenbahn führt um die Ecke darauf.
   - In eigenen Flughäfen das Rolltor mit „Verschieben“ neben die Gepäcksortierung setzen; ist die Einfahrt dahinter frei (keine Einrichtung, keine niedrigen Bänder), fahren die Züge hinein.

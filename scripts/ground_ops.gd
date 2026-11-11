@@ -139,6 +139,10 @@ func _vehicle_from(node: Node3D, kind: String, at: Vector3, heading: Vector3) ->
 
 ## Fahrt entlang einer Kurve starten. rev = rückwärts (Blickrichtung bleibt entgegen der Fahrt).
 func _go(v: Dictionary, pts: PackedVector3Array, vmax: float, rev: bool = false) -> void:
+	v.erase("vcap")
+	if v.has("vcap_next"):
+		v["vcap"] = v["vcap_next"]
+		v.erase("vcap_next")
 	v["pts"] = pts
 	v["i"] = 0
 	v["vmax"] = vmax
@@ -166,6 +170,10 @@ func _move(v: Dictionary, sim: float) -> void:
 	for j in range(i, pts.size() - 1):
 		left += pts[j].distance_to(pts[j + 1])
 	var vmax: float = v["vmax"]
+	var cap: Array = v.get("vcap", [])
+	if cap.size() == 3 and i >= int(cap[0]) and i < int(cap[1]):
+		# langsam durchs Tor und in der Halle
+		vmax = minf(vmax, float(cap[2]))
 	var want := minf(vmax, sqrt(2.0 * 1.2 * maxf(left - 0.2, 0.0)) + 0.3)
 	# Abstand halten: vor anderen Fahrzeugen und rollenden Flugzeugen warten; steht der andere
 	# länger, wird seitlich vorbeigefahren (erst ganz zuletzt notfalls hindurch)
@@ -872,7 +880,10 @@ func _step_job(j: Dictionary, sim: float) -> void:
 			continue
 		var vd: Dictionary = v
 		if _door_step(vd):
-			_move(vd, sim)
+			if _pass_doors(vd):
+				vd["v"] = 0.0
+			else:
+				_move(vd, sim)
 		if not vd.has("await_door") and not bool(vd["moving"]):
 			if vd.has("load_then"):
 				# an der Sortierung: Koffer aufladen, dann weiter zum Stand. Jeder Zug braucht eine
@@ -882,7 +893,7 @@ func _step_job(j: Dictionary, sim: float) -> void:
 					lt["wait"] = float(lt.get("wait", 0.0)) + sim
 					continue
 				var gd: Dictionary = vd.get("load_door", {})
-				if not gd.is_empty() and is_instance_valid(gd.get("node")):
+				if not gd.is_empty() and is_instance_valid(gd.get("node")) and not lt.has("exit"):
 					var dk := _gate_key(gd)
 					door_rec[dk] = _gate_rec(gd)
 					door_want[dk] = maxf(float(door_want.get(dk, 0.0)), clock + 2.0)
@@ -900,6 +911,11 @@ func _step_job(j: Dictionary, sim: float) -> void:
 							terminal.gate_bag(gd["node"], true)
 				if int(vd["bags"]) >= 24:
 					_go(vd, lt["pts"], GSE_V * 1.4)
+					if lt.has("exit"):
+						# langsam durch den Quergang und das Nachbartor hinaus, danach ist die Spur wieder frei
+						vd["vcap"] = [0, int(lt["lane_n"]) + 1, 2.6]
+						vd["pass_doors"] = [lt["exit"]]
+						vd["bays_release"] = true
 					vd.erase("load_then")
 					vd.erase("load_door")
 					chute_users.erase(vd)
@@ -1982,6 +1998,38 @@ func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
 				if o.has("load_then"):
 					loading += 1
 			var lp: Vector3 = (sp[0] as Vector3) + (sp[1] as Vector3).cross(Vector3.UP) * (8.0 + 6.0 * float(loading % 3))
+			var lgate: Dictionary = sp[3] if sp.size() > 3 else {}
+			var lexit := {}
+			if not lgate.is_empty() and lgate.has("umschlag") and lgate.has("exit_bay"):
+				lexit = _umschlag_gate(lgate["umschlag"], int(lgate["exit_bay"]))
+			if not lexit.is_empty():
+				# Gepäckumschlag: in die Spur fahren, dort beladen, im Quergang wenden und vorwärts hinaus
+				var nl := -(sp[1] as Vector3)
+				var stop := lane_stop(lgate)
+				var r1l := net.route(g[2], door_point(lgate) + nl * 12.0, 60.0)
+				var uturn := uturn_path(lgate, lexit, stop)
+				var r2l := net.route(uturn[uturn.size() - 1], home, 60.0)
+				if r1l.size() >= 2 and r2l.size() >= 2:
+					var w1l := [g[1]]
+					for q: Vector3 in r1l:
+						w1l.append(q)
+					w1l.append(door_point(lgate) + nl * 3.0)
+					w1l.append(stop)
+					pts = _route(w1l, h0, -nl)
+					var w2l := [uturn[uturn.size() - 2]]
+					for q: Vector3 in r2l:
+						w2l.append(q)
+					var tail := _route(w2l, nl, hend.normalized() if hend.length() > 0.1 else nl)
+					var full := uturn.duplicate()
+					full.append_array(tail.slice(1))
+					v["load_door"] = lgate
+					v["bays"] = [_gate_key(lgate), _gate_key(lexit)]
+					v["pass_doors"] = [lgate]
+					v["load_then"] = {"t": 0.0, "pts": full, "exit": lexit, "lane_n": uturn.size()}
+					_set_bags(v, 0)
+					v["vcap_next"] = door_cap(pts, door_point(lgate), 3.0)
+					_leave_garage(v, g, pts)
+					return
 			if sp.size() > 3:
 				# am Rolltor: neben der Toröffnung, das Tor geht beim Beladen auf
 				lp = (sp[0] as Vector3) + (sp[1] as Vector3).cross(Vector3.UP) * float([-9, 23, -25][loading % 3])
@@ -2032,15 +2080,23 @@ func sort_spot(near: Vector3) -> Array:
 		var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
 		if Catalog.tore_of("gepaeckumschlag", rec.get("opts", {})) > 0:
 			# große Halle: je Tor eine Spur, der Zug fährt hinein (vorn +Z)
+			# Der Zug fährt durch Tor i hinein, lädt am Band ab, wendet im Quergang hinter den Spuren und
+			# fährt vorwärts durch das Nachbartor j wieder hinaus: beide Spuren werden vorher reserviert.
+			# Die Gepäckhalle ist dafür gebaut, deshalb wird sie einem Rolltor im Terminal vorgezogen.
 			var dl: Array = Catalog.doors_of("gepaeckumschlag", rec["opts"])
 			for bi in range(dl.size()):
-				var loc: Vector3 = (dl[bi] as Array)[0]
-				var g := {"pos": (rec["pos"] as Vector3) + b * (loc - Vector3(0, 0, 1.0)), "rot": int(rec["rot"]), "node": rec["node"],
-					"umschlag": rec, "bay": bi, "depth": float((dl[bi] as Array)[3])}
+				var g := _umschlag_gate(rec, bi)
 				var pt2 := door_point(g) + b * Vector3(0, 0, 4.5)
 				var d2 := pt2.distance_to(near)
+				var ex := -1
 				if not _bay_busy(g):
-					d2 -= 1.0
+					for bj: int in [bi + 1, bi - 1]:
+						if bj >= 0 and bj < dl.size() and not _bay_busy(_umschlag_gate(rec, bj)):
+							ex = bj
+							break
+				if ex >= 0:
+					g["exit_bay"] = ex
+					d2 -= 250.0
 				else:
 					d2 += 200.0
 				if d2 < bd:
@@ -2124,14 +2180,95 @@ func _gate_rec(gate: Dictionary) -> Array:
 	return [gate, 0]
 
 
-## Steht schon ein Zug in dieser Spur des Gepäckumschlags (oder fährt hinein)?
+## Steht schon ein Zug in dieser Spur des Gepäckumschlags (oder hat sie für Einfahrt bzw. Wende reserviert)?
 func _bay_busy(gate: Dictionary) -> bool:
-	for o: Dictionary in sorting:
-		var g2: Variant = o.get("sort_door")
-		if g2 is Dictionary and (g2 as Dictionary).has("umschlag") and is_same((g2 as Dictionary)["umschlag"], gate["umschlag"]) \
-				and int((g2 as Dictionary)["bay"]) == int(gate["bay"]) and bool((o.get("sort", {}) as Dictionary).get("inside", false)):
-			return true
+	var key := _gate_key(gate)
+	for lst: Array in [vehicles, sorting]:
+		for o: Dictionary in lst:
+			if key in (o.get("bays", []) as Array) and is_instance_valid(o.get("node")):
+				return true
 	return false
+
+
+## Tor-Eintrag der Spur bi eines Gepäckumschlags (wie ein Rolltor: pos innen an der Wand, rot, Tiefe).
+func _umschlag_gate(rec: Dictionary, bi: int) -> Dictionary:
+	var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
+	var dl: Array = Catalog.doors_of("gepaeckumschlag", rec["opts"])
+	var loc: Vector3 = (dl[bi] as Array)[0]
+	return {"pos": (rec["pos"] as Vector3) + b * (loc - Vector3(0, 0, 1.0)), "rot": int(rec["rot"]), "node": rec["node"],
+		"umschlag": rec, "bay": bi, "depth": float((dl[bi] as Array)[3])}
+
+
+## Halteplatz des Schleppers am Ende der Spur: die Wagen stehen dahinter am Entladeband.
+static func lane_stop(gate: Dictionary) -> Vector3:
+	var n := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
+	return door_point(gate) - n * (float(gate["depth"]) - 2.5)
+
+
+## Wende im Gepäckumschlag: vom Halteplatz in Spur gi weiter in den Quergang, im Halbkreis in die
+## Nachbarspur gj und vorwärts durch deren Tor hinaus (endet 19 m vor dem Tor, dann ist der Zug ganz draußen).
+static func uturn_path(gi: Dictionary, gj: Dictionary, from: Vector3) -> PackedVector3Array:
+	var b := Basis(Vector3.UP, float(gi["rot"]) * PI * 0.5)
+	var n := b * Vector3(0, 0, 1)
+	var side := b * Vector3(1, 0, 0)
+	var di := door_point(gi)
+	var dx := (door_point(gj) - di).dot(side)
+	var out := PackedVector3Array([Vector3(from.x, 0, from.z)])
+	for q: Vector2 in Landmarks.uturn_shape(dx, float(gi["depth"]) - 2.0):
+		var p := di + side * q.x - n * q.y
+		out.append(Vector3(p.x, 0, p.z))
+	var dj := di + side * dx
+	for t: float in [2.0, -4.0, -12.0, -19.0]:
+		var q2 := dj - n * t
+		out.append(Vector3(q2.x, 0, q2.z))
+	return out
+
+
+## Tore auf dem Weg (Spuren im Gepäckumschlag): rechtzeitig öffnen, davor warten, hinter dem Zug
+## schließen. true = Zug muss vor dem Tor warten.
+func _pass_doors(v: Dictionary) -> bool:
+	var pd: Array = v.get("pass_doors", [])
+	if pd.is_empty():
+		return false
+	var pos: Vector3 = v["pos"]
+	var near: Dictionary = v.get("pass_near", {})
+	v["pass_near"] = near
+	var hold := false
+	var tail := 4.0 + 3.9 * float((v.get("cars", []) as Array).size())
+	for g: Dictionary in pd.duplicate():
+		if not is_instance_valid(g.get("node")):
+			pd.erase(g)
+			continue
+		var key := _gate_key(g)
+		var d := pos.distance_to(door_point(g))
+		if d < 3.0:
+			near[key] = true
+		if bool(near.get(key, false)) and d > tail:
+			# ganz durch: Tor schließt hinter dem letzten Wagen
+			pd.erase(g)
+			near.erase(key)
+			door_want[key] = clock + 2.0
+			continue
+		door_rec[key] = _gate_rec(g)
+		if d < 40.0:
+			door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
+		if d < 9.0 and not bool(near.get(key, false)) and float(door_open.get(key, 0.0)) < 0.9:
+			hold = true
+	if pd.is_empty():
+		v.erase("pass_doors")
+		v.erase("pass_near")
+		if bool(v.get("bays_release", false)):
+			v.erase("bays")
+			v.erase("bays_release")
+	return hold
+
+
+## Tempolimit ab dem Punkt eines Wegs, der einem Tor näher als 16 m kommt (durchs Tor und in der Halle).
+static func door_cap(pts: PackedVector3Array, door: Vector3, vlim: float) -> Array:
+	for i in range(pts.size()):
+		if pts[i].distance_to(door) < 16.0:
+			return [maxi(i - 1, 0), pts.size(), vlim]
+	return []
 
 
 ## Ankunftszug fährt zur Sortierung, lädt dort ab und fährt dann heim. false = keine Sortierung erreichbar.
@@ -2162,13 +2299,19 @@ func _to_sorting(v: Dictionary) -> bool:
 				end_dir = side if along > 0.0 else -side
 				break
 		target = base + end_dir * 7.0
-	# Ist die Einfahrt hinter dem Rolltor frei, fährt der erste Zug durchs Tor in die Halle
-	var inside := not gate.is_empty() and ((gate.has("umschlag") and not _bay_busy(gate)) or (slot == 0 and not gate.has("umschlag") and game.gate_bay_free(gate)))
+	# In den Gepäckumschlag fährt der Zug hinein (Spur und Wendespur sind frei), am Rolltor eines
+	# Terminals hält er draußen an der Wand: dort ist kein Platz zum Wenden.
+	var exitg := {}
+	if not gate.is_empty() and gate.has("umschlag") and gate.has("exit_bay") and not _bay_busy(gate):
+		exitg = _umschlag_gate(gate["umschlag"], int(gate["exit_bay"]))
+		if _bay_busy(exitg):
+			exitg = {}
+	var inside := not exitg.is_empty()
 	var n_out := Vector3.ZERO
 	if inside:
 		n_out = -(sp[1] as Vector3)
 		end_dir = -n_out
-		target = door_point(gate) - n_out * (float(gate["depth"]) * 0.62 if gate.has("umschlag") else 12.5)
+		target = lane_stop(gate)
 	var road := net.route(v["pos"], (door_point(gate) + n_out * 12.0) if inside else target, 60.0)
 	if road.size() < 2:
 		return false
@@ -2185,13 +2328,19 @@ func _to_sorting(v: Dictionary) -> bool:
 	v["rev"] = false
 	v["vmax"] = GSE_V * 1.3
 	v.erase("then")
-	_go(v, _route(way, v["heading"], end_dir), GSE_V * 1.3)
+	var pts := _route(way, v["heading"], end_dir)
+	_go(v, pts, GSE_V * 1.3)
 	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2]), "inside": inside}
 	v["sort_slot"] = slot
 	if not gate.is_empty():
 		var key := _gate_key(gate)
 		door_rec[key] = _gate_rec(gate)
 		v["sort_door"] = gate
+	if inside:
+		v["bays"] = [_gate_key(gate), _gate_key(exitg)]
+		v["pass_doors"] = [gate]
+		v["sort_exit"] = exitg
+		v["vcap"] = door_cap(pts, door_point(gate), 3.0)
 	sorting.append(v)
 	return true
 
@@ -2416,16 +2565,15 @@ func _step_sorting(sim: float) -> void:
 		if not gate.is_empty() and not is_instance_valid(gate.get("node")):
 			v.erase("sort_door")
 			gate = {}
-		if not gate.is_empty():
+		var st: Dictionary = v["sort"]
+		var lane := bool(st.get("inside", false)) and not gate.is_empty()
+		if not gate.is_empty() and not lane:
 			var key := _gate_key(gate)
 			if (v["pos"] as Vector3).distance_to(door_point(gate)) < 34.0:
 				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
-		var st: Dictionary = v["sort"]
 		if bool(v["moving"]):
-			# in die Halle erst, wenn das Tor offen ist
-			if bool(st.get("inside", false)) and not gate.is_empty() and not bool(st.get("out", false)) \
-					and (v["pos"] as Vector3).distance_to(door_point(gate)) < 10.0 \
-					and float(door_open.get(_gate_key(gate), 0.0)) < 0.9:
+			# durch die Tore erst, wenn sie offen sind
+			if _pass_doors(v):
 				v["v"] = 0.0
 				continue
 			_move(v, sim)
@@ -2434,15 +2582,19 @@ func _step_sorting(sim: float) -> void:
 			# wieder draußen: Tor schließt, Zug fährt heim
 			sorting.erase(v)
 			v.erase("sort")
+			v.erase("bays")
+			v.erase("pass_doors")
+			v.erase("sort_exit")
 			if not gate.is_empty():
-				door_want[_gate_key(gate)] = clock + 3.0
+				if not lane:
+					door_want[_gate_key(gate)] = clock + 3.0
 				v.erase("sort_door")
 			_send_home(v, "zug")
 			continue
 		st["t"] = float(st["t"]) + sim
 		var n := int(v.get("bags", 0))
 		var want := maxi(0, 24 - int(float(st["t"]) * 1.6))
-		if not gate.is_empty() and float(door_open.get(_gate_key(gate), 0.0)) < 0.9:
+		if not gate.is_empty() and not lane and float(door_open.get(_gate_key(gate), 0.0)) < 0.9:
 			want = n    # erst abladen, wenn das Tor offen ist
 			st["t"] = 0.0
 		if want < n:
@@ -2451,17 +2603,30 @@ func _step_sorting(sim: float) -> void:
 				for i in range(n - want):
 					terminal.gate_bag(gate["node"])
 		if want == 0:
-			v["sorted"] = true
-			if terminal != null and v.has("flight"):
-				# über die Sortierung und das Förderband dauert es noch einen Moment bis zum Band
-				terminal.bags_arrived(int(v["flight"]), 25.0 if bool(st["via_hall"]) else 10.0)
-			if bool(st.get("inside", false)) and not gate.is_empty():
-				# rückwärts aus der Halle, im Bogen zur Seite, damit er vorwärts wegfahren kann
+			if not v.has("sorted"):
+				v["sorted"] = true
+				if terminal != null and v.has("flight"):
+					# über die Sortierung und das Förderband dauert es noch einen Moment bis zum Band
+					terminal.bags_arrived(int(v["flight"]), 25.0 if bool(st["via_hall"]) else 10.0)
+			if lane:
+				var exitg: Dictionary = v.get("sort_exit", {})
+				if not exitg.is_empty() and is_instance_valid(exitg.get("node")):
+					# weiter in den Quergang, im Bogen in die Nachbarspur und vorwärts hinaus
+					st["out"] = true
+					v["pass_doors"] = [exitg]
+					v["bays_release"] = true
+					_go(v, uturn_path(gate, exitg, v["pos"]), 2.6)
+					continue
+				# Notfall (Halle umgebaut): rückwärts hinaus, sobald das Tor offen ist
+				var key2 := _gate_key(gate)
+				door_rec[key2] = _gate_rec(gate)
+				door_want[key2] = clock + 30.0
+				if float(door_open.get(key2, 0.0)) < 0.9:
+					continue
 				var no := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
 				var sd := no.cross(Vector3.UP)
 				var dp := door_point(gate)
 				st["out"] = true
-				door_want[_gate_key(gate)] = clock + 30.0
 				_go(v, PackedVector3Array([v["pos"], dp - no * 2.0, dp + no * 5.0, dp + no * 9.0 + sd * 3.0, dp + no * 11.0 + sd * 9.0]), 2.2, true)
 				continue
 			sorting.erase(v)
@@ -2490,6 +2655,8 @@ func _send_home(v: Dictionary, kind: String) -> void:
 	if not is_instance_valid(v.get("node")):
 		_free(v)
 		return
+	for k: String in ["bays", "bays_release", "pass_doors", "pass_near", "sort_exit"]:
+		v.erase(k)
 	if kind == "zug" and int(v.get("bags", 0)) > 0 and not v.has("sorted"):
 		if _to_sorting(v):
 			return
