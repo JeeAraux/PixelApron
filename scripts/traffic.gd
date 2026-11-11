@@ -1394,8 +1394,9 @@ func _street_life(dt: float) -> void:
 		node.position = p
 		node.visible = not hide
 		Factory.face(node, ahead - p, dt)
-		var frame := int(fposmod(float(b["s"]) * 0.9, 1.35) / 1.35 * float(Models.WALK_FRAMES)) % Models.WALK_FRAMES
-		Factory.set_pose(b["rider"], 10 + frame)
+		# Tretkurbel: eine Umdrehung auf gut 4 m (Übersetzung eines Stadtrads)
+		var frame := int(fposmod(float(b["s"]), 4.2) / 4.2 * float(Models.WALK_FRAMES)) % Models.WALK_FRAMES
+		Factory.set_pose(b["rider"], 20 + frame)
 
 
 func _path_at(path: PackedVector3Array, s: float) -> Vector3:

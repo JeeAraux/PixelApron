@@ -117,15 +117,19 @@ func rebuild() -> void:
 	socks = []
 	halos = []
 	night_lights = []
-	graph.build(game.lines, game.stands(), game.items_of("rollhalt"))
+	graph.build(game.lines, game.stands(), game.items_of("rollhalt") + game.items_of("wendeplatte"))
 	# Rollwege mit selbst gezeichneten Linien verlieren ihre automatische Mittellinie
 	for li in range(game.lines.size()):
 		var gl: Dictionary = game.lines[li]
-		if not (gl["kind"] in ["rollweg", "rollweg_breit"]) or not is_instance_valid(gl.get("node")):
+		if not (gl["kind"] in ["rollweg", "rollweg_breit", "vorfeld"]) or not is_instance_valid(gl.get("node")):
 			continue
 		var gm := (gl["node"] as GeometryInstance3D).material_override as ShaderMaterial
 		if gm != null:
-			gm.set_shader_parameter("mark", 11 if graph.guided.has(li) else 2)
+			# Vorfeld ohne gezeichnete Linien: die Flugzeuge rollen auf der Mittellinie, also wird sie gemalt
+			if gl["kind"] == "vorfeld":
+				gm.set_shader_parameter("mark", 5 if graph.guided.has(li) else 13)
+			else:
+				gm.set_shader_parameter("mark", 11 if graph.guided.has(li) else 2)
 	names = taxi_names(game.lines)
 	_index_pavement()
 	var k := Kit.new()       # Masten, Gehäuse, Schilder
@@ -146,6 +150,8 @@ func rebuild() -> void:
 	_holds(k, km, lamps, wa, wb)
 	cur_lit = true
 	_junction_signs(k)
+	_taxi_junctions(km)
+	_turn_pad_marks(km)
 	_stands(k, km, lamps)
 	_add(k, "Flugfeld", false)
 	_add(km, "Markierung", false)
@@ -674,6 +680,242 @@ func _junction_signs(k: Kit) -> void:
 				_sign_array(k, pos, travel, signs)
 
 
+## Rollweg-Kreuzungen wie auf echten Flughäfen: eine gemeinsame Belagfläche mit ausgerundeten Ecken
+## (Ausrundungen) deckt die Überlappung der beiden Rollwege ab, die Randlinien folgen den Rundungen,
+## und die gelben Mittellinien gehen als Bögen von jedem Ast in jeden anderen (nicht bei geführten Rollwegen).
+func _taxi_junctions(km: Kit) -> void:
+	var pk := Kit.new()
+	var done := []
+	for i in range(graph.pos.size()):
+		if not (graph.kind[i] in ["rollweg", "rollweg_breit"]):
+			continue
+		var lx := graph.line_idx[i]
+		for nb: int in graph.adj[i]:
+			if not (graph.kind[nb] in ["rollweg", "rollweg_breit"]) or graph.line_idx[nb] == lx:
+				continue
+			var j := _junction_point(i, nb)
+			var dup := false
+			for q: Vector3 in done:
+				if q.distance_to(j) < 30.0:
+					dup = true
+			if dup or graph.runway_distance(j) < 40.0:
+				continue
+			done.append(j)
+			_junction_patch(pk, km, j, [i, nb])
+	if pk.count == 0:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "Kreuzungsflaechen"
+	mi.mesh = pk.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/line.gdshader")
+	mat.set_shader_parameter("base_color", Color(0.2, 0.2, 0.19))
+	mat.set_shader_parameter("mark", 0)
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+## Wendeplatten: Belag neben dem Pistenende und gelbe Wendespur (Knoten legt airside.gd an).
+func _turn_pad_marks(km: Kit) -> void:
+	var pk := Kit.new()
+	var y := 0.035
+	for pd: Dictionary in graph.pads:
+		var thr: Vector3 = pd["thr"]
+		var inward: Vector3 = pd["inward"]
+		var lat: Vector3 = pd["side"]
+		var hw := float(Catalog.LINES["piste"]["width"]) * 0.5
+		var w := hw + 24.0
+		var mid := thr + inward * 32.0 + lat * w * 0.5
+		var r2 := w * 0.5 + 9.0
+		var poly := PackedVector3Array()
+		# weicher Übergang vom Pistenrand auf die Platte, dann der Bogen um den Wendekreis
+		var s0 := thr + inward * 150.0 + lat * (hw - 2.0)
+		var s1 := thr + inward * 32.0 + lat * (w + 9.0)
+		for i in range(0, 10):
+			var t := float(i) / 10.0
+			var u := 1.0 - t
+			var cc := thr + inward * 60.0 + lat * (w + 9.0)
+			poly.append(s0 * (u * u) + cc * (2.0 * u * t) + s1 * (t * t))
+		for i in range(0, 25):
+			var ph := PI * float(i) / 24.0
+			poly.append(mid + lat * r2 * cos(ph) - inward * r2 * sin(ph))
+		poly.append(thr + inward * 32.0 - lat * 2.0)
+		var c := thr + inward * 50.0 + lat * w * 0.55
+		for n in range(poly.size()):
+			var p0 := poly[n]
+			var p1 := poly[(n + 1) % poly.size()]
+			pk.tri(Vector3(c.x, y, c.z), Vector3(p0.x, y, p0.z), Vector3(p1.x, y, p1.z), Color(1, 1, 1), Vector3(c.x, y - 1.0, c.z))
+		_strip(km, pd["pts"], 0.18, MARK_YELLOW)
+		# Randlinie (gelb, doppelt) um den Bogen
+		var edge := PackedVector3Array()
+		for i in range(1, 24):
+			var ph := PI * float(i) / 24.0
+			edge.append(mid + lat * (r2 - 1.0) * cos(ph) - inward * (r2 - 1.0) * sin(ph))
+		_strip(km, edge, 0.075, MARK_YELLOW)
+	if pk.count == 0:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "Wendeplatten"
+	mi.mesh = pk.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/line.gdshader")
+	mat.set_shader_parameter("base_color", Color(0.2, 0.2, 0.19))
+	mat.set_shader_parameter("mark", 0)
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+## Schnittpunkt der beiden Rollweg-Mittellinien bei den Knoten a und b (sonst die Mitte zwischen ihnen).
+func _junction_point(a: int, b: int) -> Vector3:
+	var ta := _tangent(a)
+	var tb := _tangent(b)
+	var pa := graph.pos[a]
+	var pb := graph.pos[b]
+	var den := ta.x * tb.z - ta.z * tb.x
+	if absf(den) < 0.15:
+		return (pa + pb) * 0.5
+	var w := pb - pa
+	var t := (w.x * tb.z - w.z * tb.x) / den
+	var j := pa + ta * t
+	if j.distance_to((pa + pb) * 0.5) > 12.0:
+		return (pa + pb) * 0.5
+	return Vector3(j.x, 0, j.z)
+
+
+func _tangent(i: int) -> Vector3:
+	var nodes: Array = graph.line_nodes.get(graph.line_idx[i], [])
+	var k := nodes.find(i)
+	if k < 0:
+		return Vector3(1, 0, 0)
+	var p0 := graph.pos[nodes[maxi(k - 1, 0)]]
+	var p1 := graph.pos[nodes[mini(k + 1, nodes.size() - 1)]]
+	var t := Vector3(p1.x - p0.x, 0, p1.z - p0.z)
+	return t.normalized() if t.length() > 0.01 else Vector3(1, 0, 0)
+
+
+## Äste einer Kreuzung bei j: [Richtung, halbe Breite, geführt] je Rollweg und Richtung, in der er von j
+## weggeht (aus den Stützpunkten des Wegs: 20 m vor und hinter der Kreuzung, falls er dort weitergeht).
+func _junction_legs(j: Vector3, seeds: Array) -> Array:
+	var legs := []
+	var seen := []
+	for sd: int in seeds:
+		var li := graph.line_idx[sd]
+		if li in seen:
+			continue
+		seen.append(li)
+		var kind := String(game.lines[li]["kind"])
+		var hw := float(Catalog.LINES[kind]["width"]) * 0.5
+		var sm: PackedVector3Array = game.lines[li]["samples"]
+		var best := 0
+		var bd := INF
+		for q in range(sm.size()):
+			var dd := Vector2(sm[q].x - j.x, sm[q].z - j.z).length()
+			if dd < bd:
+				bd = dd
+				best = q
+		for dir: int in [-1, 1]:
+			var run := 0.0
+			var q := best
+			while q + dir >= 0 and q + dir < sm.size() and run < 20.0:
+				run += sm[q].distance_to(sm[q + dir])
+				q += dir
+			var d := sm[q] - j
+			d.y = 0.0
+			if run < 6.0 or d.length() < hw * 0.6:
+				continue
+			legs.append([d.normalized(), hw, graph.guided.has(li)])
+	legs.sort_custom(func(a: Array, b: Array) -> bool: return atan2((a[0] as Vector3).z, (a[0] as Vector3).x) < atan2((b[0] as Vector3).z, (b[0] as Vector3).x))
+	return legs
+
+
+func _junction_patch(pk: Kit, km: Kit, j: Vector3, seeds: Array) -> void:
+	var legs := _junction_legs(j, seeds)
+	if OS.get_cmdline_user_args().has("--kreuzungen"):
+		print("Kreuzung ", j, " Äste ", legs)
+	if legs.size() < 2:
+		return
+	var max_hw := 0.0
+	for lg: Array in legs:
+		max_hw = maxf(max_hw, float(lg[1]))
+	var reach := max_hw + 10.0      # so weit reicht die gemeinsame Fläche in jeden Ast
+	var y := 0.052
+	var ring := []                  # Umriss gegen den Uhrzeigersinn: je Ast zwei Kantenpunkte, dazwischen Ausrundungen
+	var fillets := []
+	for n in range(legs.size()):
+		var d: Vector3 = legs[n][0]
+		var hw := float(legs[n][1])
+		var side := Vector3(-d.z, 0, d.x)    # links der Astrichtung (gegen den Uhrzeigersinn)
+		ring.append(j + d * reach - side * hw)
+		ring.append(j + d * reach + side * hw)
+	var poly := PackedVector3Array()
+	for n in range(legs.size()):
+		var a: Vector3 = ring[n * 2]
+		var b: Vector3 = ring[n * 2 + 1]
+		poly.append(a)
+		poly.append(b)
+		# Ausrundung von der linken Kante dieses Asts zur rechten Kante des nächsten
+		var dn: Vector3 = legs[n][0]
+		var dm: Vector3 = legs[(n + 1) % legs.size()][0]
+		var c: Vector3 = ring[((n + 1) % legs.size()) * 2]
+		var ctrl := _edge_cross(b, dn, c, dm, j)
+		var arc := PackedVector3Array()
+		for t_i in range(1, 12):
+			var t := float(t_i) / 12.0
+			var u := 1.0 - t
+			var q := b * (u * u) + ctrl * (2.0 * u * t) + c * (t * t)
+			poly.append(q)
+			arc.append(q)
+		fillets.append([b, arc, c, bool(legs[n][2]) or bool(legs[(n + 1) % legs.size()][2])])
+	for n in range(poly.size()):
+		var p0 := poly[n]
+		var p1 := poly[(n + 1) % poly.size()]
+		pk.tri_raw(Vector3(j.x, y, j.z), Vector3(p1.x, y, p1.z), Vector3(p0.x, y, p0.z), Vector3.UP, Color(1, 1, 1))
+	# doppelte gelbe Randlinie entlang der Ausrundungen (0,3 und 0,8 m innen)
+	for fl: Array in fillets:
+		var pts := PackedVector3Array([fl[0]])
+		pts.append_array(fl[1])
+		pts.append(fl[2])
+		for inset: float in [0.3, 0.8]:
+			var off := PackedVector3Array()
+			for q2: Vector3 in pts:
+				var to_j := j - q2
+				to_j.y = 0.0
+				off.append(q2 + to_j.normalized() * inset)
+			_strip(km, off, 0.075, MARK_YELLOW)
+	# Mittellinien: von jedem Ast in jeden anderen (keine Wende), nur auf Rollwegen ohne eigene Linien
+	for a_i in range(legs.size()):
+		for b_i in range(legs.size()):
+			if a_i == b_i or bool(legs[a_i][2]) or bool(legs[b_i][2]):
+				continue
+			var da: Vector3 = legs[a_i][0]
+			var db: Vector3 = legs[b_i][0]
+			if (-da).dot(db) < -0.2 or b_i < a_i:
+				continue
+			var s0 := j + da * reach
+			var s1 := j + db * reach
+			var cl := PackedVector3Array()
+			for t_i in range(25):
+				var t := float(t_i) / 24.0
+				var u := 1.0 - t
+				cl.append(s0 * (u * u) + j * (2.0 * u * t) + s1 * (t * t))
+			_strip(km, cl, 0.18, MARK_YELLOW)
+
+
+## Schnittpunkt der Kante a (Richtung da, nach außen) mit der Kante b (Richtung db); sonst ein Punkt nahe j.
+static func _edge_cross(a: Vector3, da: Vector3, b: Vector3, db: Vector3, j: Vector3) -> Vector3:
+	var den := da.x * db.z - da.z * db.x
+	if absf(den) < 0.05:
+		return (a + b) * 0.5
+	var w := b - a
+	var t := (w.x * db.z - w.z * db.x) / den
+	var q := a + da * t
+	if q.distance_to(j) > a.distance_to(j) * 1.5:
+		return (a + b) * 0.5
+	return q
+
+
 # ---------------------------------------------------------------- Stände
 
 ## Standnummern (am Boden und auf der Andockanzeige) und Einrolllinien vom Rollweg in den Stand.
@@ -700,7 +942,9 @@ func _stands(k: Kit, km: Kit, lamps: Dictionary) -> void:
 		# Nummer auf der Andockanzeige (leuchtend)
 		var disp := sp + bas * Vector3(0, 5.55, hd - 1.07)
 		PixelFont.draw(_lk(lamps, AMBER), label, disp, bas * Vector3(1, 0, 0), Vector3.UP, -fwd, 0.13, AMBER)
-		# Einrolllinien
+		# Einrolllinien (nicht bei Markierung "eigene" oder "aus": dort zeichnet der Spieler die Linien selbst)
+		if String((st.get("opts", {}) as Dictionary).get("markierung", "voll")) != "voll":
+			continue
 		var sid: int = graph.stand_node.get(node.get_instance_id(), -1)
 		if sid < 0 or not graph.lead_of.has(sid):
 			continue

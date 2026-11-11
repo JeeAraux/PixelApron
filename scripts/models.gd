@@ -1185,7 +1185,8 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 		top = HIVIS
 	var skirt := bool(look["skirt"])
 	var sit := pose == 5
-	var walking := pose != 0 and not sit
+	var ride := pose >= 20 and pose < 20 + WALK_FRAMES   # Radfahren: Tretkurbel dreht sich
+	var walking := pose != 0 and not sit and not ride
 	var phase := 0.0
 	if pose >= 10:
 		phase = TAU * float(pose - 10) / float(WALK_FRAMES)
@@ -1211,6 +1212,8 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 		low = minf(low, ankle_y)
 	if sit:
 		hip_y = 0.5
+	elif ride:
+		hip_y = 0.88
 	else:
 		hip_y = 0.075 - low
 	var y0 := hip_y - 0.9
@@ -1224,6 +1227,12 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 		var knee := hip + d1 * 0.45
 		var d2 := Vector3(0, -cos(a - kb), -sin(a - kb))
 		var ankle := knee + d2 * 0.43
+		if ride:
+			# Sattel über dem Becken, Pedale kreisen um das Tretlager (gegenüberliegend)
+			hip = Vector3(side * 0.095, hip_y, 0.1)
+			var th := TAU * float(pose - 20) / float(WALK_FRAMES) + (0.0 if side > 0.0 else PI)
+			ankle = Vector3(side * 0.12, 0.31 + 0.17 * sin(th), -0.1 - 0.17 * cos(th))
+			knee = _ik_knee(hip, ankle, 0.45, 0.43)
 		k.cyl(hip, knee, 0.078, 0.06, leg_col, 7)
 		k.cyl(knee, ankle, 0.058, 0.045, leg_col, 7)
 		# Schuh: flach, vorne gerundet
@@ -1247,6 +1256,16 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 			k.box(Vector3(-0.185, vy, -0.123), Vector3(0.185, vy + 0.045, 0.118), Color(0.82, 0.84, 0.86))
 	# Arme: Schulterkugel, Ober- und Unterarm, Hand
 	for side: float in [-1.0, 1.0]:
+		if ride:
+			# Hände am Lenker, Ellbogen leicht gebeugt
+			var shr := Vector3(side * 0.205, sy - 0.04, 0.0)
+			var hand := shr + (Vector3(side * 0.25, 0.96, -0.47) - shr).limit_length(0.53)
+			var elb := _ik_knee(shr, hand, 0.29, 0.26, true)
+			k.sphere(shr, 0.068, top.darkened(0.03), 8, 5)
+			k.cyl(shr, elb, 0.058, 0.048, top.darkened(0.03), 7)
+			k.cyl(elb, hand, 0.046, 0.036, top.darkened(0.03) if jacket != null or bool(look["vest"]) else skin, 7)
+			k.sphere(hand, 0.042, skin, 6, 4)
+			continue
 		var ph := phase + (PI if side > 0.0 else 0.0)
 		var b := 0.38 * sin(ph) if walking else 0.0
 		var eb := 0.25 + (0.25 * maxf(0.0, sin(ph)) if walking else 0.0)
@@ -1281,6 +1300,18 @@ static func person_mesh(look: Dictionary, pose: int) -> ArrayMesh:
 	var mesh := k.commit()
 	_cache[key] = mesh
 	return mesh
+
+
+## Kniegelenk (bzw. Ellbogen) zwischen a und b bei Gliedlängen l1, l2: Beuge nach vorn (-Z) bzw. nach außen/unten.
+static func _ik_knee(a: Vector3, b: Vector3, l1: float, l2: float, elbow: bool = false) -> Vector3:
+	var d := b - a
+	var dist := clampf(d.length(), 0.05, l1 + l2 - 0.001)
+	var dir := d.normalized()
+	var cos_a := clampf((l1 * l1 + dist * dist - l2 * l2) / (2.0 * l1 * dist), -1.0, 1.0)
+	var ang := acos(cos_a)
+	var bend := Vector3(0, 0, -1) if not elbow else Vector3(0, -1, 0.3).normalized()
+	var perp := (bend - dir * bend.dot(dir)).normalized()
+	return a + (dir * cos(ang) + perp * sin(ang)) * l1
 
 
 ## Frisuren auf dem Kopf (Mitte hc): 0 kurz, 1 lang, 2 Zopf, 3 Glatze mit Haarkranz, sonst Mütze.

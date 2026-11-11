@@ -3,7 +3,7 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 base_color : source_color = vec3(0.2, 0.2, 0.19);
-uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld, 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband, 10 Betriebsstraße, 11 geführter Rollweg, 12 Seitenraum
+uniform int mark = 0; // 1 Straße, 2 Rollweg, 3 Piste, 4 Gehweg, 5 Vorfeld (13 mit Mittellinie), 6 vierspurig, 7 Einbahn, 8 Schulter, 9 Förderband, 10 Betriebsstraße, 11 geführter Rollweg, 12 Seitenraum
 uniform float width = 7.5;
 uniform float len = 100.0;
 uniform int flip = 0;
@@ -213,8 +213,9 @@ void fragment() {
 		if (ax > half_w - 0.2) {
 			col *= 0.75;
 		}
-	} else if (mark == 5) {
-		// Betonplatten 5 × 5 m mit Fugen, leicht unterschiedlich gealtert, vereinzelt Ölflecken
+	} else if (mark == 5 || mark == 13) {
+		// Betonplatten 5 × 5 m mit Fugen, leicht unterschiedlich gealtert, vereinzelt Ölflecken;
+		// 13 = Vorfeld ohne eigene Rollführungslinien: gelbe Mittellinie, auf der die Flugzeuge rollen
 		vec2 cell = floor(wpos.xz / 5.0);
 		vec2 g = fract(wpos.xz / 5.0);
 		col = base_color * (0.95 + 0.08 * hash(cell));
@@ -224,6 +225,9 @@ void fragment() {
 		vec2 o = g - vec2(hash(cell + 3.1), hash(cell + 7.7));
 		if (hash(cell + 1.3) > 0.93 && dot(o, o) < 0.03) {
 			col *= 0.78;
+		}
+		if (mark == 13 && ax < 0.18) {
+			col = yellow;
 		}
 	} else if (mark == 12) {
 		// Seitenraum: UV.x Abstand von der Fahrbahnkante, UV2 = (Abstand Innenkante, Abstand Außenkante)

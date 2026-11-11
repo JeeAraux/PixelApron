@@ -59,6 +59,55 @@ func _mark() -> void:
 	dirty = true
 
 
+# ---------------------------------------------------------------- Menschen nach Ebenen
+
+var esc_path := PackedVector3Array()
+var esc_cum := PackedFloat32Array()
+var _layers: Dictionary = {}   # "draussen" / "E-1" / "E0" … -> Node3D unter crowd
+var _layer_t := 0.0
+
+
+func _layer(key: String) -> Node3D:
+	if not _layers.has(key):
+		var n := Node3D.new()
+		n.name = key
+		crowd.add_child(n)
+		_layers[key] = n
+	return _layers[key]
+
+
+## Menschen in Ebenen-Knoten einsortieren (drinnen nach Stockwerk, draußen extra), damit im Keller
+## nur die Leute im Keller zu sehen sind und im Obergeschoss nur die oben.
+func _process(delta: float) -> void:
+	if game == null or crowd == null:
+		return
+	_layer_t -= delta
+	if _layer_t > 0.0:
+		return
+	_layer_t = 0.2
+	for per: Dictionary in people:
+		var node: Node3D = per.get("node")
+		if not is_instance_valid(node):
+			continue
+		var par := node.get_parent()
+		if par != crowd and not _layers.values().has(par):
+			continue   # sitzt gerade im Bus o. Ä.
+		var p := node.global_position
+		var key := "draussen"
+		if not game.hall_at(p).is_empty():
+			key = "E%d" % floori((p.y + 1.0) / Catalog.FLOOR_H)
+		var lay := _layer(key)
+		if par != lay:
+			node.reparent(lay, true)
+	for key: String in _layers:
+		var lay: Node3D = _layers[key]
+		if key == "draussen":
+			lay.visible = not (game.interior_view and game.view_floor < 0)
+		else:
+			var f := int(key.substr(1))
+			lay.visible = game.floor_shown(f) if game.interior_view else f >= 0
+
+
 # ---------------------------------------------------------------- Auswertung
 
 func _analyze() -> void:
@@ -2123,10 +2172,18 @@ func _animate_inside(sim: float) -> void:
 		if not is_instance_valid(node) or not node.visible:
 			continue
 		if id == "rolltreppe":
-			var steps := node.get_node_or_null("Stufen") as Node3D
+			var steps := node.get_node_or_null("Stufen") as MultiMeshInstance3D
 			if steps != null:
-				var k := fmod(inside_t * 0.5, 8.0 / 24.0) / (8.0 / 24.0)
-				steps.position = Vector3(0, Catalog.FLOOR_H / 24.0 * k, 8.0 / 24.0 * k)
+				# Stufen laufen mit 0,5 m/s den Pfad hinauf (unten aus der Kammplatte, oben hinein)
+				if esc_path.is_empty():
+					esc_path = Factory.escalator_path()
+					esc_cum = Factory.path_cum(esc_path)
+				var mm := steps.multimesh
+				var total := esc_cum[esc_cum.size() - 1]
+				var off := fmod(inside_t * 0.5, 0.4)
+				for i in range(mm.instance_count):
+					var p := Factory.path_point(esc_path, esc_cum, fmod(float(i) * 0.4 + off, total))
+					mm.set_instance_transform(i, Transform3D(Basis.IDENTITY, p))
 		else:
 			var cab := node.get_node_or_null("Kabine") as Node3D
 			if cab != null:

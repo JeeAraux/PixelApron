@@ -1,6 +1,6 @@
 // Lichtkreis einer Straßenleuchte auf dem Boden: additiv, nur nachts. UV 0..1 über das Quadrat.
 shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled;
+render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
 global uniform float night;
 uniform vec4 tint : source_color = vec4(1.0, 0.86, 0.6, 1.0);

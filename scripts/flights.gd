@@ -72,7 +72,17 @@ func _mark_dirty() -> void:
 	dirty = true
 
 
+var cone_vis := 0.0   # Sichtbarkeit der Lichtkegel (Nacht, Nebel, Regen)
+var go_arounds := 0   # Durchstartmanöver seit Spielbeginn
+var force_kind := ""  # nur für Proben (tests/dbg): dieses Muster, wo es passt
+
+
 func _process(delta: float) -> void:
+	var murk := 0.0
+	if weather != null and String(weather.state) in ["nebel", "regen", "schnee"]:
+		murk = float(weather.strength) * (0.9 if String(weather.state) == "nebel" else 0.55)
+	cone_vis = clampf(maxf(smoothstep(0.25, 0.8, game.night), murk), 0.0, 1.0)
+	Factory.cone_material().set_shader_parameter("vis", cone_vis)
 	step(delta * game.sim_factor())
 
 
@@ -151,7 +161,7 @@ func step(sim: float) -> void:
 		if weather.needs_plowing() and owners.is_empty() and not _runway().is_empty():
 			var busy := false
 			for q: Dictionary in planes:
-				busy = busy or q["state"] in ["anflug", "landung", "start"]
+				busy = busy or q["state"] in ["anflug", "landung", "start", "durchstarten"]
 			if not busy:
 				weather.start_plowing((_runway()["samples"] as PackedVector3Array))
 	if betrieb != null:
@@ -195,7 +205,7 @@ func step(sim: float) -> void:
 
 func _rebuild() -> void:
 	dirty = false
-	graph.build(game.lines, game.stands(), game.items_of("rollhalt"))
+	graph.build(game.lines, game.stands(), game.items_of("rollhalt") + game.items_of("wendeplatte"))
 	reserved.clear()
 	for p: Dictionary in planes.duplicate():
 		var st: Dictionary = p["stand"]
@@ -204,6 +214,8 @@ func _rebuild() -> void:
 			continue
 		p["path"] = []   # wird beim nächsten Schritt neu gesucht
 		p.erase("route")
+		p.erase("push_choice")
+		p.erase("push_node")
 		if p["state"] in ["abfertigung", "pushback"]:
 			_reserve(_stand_id(p), int(p["id"]))
 
@@ -387,6 +399,8 @@ func _try_spawn() -> void:
 		reason = "Piste zu kurz für die Flugzeuge"
 		return
 	var kind: String = kinds[randi() % kinds.size()]
+	if force_kind != "" and force_kind in kinds:
+		kind = force_kind   # Proben: bestimmtes Muster erzwingen
 	# Frachtflug: mit Frachtterminal (Strom) jeder fünfte, nachts jeder zweite
 	var cargo := false
 	if _cargo_ok() and not cargo_kinds.is_empty():
@@ -493,7 +507,7 @@ func _runway_direction() -> void:
 		return
 	var busy := {}
 	for p: Dictionary in planes:
-		if p["state"] in ["anflug", "landung", "start", "wartet", "warteschleife"]:
+		if p["state"] in ["anflug", "landung", "start", "wartet", "warteschleife", "durchstarten"]:
 			busy[int(p.get("ri", 0))] = true
 	if owners.is_empty() and busy.is_empty():
 		var old_l := land_ri
@@ -570,6 +584,64 @@ func rwy_name(ri: int) -> String:
 
 ## Anflug: aus einer Warteschleife seitlich heran, in einer Kurve mit Querneigung auf den Endanflug,
 ## dann 3°-Gleitpfad. Die Kurve wird vorab abgetastet.
+## Grund zum Durchstarten oder leer. Nur mit eingeschalteten Ereignissen (Selbsttest und Demo bleiben gleich).
+## Etwa jeder 150. Anflug bei gutem Wetter, deutlich mehr bei Nebel, Schnee, Regen, Gewitter und Seitenwind.
+func _go_around_reason(p: Dictionary) -> String:
+	if events == null or not bool(events.enabled):
+		return ""
+	var ri := int(p.get("ri", 0))
+	for q: Dictionary in planes:
+		if q != p and int(q.get("ri", -1)) == ri and String(q["state"]) in ["landung", "start"]:
+			return "Piste noch belegt"
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(int(p["id"]) * 7919 + int(game.minutes))
+	var chance := 0.007
+	var why := "instabiler Anflug"
+	if weather != null:
+		var wst := String(weather.state)
+		var add := float({"nebel": 0.09, "schnee": 0.07, "regen": 0.035, "wolken": 0.004}.get(wst, 0.0)) * float(weather.strength)
+		if add > 0.0:
+			chance += add
+			why = {"nebel": "keine Sicht auf die Befeuerung", "schnee": "Schnee, keine Sicht", "regen": "Starkregen", "wolken": "Wolken unter dem Minimum"}.get(wst, why)
+	if storm:
+		chance += 0.18
+		why = "Windscherung im Gewitter"
+	var xw := absf(sin(deg_to_rad(float(game.wind_dir)) - atan2((p["dir"] as Vector3).x, -(p["dir"] as Vector3).z))) * float(game.wind_kt)
+	if xw > 15.0:
+		chance += (xw - 15.0) * 0.01
+		why = "Seitenwind und Böen"
+	return why if rng.randf() < chance else ""
+
+
+func _start_go_around(p: Dictionary, why: String) -> void:
+	p["state"] = "durchstarten"
+	p["gas"] = int(p.get("gas", 0)) + 1
+	go_arounds += 1
+	game.toast.emit("%s startet durch (%s)" % [p["code"], why])
+
+
+## Platzrunde nach dem Durchstarten: Steigflug geradeaus, Kurve in den Gegenanflug, zurück auf den Endanflug.
+func _plan_circuit(p: Dictionary) -> void:
+	var dir: Vector3 = p["dir"]
+	var td: Vector3 = p["td"]
+	var entry := td - dir * 2600.0
+	var start: Vector3 = p["pos"]
+	start.y = 0.0
+	var side := dir.cross(Vector3.UP).normalized() * (1.0 if int(p["id"]) % 2 == 0 else -1.0)
+	var c1 := start + dir * 2600.0 + side * 3200.0
+	var c2 := entry - dir * 4200.0 + side * 3200.0
+	var pts := PackedVector3Array()
+	for i in range(161):
+		var t := float(i) / 160.0
+		var u := 1.0 - t
+		pts.append(start * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + entry * (t * t * t))
+	var cum := PackedFloat32Array([0.0])
+	for i in range(1, pts.size()):
+		cum.append(cum[i - 1] + pts[i - 1].distance_to(pts[i]))
+	p["approach"] = {"pts": pts, "s": cum, "total": cum[cum.size() - 1], "alt0": float(p["alt"]), "alt1": 2600.0 * GLIDE}
+	p["as"] = 0.0
+
+
 func _plan_approach(p: Dictionary) -> void:
 	var dir: Vector3 = p["dir"]
 	var td: Vector3 = p["td"]
@@ -741,6 +813,15 @@ func _update(p: Dictionary, sim: float) -> void:
 			var pos: Vector3 = p["pos"]
 			var to_td := td - pos
 			var move := float(p["speed"]) * sim
+			# Entscheidungshöhe (etwa 60 m): bei schlechter Sicht, Böen oder belegter Piste durchstarten
+			if to_td.length() < 1150.0 and not p.has("ga_checked"):
+				p["ga_checked"] = true
+				var why := _go_around_reason(p)
+				if why != "":
+					_start_go_around(p, why)
+					_animate(p, sim)
+					_place(p)
+					return
 			if to_td.length() <= move:
 				p["pos"] = td
 				p["alt"] = 0.0
@@ -758,6 +839,18 @@ func _update(p: Dictionary, sim: float) -> void:
 					alt = 14.0 * pow(alt / 14.0, 1.6)
 				p["alt"] = alt
 				p["pitch"] = deg_to_rad(lerpf(5.5, 2.5, clampf(alt / 14.0, 0.0, 1.0)))
+		"durchstarten":
+			# Durchstarten: Schub voll, Nase hoch, Fahrwerk und Klappen rein, steigen geradeaus, dann Platzrunde
+			var vga := float(Catalog.PLANES[p["kind"]]["vapp"]) * 1.35
+			p["speed"] = move_toward(float(p["speed"]), vga, 2.2 * sim)
+			p["pos"] = (p["pos"] as Vector3) + dir * float(p["speed"]) * sim
+			p["alt"] = minf(float(p["alt"]) + 9.0 * sim, 460.0)
+			p["pitch"] = move_toward(float(p["pitch"]), deg_to_rad(12.0 if float(p["alt"]) < 300.0 else 6.0), deg_to_rad(4.0) * sim)
+			p["roll"] = lerpf(float(p.get("roll", 0.0)), 0.0, clampf(sim * 1.5, 0.0, 1.0))
+			var past := ((p["pos"] as Vector3) - (p["td"] as Vector3)).dot(dir)
+			if past > 3200.0 and float(p["alt"]) >= 300.0:
+				_plan_circuit(p)
+				p["state"] = "anflug"
 		"landung":
 			var v: float = p["speed"]
 			v = maxf(V_EXIT, v - DEC_LAND * sim)
@@ -1054,12 +1147,14 @@ func _plan_arrival(p: Dictionary) -> bool:
 func _plan_departure(p: Dictionary) -> bool:
 	var h: Vector3 = p["heading"]
 	var start := graph.nearest_taxi(p["pos"], 40.0)
+	if p.has("push_node") and int(p["push_node"]) < graph.pos.size() and graph.pos[int(p["push_node"])].distance_to(p["pos"]) < 6.0:
+		start = int(p["push_node"])
 	if start < 0:
 		start = graph.nearest(p["pos"])
 	var goal := _rwy_goal(p)
 	if start < 0 or goal < 0:
 		return false
-	var nodes := graph.path(start, goal, {}, h, bool(p.get("wide", false)))
+	var nodes := graph.path(start, goal, {}, h, bool(p.get("wide", false)), p["dir"])
 	if nodes.is_empty():
 		return false
 	_set_route(p, nodes, null, false)
@@ -1069,6 +1164,10 @@ func _plan_departure(p: Dictionary) -> bool:
 func _rwy_goal(p: Dictionary) -> int:
 	var ends := _rwy_ends(p["rwy"])
 	p["dir"] = ends[1]
+	# mit Wendeplatte am Startende: Ziel ist deren Ausfahrt auf der Pistenmitte (Start in voller Länge)
+	var pe := graph.pad_exit(ends[0])
+	if pe >= 0:
+		return pe
 	return graph.nearest((ends[0] as Vector3) + (ends[1] as Vector3) * 70.0, "piste")
 
 
@@ -1568,7 +1667,7 @@ func _deadlocked(p: Dictionary) -> bool:
 	var q := _plane_by_id(int(p.get("blocked_by", -1)))
 	if q.is_empty():
 		return true
-	if q["state"] in ["pushback", "abfertigung", "start", "landung", "anflug"]:
+	if q["state"] in ["pushback", "abfertigung", "start", "landung", "anflug", "durchstarten"]:
 		return false
 	if float(q["speed"]) > 0.2:
 		return false
@@ -1676,6 +1775,7 @@ func _pushback(p: Dictionary, sim: float) -> void:
 			if float(p["ptimer"]) > 9.0:
 				_release_all(id)
 				p.erase("push")
+				p.erase("push_choice")
 				p["stand"] = {}   # Position ist frei für den nächsten Flug
 				p["state"] = "rollt_aus"
 				p["path"] = []
@@ -1685,37 +1785,54 @@ func _pushback(p: Dictionary, sim: float) -> void:
 				_reserve(graph.nearest_taxi(p["pos"], 40.0), id)
 
 
-## Pushback-Kurve: rückwärts aus der Position, das Heck schwenkt entgegen der späteren Rollrichtung.
-## Reserviert Zufahrt und den Rollweg dahinter; false, wenn dort gerade jemand ist.
+## Pushback wie im echten Betrieb: der Schlepper schiebt das Flugzeug rückwärts aus der Position auf die
+## Rollgasse hinter dem Stand; dabei schwenkt das Heck so, dass die Nase am Ende in die Richtung zeigt,
+## in die es danach zur Piste rollt (höchstens etwa 110° Drehung, kein Schieben nach vorn oder zur Seite).
+## Ziel und Richtung werden einmal gewählt (Knoten hinter dem Heck, von dem aus ein Weg zur Piste führt)
+## und gemerkt; danach wird nur noch geprüft, ob der Weg frei ist.
 func _plan_pushback(p: Dictionary) -> bool:
 	var id: int = p["id"]
 	var sid := _stand_id(p)
 	if sid < 0 or not graph.lead_of.has(sid):
 		return false
-	var lid: int = graph.lead_of[sid]
+	var p0: Vector3 = p["pos"]
+	var fwd: Vector3 = graph.stand_fwd.get(sid, p["heading"])
+	fwd.y = 0.0
+	fwd = fwd.normalized()
 	var goal := _rwy_goal(p)
-	var path0 := graph.path(lid, goal, {}, Vector3.ZERO, bool(p.get("wide", false)))
-	if path0.size() < 3:
-		return false
-	var b_node: int = path0[1]
-	var dvec := graph.pos[path0[2]] - graph.pos[path0[1]]
-	dvec.y = 0.0
-	var d := dvec.normalized()
-	var t_node := graph.nearest_taxi(graph.pos[b_node] - d * 26.0, 30.0)
-	if t_node < 0:
-		t_node = b_node
-	var need := graph.path(lid, t_node)
-	need.append_array(graph.path(t_node, b_node))
-	need.append(sid)
-	# auch dort, wo nach dem Pushback das Heck steht, muss frei sein
-	var tail_node := graph.nearest_taxi(graph.pos[t_node] - d * 20.0, 30.0)
-	if tail_node >= 0:
-		need.append(tail_node)
+	var wide := bool(p.get("wide", false))
+	if not p.has("push_choice"):
+		var choice := _push_target(p0, fwd, goal, wide, p["dir"])
+		if choice.is_empty():
+			return false
+		p["push_choice"] = choice
+	var t_node: int = p["push_choice"][0]
+	var d: Vector3 = p["push_choice"][1]
+	var dep: Array = p["push_choice"][2]
+	# Reservierung: Zufahrt, alles entlang der Schiebekurve und die Rollgasse vor und hinter dem Ziel
+	var tp := graph.pos[t_node]
+	var back := maxf(-(tp - p0).dot(fwd), 12.0)
+	var c1 := p0 - fwd * back * 0.55
+	var c2 := tp + d * clampf(back * 0.6, 10.0, 30.0)
+	var pts := PackedVector3Array()
+	var steps := 60
+	for k in range(steps + 1):
+		var t := float(k) / float(steps)
+		var u := 1.0 - t
+		pts.append(p0 * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + tp * (t * t * t))
+	var need := [graph.lead_of[sid], sid, t_node]
+	for k in range(0, pts.size(), 4):
+		var nn := graph.nearest_taxi(pts[k], 14.0)
+		if nn >= 0 and not (nn in need):
+			need.append(nn)
+	for off: float in [-30.0, -15.0, 15.0]:
+		var nn2 := graph.nearest_taxi(tp + d * off, 10.0)
+		if nn2 >= 0 and not (nn2 in need):
+			need.append(nn2)
 	for n: int in need:
 		if not _free_for(n, id):
 			return false
-	# Pushback erst, wenn der erste Rollwegabschnitt in Abflugrichtung frei ist (kein Gegenverkehr)
-	var dep := graph.path(t_node, goal, {}, d, bool(p.get("wide", false)))
+	# erst schieben, wenn der erste Rollwegabschnitt in Abflugrichtung frei ist (kein Gegenverkehr)
 	var dep_s := PackedFloat32Array()
 	var run := 0.0
 	for i in range(dep.size()):
@@ -1725,7 +1842,6 @@ func _plan_pushback(p: Dictionary) -> bool:
 	var blk := _block_ahead(dep, dep_s, 0, id) if not dep.is_empty() else [-1, []]
 	if int(blk[0]) >= 0:
 		return false
-	# kein Pushback, solange uns auf dem ersten Stück jemand entgegenrollt
 	var dep_set := {}
 	for i in range(mini(dep.size(), 90)):
 		var a := graph.pos[dep[maxi(i - 1, 0)]]
@@ -1744,25 +1860,76 @@ func _plan_pushback(p: Dictionary) -> bool:
 		_reserve(n, id)
 	for n: int in blk[1]:
 		_reserve(n, id)
-	var p0: Vector3 = p["pos"]
-	var fwd: Vector3 = p["heading"]
-	var tp := graph.pos[t_node]
-	var depth := maxf((p0 - tp).dot(fwd), 10.0)
-	var c1 := p0 - fwd * depth * 0.55
-	var c2 := tp + d * minf(24.0, depth * 0.6)
-	var pts := PackedVector3Array()
-	var steps := 60
-	for k in range(steps + 1):
-		var t := float(k) / float(steps)
-		var u := 1.0 - t
-		pts.append(p0 * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + tp * (t * t * t))
 	var cum := PackedFloat32Array()
 	cum.resize(pts.size())
 	cum[0] = 0.0
 	for k in range(1, pts.size()):
 		cum[k] = cum[k - 1] + pts[k - 1].distance_to(pts[k])
 	p["push"] = {"pts": pts, "s": cum, "total": cum[cum.size() - 1]}
+	p["push_node"] = t_node
 	return true
+
+
+## Ziel des Pushbacks: [Knoten, Blickrichtung danach, Weg zur Piste] oder leer.
+## Kandidaten liegen 18 bis 95 m hinter der Standmitte auf Rollgassen; bevorzugt kurz, wenig Drehung,
+## nah an der verlängerten Standachse und mit kurzem Weg zur Piste.
+func _push_target(p0: Vector3, fwd: Vector3, goal: int, wide: bool, end_dir: Vector3 = Vector3.ZERO) -> Array:
+	var cands := []
+	for i in range(graph.pos.size()):
+		if graph.in_stand[i] == 1 or not (graph.kind[i] in ["rollweg", "rollweg_breit", "vorfeld", "rolllinie"]):
+			continue
+		if graph.guided.has(graph.line_idx[i]):
+			continue
+		var rel := graph.pos[i] - p0
+		rel.y = 0.0
+		var behind := -rel.dot(fwd)
+		if behind < 18.0 or rel.length() > 95.0:
+			continue
+		var tg := _node_tangent(i)
+		for h: Vector3 in [tg, -tg]:
+			if h.dot(fwd) < -0.35:
+				continue   # mehr als ~110° Drehung: so schiebt niemand
+			var swing := acos(clampf(h.dot(fwd), -1.0, 1.0))
+			# wo ein Flugzeug nach einem weichen Bogen tatsächlich steht: hinter dem Stand, um den
+			# Kurvenradius entgegen der späteren Rollrichtung versetzt (das Heck schwenkt dorthin)
+			var rad := clampf(behind * 0.55, 12.0, 30.0) * sin(swing)
+			var ideal := p0 - fwd * behind - h * rad
+			var miss := Vector2(graph.pos[i].x - ideal.x, graph.pos[i].z - ideal.z).length()
+			cands.append([behind * 1.0 + miss * 0.9 + swing * 8.0, i, h])
+	cands.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+	var best: Array = []
+	var best_cost := INF
+	for c: Array in cands.slice(0, 10):
+		var dep := graph.path(int(c[1]), goal, {}, c[2], wide, end_dir)
+		if dep.is_empty():
+			continue
+		var len := 0.0
+		for k in range(1, dep.size()):
+			len += graph.pos[dep[k]].distance_to(graph.pos[dep[k - 1]])
+		var cost := float(c[0]) + len * 0.05
+		if cost < best_cost:
+			best_cost = cost
+			best = [int(c[1]), c[2], dep]
+	return best
+
+
+## Richtung der Rollgasse an Knoten i (aus den Nachbarn auf derselben Linie).
+func _node_tangent(i: int) -> Vector3:
+	var li := graph.line_idx[i]
+	var a := graph.pos[i]
+	var b := graph.pos[i]
+	for j: int in graph.adj[i]:
+		if graph.line_idx[j] != li:
+			continue
+		if (graph.pos[j] - graph.pos[i]).dot(b - a) <= 0.0 and a == graph.pos[i]:
+			a = graph.pos[j]
+		else:
+			b = graph.pos[j]
+	var t := b - a
+	t.y = 0.0
+	if t.length() < 0.01:
+		return Vector3(1, 0, 0)
+	return t.normalized()
 
 
 func _park(p: Dictionary) -> void:
@@ -1907,7 +2074,7 @@ func _animate(p: Dictionary, sim: float) -> void:
 	var state: String = p["state"]
 	var target := 0.0
 	match state:
-		"anflug", "start":
+		"anflug", "start", "durchstarten":
 			target = 34.0
 		"landung":
 			target = 30.0 if float(p["speed"]) > 30.0 else 16.0   # Schubumkehr, dann Leerlauf
@@ -1931,7 +2098,7 @@ func _animate(p: Dictionary, sim: float) -> void:
 		var want := 1.0
 		if state == "anflug":
 			want = 1.0 if (p["pos"] as Vector3).distance_to(p["td"]) < 2600.0 and not p.has("approach") else 0.0
-		elif state == "start" and float(p["alt"]) > 12.0:
+		elif (state == "start" or state == "durchstarten") and float(p["alt"]) > 12.0:
 			want = 0.0
 		var g := move_toward(float(p.get("gear", 1.0)), want, sim / 6.0)
 		p["gear"] = g
@@ -1951,6 +2118,8 @@ func _animate(p: Dictionary, sim: float) -> void:
 			flap_want = 0.45
 		"start":
 			flap_want = 0.45 if float(p["alt"]) < 150.0 else 0.0
+		"durchstarten":
+			flap_want = 0.5 if float(p["alt"]) < 250.0 else 0.15
 	var fl := move_toward(float(p.get("flaps", 0.0)), flap_want, sim / 9.0)
 	var spo_want := 1.0 if state == "landung" and float(p["speed"]) > 18.0 else 0.0
 	var sp := move_toward(float(p.get("spoilers", 0.0)), spo_want, sim / 1.2)
@@ -1970,7 +2139,7 @@ func _animate(p: Dictionary, sim: float) -> void:
 				spn.basis = Basis(spn.get_meta("axis") as Vector3, -smoothstep(0.0, 1.0, sp) * 0.85)
 	var land := node.get_node_or_null("Landelicht") as Node3D
 	if land != null:
-		land.visible = state in ["anflug", "landung", "start"] or (game.night > 0.4 and state in ["rollt_ein", "rollt_aus", "wartet"])
+		land.visible = state in ["anflug", "landung", "start", "durchstarten"] or (game.night > 0.4 and state in ["rollt_ein", "rollt_aus", "wartet"])
 		var pool := node.get_node_or_null("Bodenlicht") as Node3D
 		if pool != null:
 			var alt := float(p.get("alt", 0.0))
@@ -1986,7 +2155,18 @@ func _animate(p: Dictionary, sim: float) -> void:
 		beacon.visible = on and fmod(float(p["t"]), 1.1) < 0.18
 	var strobe := node.get_node_or_null("Strobe") as Node3D
 	if strobe != null:
-		strobe.visible = state in ["anflug", "landung", "start"] and fmod(float(p["t"]), 1.4) < 0.08
+		# Blitzlichter: Doppelblitz wie bei Airbus und Boeing, auf der Piste und in der Luft
+		var ft := fmod(float(p["t"]), 1.2)
+		strobe.visible = state in ["anflug", "landung", "start", "warteschleife", "durchstarten"] and (ft < 0.05 or (ft > 0.14 and ft < 0.19))
+	if land != null:
+		# Lichtkegel nur im Dunkeln oder bei schlechter Sicht, beim Ausfahren weich eingeblendet
+		var cone := land.get_node_or_null("Lichtkegel") as GeometryInstance3D
+		if cone != null:
+			var on := float(p.get("lights", 0.0))
+			on = move_toward(on, 1.0 if land.visible else 0.0, 0.05)
+			p["lights"] = on
+			cone.visible = on > 0.01 and cone_vis > 0.02
+			cone.transparency = 1.0 - on
 
 
 func _place(p: Dictionary) -> void:
@@ -2215,7 +2395,7 @@ func describe(p: Dictionary) -> String:
 
 
 func _route(p: Dictionary) -> String:
-	return ("aus " if p["state"] in ["anflug", "landung", "rollt_ein"] else "nach ") + String(p["city"])
+	return ("aus " if p["state"] in ["anflug", "landung", "rollt_ein", "durchstarten"] else "nach ") + String(p["city"])
 
 
 func _status(p: Dictionary) -> Array:
@@ -2223,7 +2403,9 @@ func _status(p: Dictionary) -> Array:
 		"warteschleife":
 			return ["Warteschleife %d Min" % int(p.get("hold_t", 0.0)), Color(1.0, 0.55, 0.45)]
 		"anflug":
-			return ["Anflug", Color(0.56, 0.75, 0.94)]
+			return ["Anflug" if int(p.get("gas", 0)) == 0 else "Neuer Anflug", Color(0.56, 0.75, 0.94)]
+		"durchstarten":
+			return ["Durchstarten", Color(1.0, 0.55, 0.45)]
 		"landung":
 			return ["Landung", Color(0.56, 0.75, 0.94)]
 		"rollt_ein":
@@ -2263,7 +2445,7 @@ func rows() -> Array:
 
 ## Geplante Zeit und erwartete Verspätung: "An 14:05", "Ab 14:50 +12".
 func time_text(p: Dictionary) -> String:
-	var arr := String(p["state"]) in ["warteschleife", "anflug", "landung", "rollt_ein"]
+	var arr := String(p["state"]) in ["warteschleife", "anflug", "landung", "rollt_ein", "durchstarten"]
 	var t := float(p.get("sta" if arr else "std", game.minutes))
 	var expect := game.minutes
 	if not arr:

@@ -22,6 +22,22 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.26: Wetter, Keller, Pushback und Rollwege**
+  - **Nebel und Nacht:** Kein weißes Flimmern mehr über Laternen und Lichtkegeln im Nebel. Stattdessen ziehen Nebelschwaden knapp über dem Boden, Tower und Dächer ragen heraus. Die Nacht ist dunkler und ruhiger, Fenster leuchten gleichmäßig warm, Oberlichter im Dach nur schwach.
+  - **Landescheinwerfer:** Lichtkegel in der Luft bei Nacht, Nebel und Regen, weich ein- und ausgeblendet. Dazu kommen rote und grüne Positionslichter und der Doppelblitz der Strobes.
+  - **Durchstarten:** Ein kleiner Teil der Anflüge startet durch, bei Nebel, Schnee, Starkregen, Gewitter und Seitenwind deutlich mehr. Die Maschine steigt geradeaus, fährt Fahrwerk und Klappen ein und kommt über eine Platzrunde zurück.
+  - **Keller:** Wer im Untergeschoss baut, bekommt den Keller unter der Halle automatisch angelegt.
+  - **Treppen und Rolltreppen zwischen den Ebenen:** In der Decke darüber gibt es eine Öffnung mit Glasbrüstung, und die Verbindung ist auch von der oberen Ebene aus zu sehen.
+  - **Neue Rolltreppe nach Vorbild:** 1000-mm-Stufen mit gelben Kanten, die flach aus der Kammplatte laufen, Glasbalustrade, umlaufender Handlauf und Edelstahlverkleidung. Die Treppe hat Natursteinstufen und Wangen.
+  - **Menschen je Ebene:** Im Keller sind nur die Leute im Keller zu sehen, oben nur die oben.
+  - **Räume nebeneinander:** Gemeinsame Wände werden nicht mehr doppelt gebaut, und Türen schneiden alle Wandstücke, auf denen sie sitzen.
+  - **Fahrzeuge in der rechten Spur:** Auf Betriebsstraßen fahren die Fahrzeuge rechts statt in der Mitte. Radfahrer treten in die Pedale, statt zu laufen.
+  - **Pushback wie echt:** Der Schlepper schiebt rückwärts auf die Rollgasse hinter dem Stand, das Heck schwenkt in den Bogen, und die Nase zeigt am Ende in die Rollrichtung. Ziele, von denen kein Weg zur Piste führt, werden nicht mehr gewählt.
+  - **Rollwegkreuzungen:** An Kreuzungen gibt es eine gemeinsame Fläche mit Ausrundungen und gelben Randlinien entlang der Bögen. Die Mittellinien führen als Bögen in jeden Ast, ohne Überlappungen.
+  - **Realistischere Rollwege:** Die Flugzeuge bevorzugen den Parallelrollweg und lange gerade Strecken. Über Vorfelder rollen sie nur, wenn es nötig ist, und auf der Piste nur zum Kreuzen oder Zurückrollen.
+  - **Wendeplatte:** Neues Bauteil am Pistenende. Flugzeuge können dort umkehren (Backtrack) und in voller Länge starten.
+  - **Standmarkierung wählbar:** Mit Einrolllinie, mit selbst gezeichneten Rollführungslinien oder ganz ohne. Vorfelder ohne eigene Linien zeigen die gelbe Mittellinie, auf der die Flugzeuge rollen.
+  - **Abfertigung:** Frachttore von A320 und A321 an der richtigen Stelle. Gepäckzüge fahren nicht mehr durch Triebwerke (A380, A350). Vorfeldbusse meiden Standflächen und halten vor wartenden Flugzeugen an.
 - **Update 0.25: Fenster nach Vorbild**
   - **Kabinenfenster in Originalgröße:** Jeder Typ hat Fenstermaß und Fensterabstand nach Herstellerangabe, zum Beispiel A320 mit 22,9 × 31,2 cm im 21-Zoll-Raster, 737 mit 25,4 × 35,6 cm und 787 mit den großen 27,2 × 46,7 cm. Die Fenster sind abgerundet, folgen der Rumpfwölbung, haben einen hellgrauen Rand und im Glas spiegelt sich der Himmel.
   - **Cockpitscheiben nach Seitenansichten der Vorbilder:** Die Airbus-Anordnung hat sechs Scheiben mit dunklen Holmen und einem hinteren Fenster mit abfallender Oberkante. Die Boeing 737, 767 und 777 haben weiße Holme und schräge Seitenfenster. Die 787 hat nur vier Scheiben mit keilförmigem Seitenfenster. Die Maske des A350 läuft hinten spitz aus, und das Cockpit des A380 sitzt tiefer, zwischen den Decks.

@@ -104,6 +104,7 @@ func _ready() -> void:
 	world.add_child(airfield)
 	airfield.setup(game)
 	game.network_changed.connect(_update_ground_cuts)
+	game.items_changed.connect(_update_ground_cuts)
 	cam_rig = IsoCamera.new()
 	cam_rig.name = "Kamera"
 	world.add_child(cam_rig)
@@ -549,10 +550,11 @@ func _daylight() -> void:
 		sun.light_color = Color(1.0, 0.97, 0.9).lerp(Color(1.0, 0.62, 0.38), dusk * 0.85)
 	else:
 		sun.basis = Basis.looking_at(Vector3(-0.4, -0.8, -0.45).normalized(), Vector3.UP)
-		sun.light_energy = 0.22 * smoothstep(-0.04, -0.3, elev)
-		sun.light_color = Color(0.6, 0.7, 1.0)
-	env.ambient_light_color = Color(0.66, 0.70, 0.78).lerp(Color(0.34, 0.40, 0.62), night).lerp(Color(0.85, 0.68, 0.6), dusk * (1.0 - night) * 0.35)
-	env.ambient_light_energy = lerpf(0.62, 0.52, night)
+		sun.light_energy = 0.2 * smoothstep(-0.04, -0.3, elev)
+		sun.light_color = Color(0.62, 0.68, 0.9)
+	# Nacht: gedämpftes, kaum gefärbtes Mondlicht; die Lampen setzen die warmen Akzente
+	env.ambient_light_color = Color(0.66, 0.70, 0.78).lerp(Color(0.3, 0.33, 0.42), night).lerp(Color(0.85, 0.68, 0.6), dusk * (1.0 - night) * 0.35)
+	env.ambient_light_energy = lerpf(0.62, 0.4, night)
 	env.background_color = Color(0.36, 0.42, 0.3).lerp(Color(0.07, 0.09, 0.14), night)
 	weather.apply_light(sun, env)
 	if game.interior_view and game.view_floor < 0:

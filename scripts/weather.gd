@@ -29,6 +29,7 @@ var plow_path := PackedVector3Array()
 var plow_nodes: Array = []
 var _rain: CPUParticles3D
 var _flakes: CPUParticles3D
+var _mist: Array = []           # Nebelschwaden: drei waagrechte Schichten um die Kamera
 
 
 func setup(g: GameState, camera: Node3D) -> void:
@@ -44,6 +45,20 @@ func setup(g: GameState, camera: Node3D) -> void:
 	_flakes.spread = 18.0
 	_flakes.initial_velocity_min = 7.0
 	_flakes.initial_velocity_max = 11.0
+	var sh := load("res://shaders/mist.gdshader")
+	for i in range(3):
+		var mi := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(2.0, 2.0)
+		mi.mesh = pm
+		var mat := ShaderMaterial.new()
+		mat.shader = sh
+		mat.set_shader_parameter("seed", float(i) * 1.7)
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visible = false
+		add_child(mi)
+		_mist.append(mi)
 
 
 func _particles(size: Vector2, col: Color, amount: int, life: float) -> CPUParticles3D:
@@ -193,6 +208,20 @@ func _process(_delta: float) -> void:
 		p.emission_box_extents = Vector3(w, 25.0, w)
 	_rain.emitting = show and state == "regen" and strength > 0.2
 	_flakes.emitting = show and state == "schnee" and strength > 0.2
+	# Nebelschwaden in 1,5 / 4 / 8 m Höhe, nachts dunkler
+	var fogamt := strength if state == "nebel" else 0.0
+	var night: float = game.night if game != null else 0.0
+	var wd := deg_to_rad(float(game.wind_dir)) if game != null else 0.0
+	for i in range(_mist.size()):
+		var mi: MeshInstance3D = _mist[i]
+		mi.visible = fogamt > 0.02 and show and not (game.interior_view and game.view_floor < 0)
+		if mi.visible:
+			mi.global_position = Vector3(t.x, [1.5, 4.0, 8.0][i], t.z)
+			mi.scale = Vector3(w * 1.6, 1.0, w * 1.6)
+			var mat := mi.material_override as ShaderMaterial
+			mat.set_shader_parameter("amount", fogamt * [0.55, 0.42, 0.3][i])
+			mat.set_shader_parameter("col", Color(0.86, 0.88, 0.9).lerp(Color(0.2, 0.22, 0.27), night))
+			mat.set_shader_parameter("drift", Vector2(sin(wd), -cos(wd)) * -1.0)
 	_move_plows()
 
 
@@ -240,12 +269,13 @@ func apply_light(sun: DirectionalLight3D, env: Environment) -> void:
 	var fog := state == "nebel" or state == "schnee" or state == "regen"
 	env.fog_enabled = fog and strength > 0.02
 	if env.fog_enabled:
-		env.fog_light_color = Color(0.78, 0.8, 0.84).lerp(Color(0.2, 0.22, 0.28), game.night)
+		# Bodennebel: dicht am Boden, Dächer, Tower und Masten ragen heraus; nicht mehr alles gleich grau
+		env.fog_light_color = Color(0.74, 0.77, 0.8).lerp(Color(0.16, 0.18, 0.23), game.night)
 		env.fog_light_energy = 1.0
 		env.fog_density = 0.0
 		env.fog_sky_affect = 0.0
-		env.fog_height = 18.0 if state == "nebel" else 40.0
-		env.fog_height_density = (0.05 if state == "nebel" else (0.008 if state == "schnee" else 0.004)) * strength
+		env.fog_height = 9.0 if state == "nebel" else 40.0
+		env.fog_height_density = (0.012 if state == "nebel" else (0.008 if state == "schnee" else 0.004)) * strength
 
 
 func status_text() -> String:

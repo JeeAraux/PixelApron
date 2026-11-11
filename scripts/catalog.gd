@@ -92,6 +92,8 @@ const ITEMS := {
 		"desc": "900 m lange Lichterkette mit Querbalken und Lauffeuer vor einer Pistenschwelle (CAT I). Rastet am Pistenende ein, leuchtet mit der Befeuerungsstation. Anflüge bei Nacht und schlechtem Wetter werden pünktlicher."},
 	"papi": {"name": "PAPI", "short": "Gleitwinkelfeuer", "size": Vector2(6, 6), "h": 1.3, "cost": 60000, "grid": 1.0, "marker": "papi",
 		"desc": "Gleitwinkelbefeuerung: vier Lampenkästen links neben dem Aufsetzpunkt zeigen den Piloten rot und weiß. Rastet neben der Piste ein."},
+	"wendeplatte": {"name": "Wendeplatte", "size": Vector2(10, 10), "h": 0.3, "cost": 220000, "grid": 1.0, "marker": "wende",
+		"desc": "Verbreiterung am Pistenende, auf der Flugzeuge umkehren (Backtrack): Wo kein Rollweg bis zum Pistenende führt, rollen Abflüge auf der Piste dorthin, wenden auf der Platte und starten in voller Länge; gelandete Flugzeuge kehren hier um, wenn die Abrollwege hinter ihnen liegen. Rastet am Pistenende ein, die Seite folgt dem Mauszeiger."},
 	"rollhalt": {"name": "Rollhalteort", "size": Vector2(4, 4), "h": 1.2, "cost": 15000, "grid": 1.0, "marker": "rollweg",
 		"desc": "Haltepunkt auf einem Rollweg vor der Piste: Markierung, Haltebalken, Pistenwarnlichter und Schilder. Abflüge warten hier auf die Startfreigabe, Ankünfte kreuzen erst mit Freigabe. 60 bis 250 m vor der Pistenmitte auf einen Rollweg setzen; ohne eigenen Haltepunkt gilt ein gedachter bei 90 m."},
 	"flutlicht": {"name": "Flutlichtmast", "size": Vector2(2, 2), "h": 25.0, "cost": 30000, "grid": 1.0,
@@ -341,7 +343,7 @@ const ITEMS := {
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
 	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]],
-	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
+	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "wendeplatte", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
 	["terminal", "Terminal", ["halle", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum",
 		"raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
@@ -357,7 +359,7 @@ const GROUPS := {
 	"wege": [["Straßen", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg"]], ["Verkehr regeln", ["spuren", "kreuzung"]],
 		["Flugfeld", ["rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]]],
 	"flug": [["Stände", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt"]],
-		["Befeuerung", ["flutlicht", "rollhalt", "befeuerungsstation", "anflugbefeuerung", "papi"]],
+		["Befeuerung", ["flutlicht", "rollhalt", "wendeplatte", "befeuerungsstation", "anflugbefeuerung", "papi"]],
 		["Betrieb", ["tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "personalgebaeude"]],
 		["Werft und Dienste", ["hangar", "feuerwache", "rettungswache", "frachtterminal", "winterdienst"]]],
 	"terminal": [["Halle", ["halle", "raum", "innenwand", "glaswand", "tuer", "eingang", "rolltor"]],

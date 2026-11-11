@@ -56,7 +56,7 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 	for l: Dictionary in lines:
 		if l["kind"] == "piste":
 			var s: PackedVector3Array = l["samples"]
-			runways.append([s[0], s[s.size() - 1], float(Catalog.LINES["piste"]["width"])])
+			runways.append([s[0], s[s.size() - 1], float(Catalog.LINES["piste"]["width"]), lines.find(l)])
 	for li in range(lines.size()):
 		var l: Dictionary = lines[li]
 		var k: String = l["kind"]
@@ -81,6 +81,7 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 		elif k == "rolllinie":
 			_custom_holds(s, li, markers)
 	_cross_links()
+	_turn_pads(markers)
 	# Flächen mit gezeichneten Rollführungslinien: dort nur auf den Linien rollen
 	guided = {}
 	var line_pts := []
@@ -188,6 +189,8 @@ func _custom_holds(s: PackedVector3Array, li: int, markers: Array) -> bool:
 		return false
 	var found := false
 	for m: Dictionary in markers:
+		if String(m.get("id", "rollhalt")) != "rollhalt":
+			continue
 		var mp: Vector3 = m["pos"]
 		var bi := -1
 		var bd := 5.0
@@ -209,6 +212,87 @@ func _custom_holds(s: PackedVector3Array, li: int, markers: Array) -> bool:
 		line_hold[li] = maxf(float(line_hold.get(li, 0.0)), hd)
 		found = true
 	return found
+
+
+var pads: Array = []                 # Wendeplatten: {thr, inward, side, pts (Wendespur), exit (Pistenknoten)}
+
+
+## Wendeplatten: eine tropfenförmige Spur neben dem Pistenende. Von der Pistenmitte schwenkt sie zur Seite
+## aus, läuft im Halbkreis um und kommt in Gegenrichtung auf die Mitte zurück (Knoten als Pistenknoten,
+## damit Pistenschutz und Freigaben gelten). So kann ein Flugzeug wenden, ohne auf der Stelle zu drehen.
+func _turn_pads(markers: Array) -> void:
+	pads = []
+	for m: Dictionary in markers:
+		if String(m.get("id", "")) != "wendeplatte":
+			continue
+		var mp: Vector3 = m["pos"]
+		var best: Array = []
+		var bd := 200.0
+		for r: Array in runways:
+			for e in range(2):
+				var thr: Vector3 = r[e]
+				var inward := ((r[1 - e] as Vector3) - thr).normalized()
+				var lat := inward.cross(Vector3.UP).normalized()
+				var side := 1.0 if (mp - thr).dot(lat) >= 0.0 else -1.0
+				var d := Vector2(mp.x - thr.x, mp.z - thr.z).length()
+				if d < bd:
+					bd = d
+					best = [thr, inward, lat * side, int(r[3])]
+		if best.is_empty():
+			continue
+		var thr: Vector3 = best[0]
+		var inward: Vector3 = best[1]
+		var lat: Vector3 = best[2]
+		var w := float(Catalog.LINES["piste"]["width"]) * 0.5 + 24.0
+		var at := 32.0
+		var t1 := thr + inward * (at + 55.0)
+		var e_pt := thr + inward * at + lat * w
+		var mid := thr + inward * at + lat * w * 0.5
+		var pts := PackedVector3Array()
+		var c1 := t1 - inward * 28.0
+		var c2 := e_pt + inward * 28.0
+		for i in range(1, 9):
+			var t := float(i) / 8.0
+			var u := 1.0 - t
+			pts.append(t1 * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + e_pt * (t * t * t))
+		for i in range(1, 13):
+			var ph := PI * float(i) / 12.0
+			pts.append(mid + lat * w * 0.5 * cos(ph) - inward * w * 0.5 * sin(ph))
+		var f_pt := pts[pts.size() - 1]
+		var a_rw := _nearest_kind(t1, "piste")
+		var b_rw := _nearest_kind(f_pt + inward * 4.0, "piste")
+		if a_rw < 0 or b_rw < 0:
+			continue
+		var prev := a_rw
+		var ids := []
+		for i in range(pts.size() - 1):
+			var id := _add(Vector3(pts[i].x, 0, pts[i].z), "piste", int(best[3]))
+			ids.append(id)
+			_link(prev, id)
+			prev = id
+		_link(prev, b_rw)
+		pads.append({"thr": thr, "inward": inward, "side": lat, "pts": PackedVector3Array([t1]) + pts, "exit": b_rw, "nodes": ids})
+
+
+func _nearest_kind(p: Vector3, k: String) -> int:
+	var best := -1
+	var bd := INF
+	for i in range(pos.size()):
+		if kind[i] != k:
+			continue
+		var d := pos[i].distance_squared_to(p)
+		if d < bd:
+			bd = d
+			best = i
+	return best
+
+
+## Ausfahrt der Wendeplatte am Pistenende bei thr (Pistenknoten auf der Mitte), sonst -1.
+func pad_exit(thr: Vector3) -> int:
+	for pd: Dictionary in pads:
+		if (pd["thr"] as Vector3).distance_to(thr) < 30.0:
+			return int(pd["exit"])
+	return -1
 
 
 ## Abstand zur Pistenmitte, ab dem Knoten n zum Pistenschutzbereich gehört.
@@ -380,7 +464,13 @@ func nearest_taxi(p: Vector3, max_d: float) -> int:
 ## wide = Großraumflugzeug (Code E): schmale Rollwege (Code C) sind gesperrt.
 ## Flugzeuge biegen höchstens 90° je Knoten ab und wenden nie auf der Stelle; nur wenn es so
 ## gar keinen Weg gibt, werden schärfere Kurven erlaubt.
-func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.ZERO, wide: bool = false) -> Array:
+func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.ZERO, wide: bool = false, end_dir: Vector3 = Vector3.ZERO) -> Array:
+	# end_dir: gewünschte Fahrtrichtung am Ziel (Startrichtung auf der Piste); gibt es so keinen Weg, gilt sie nicht
+	if end_dir != Vector3.ZERO:
+		for md: float in [MAX_TURN_DOT_SOFT, MAX_TURN_DOT]:
+			var o := _search(a, b, blocked, heading, md, wide, end_dir)
+			if not o.is_empty():
+				return o
 	var out := _search(a, b, blocked, heading, MAX_TURN_DOT_SOFT, wide)
 	if out.is_empty():
 		out = _search(a, b, blocked, heading, MAX_TURN_DOT, wide)
@@ -391,7 +481,7 @@ func path(a: int, b: int, blocked: Dictionary = {}, heading: Vector3 = Vector3.Z
 
 ## A* über gerichtete Kanten (Zustand = Knoten und woher man kommt), damit die Kurvenregel
 ## auch Schleifen über Nachbarflächen findet.
-func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, min_dot: float, wide: bool) -> Array:
+func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, min_dot: float, wide: bool, end_dir: Vector3 = Vector3.ZERO) -> Array:
 	if a < 0 or b < 0:
 		return []
 	var allow := {a: true, b: true}
@@ -414,7 +504,12 @@ func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, min_dot: flo
 		closed[key] = true
 		var cur := key / n_all
 		var prev := key % n_all
-		if cur == b:
+		var arrive_ok := true
+		if cur == b and end_dir != Vector3.ZERO and prev != n_all - 1:
+			var dl := pos[cur] - pos[prev]
+			dl.y = 0.0
+			arrive_ok = dl.length() < 0.01 or dl.normalized().dot(end_dir) > 0.3
+		if cur == b and arrive_ok:
 			var out := [b]
 			var k := key
 			while came.has(k):
@@ -447,13 +542,23 @@ func _search(a: int, b: int, blocked: Dictionary, heading: Vector3, min_dot: flo
 			var nkey := nb * n_all + cur
 			if closed.has(nkey):
 				continue
+			# Wie Lotsen und Piloten rollen: lange gerade Rollwege (der Parallelrollweg zuerst), über Vorfelder
+			# nur wenn nötig, auf der Piste so wenig wie möglich (nur zum Zurückrollen oder Kreuzen)
 			var w := 1.0
-			if kind[nb] == "piste":
-				w = 1.6
-			elif kind[nb] == "vorfeld":
-				w = 1.4
-			# Kurven kosten etwas, damit gerade Wege bevorzugt werden
-			var turn := 0.0 if din == Vector3.ZERO else (1.0 - din.dot(step / sl)) * 6.0
+			match kind[nb]:
+				"piste":
+					w = 3.5
+				"vorfeld":
+					w = 1.8
+				"rolllinie":
+					w = 1.15
+				"rollweg_breit":
+					w = 0.92
+			# Kurven kosten, scharfe Kurven deutlich mehr: gerade Wege werden bevorzugt
+			var turn := 0.0
+			if din != Vector3.ZERO:
+				var cd := din.dot(step / sl)
+				turn = (1.0 - cd) * 10.0 + (14.0 if cd < 0.5 else 0.0)
 			var cost := float(g[key]) + sl * w + turn
 			if not g.has(nkey) or cost < float(g[nkey]):
 				g[nkey] = cost

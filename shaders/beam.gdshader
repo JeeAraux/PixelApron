@@ -1,7 +1,7 @@
 // Lichtkegel von Scheinwerfern auf dem Boden: Trapez vor dem Fahrzeug, additiv, nur nachts.
 // UV.y = 0 an der Lampe, 1 am fernen Ende; UV.x quer.
 shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled;
+render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
 global uniform float night;
 uniform vec4 tint : source_color = vec4(1.0, 0.92, 0.75, 1.0);

@@ -300,9 +300,7 @@ func _blocked(v: Dictionary) -> bool:
 			if int(pl["id"]) == int(v.get("flight", -1)):
 				continue
 			var st: String = pl["state"]
-			if not (st in ["rollt_ein", "rollt_aus", "pushback"]):
-				continue
-			if st != "pushback" and float(pl["speed"]) < 0.3:
+			if not (st in ["rollt_ein", "rollt_aus", "pushback", "wartet"]):
 				continue
 			var d := (pl["pos"] as Vector3) - pos
 			d.y = 0.0
@@ -1018,13 +1016,23 @@ static func service_plan(kind: String) -> Dictionary:
 	var zf := minf((float(s["nose_gear_z"]) + float(s["wing_z"])) * 0.5, eng_front - 2.0)
 	zf = maxf(zf, float(s["nose_gear_z"]) + 2.2)
 	var za := float(s["main_gear_z"]) + length * 0.17
+	# Frachttore nach Vorbild, wo bekannt (A320/A321 nach den Airbus-Unterlagen)
+	if s.has("cargo_doors"):
+		zf = float((s["cargo_doors"] as Array)[0])
+		za = float((s["cargo_doors"] as Array)[1])
+	# Spur der Gepäckzüge längs des Rumpfs: nicht durch ein Triebwerk (A380, A350 …), sonst innen oder außen daran vorbei
+	var lane := r + 10.5
+	var ex := float(s["eng_x"])
+	var er := float(s["eng_r"]) * float(s.get("eng_flat", 1.0))
+	if absf(lane - ex) < er + 2.5:
+		lane = ex - er - 2.5 if ex - er - 2.5 > r + 4.0 else ex + er + 2.5
 	var tank_x := float(s["eng_x"]) + float(s["eng_r"]) * float(s.get("eng_flat", 1.0)) + 3.6
 	var wa: Array = Models._wing_at(s, tank_x)
 	return {"r": r, "len": length, "nose": nose, "tail": length - nose, "span": span, "zf": zf, "za": za,
 		"hold": cy - r * 0.55, "sill": cy - 0.85, "r2": float(doors[1]), "tank_x": tank_x, "le": float(wa[0]),
 		"wing_y": float(wa[1]), "nose_gear": float(s["nose_gear_z"]), "eng_x": float(s["eng_x"]),
 		"eng_front": eng_front, "tip_z": float(Models._wing_at(s, float(s["tip_x"]))[0]),
-		"lane": r + 10.5}
+		"lane": lane}
 
 
 ## Abfertigung beginnt: Unterlegkeile, Pylonen, dann rollen die Fahrzeuge nach Plan an.
@@ -2462,7 +2470,7 @@ func _step_mission(m: Dictionary, sim: float) -> void:
 				m["t"] = float(m["t"]) - sim
 			else:
 				var fp: Dictionary = m["flight"]
-				if not (fp.get("state", "") in ["anflug", "landung"]) or not flights_ref.planes.has(fp):
+				if not (fp.get("state", "") in ["anflug", "landung", "durchstarten"]) or not flights_ref.planes.has(fp):
 					m["t"] = float(m["t"]) - sim
 			if float(m["t"]) <= 0.0:
 				var sp: Array = m["home"]

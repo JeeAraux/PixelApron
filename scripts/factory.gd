@@ -554,7 +554,7 @@ static func make_zone(id: String, w: float, d: float) -> Node3D:
 ## Terminalhalle w × d mit Bauformen (opts): Ebenen 1–3, Keller, Fassade (Glas, Beton, Holz),
 ## Ecken (eckig, abgerundet, rund), Dach (flach, Tonnendach, Sheddach).
 ## Knoten: "Ebene-1" … "Ebene2" (Böden), "Hoch" (volle Fassade), "Tief" (Brüstung für die Innenansicht), "Dach".
-static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = []) -> Node3D:
+static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [], holes: Array = []) -> Node3D:
 	var n := Node3D.new()
 	n.name = "halle"
 	var hw := w * 0.5
@@ -580,15 +580,40 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 		var k := Kit.new()
 		var y0 := float(f) * fh
 		var fc := FLOOR if f != -1 else Color(0.6, 0.6, 0.58)
-		_polygon(k, ring, y0 - (0.25 if f != 0 else 0.0), y0 + 0.1, fc)
+		# Deckenöffnungen über Rolltreppen und Treppen aus der Ebene darunter
+		var hs: Array = []
+		for hole: Array in holes:
+			if int(hole[0]) == f:
+				hs.append(hole[1])
+		for piece: PackedVector2Array in _cut_holes(ring, hs):
+			_polygon(k, piece, y0 - (0.25 if f != 0 else 0.0), y0 + 0.1, fc)
 		var x := -hw + 4.0
 		while x < hw - 0.5:
-			k.box(Vector3(x - 0.04, y0 + 0.1, -hd + radius * 0.3), Vector3(x + 0.04, y0 + 0.11, hd - radius * 0.3), fc.darkened(0.08))
+			for seg: Vector2 in _free_spans(-hd + radius * 0.3, hd - radius * 0.3, x, hs, true):
+				k.box(Vector3(x - 0.04, y0 + 0.1, seg.x), Vector3(x + 0.04, y0 + 0.11, seg.y), fc.darkened(0.08))
 			x += 4.0
 		var z := -hd + 4.0
 		while z < hd - 0.5:
-			k.box(Vector3(-hw + radius * 0.3, y0 + 0.1, z - 0.04), Vector3(hw - radius * 0.3, y0 + 0.11, z + 0.04), fc.darkened(0.08))
+			for seg: Vector2 in _free_spans(-hw + radius * 0.3, hw - radius * 0.3, z, hs, false):
+				k.box(Vector3(seg.x, y0 + 0.1, z - 0.04), Vector3(seg.y, y0 + 0.11, z + 0.04), fc.darkened(0.08))
 			z += 4.0
+		# Glasbrüstung an den Längsseiten der Öffnung (die Stirnseiten bleiben für den Ein- und Ausstieg frei)
+		for hole: Array in holes:
+			if int(hole[0]) != f:
+				continue
+			var hr: Rect2 = hole[1]
+			var along_x := int(hole[2]) % 2 == 1
+			var sides := [[Vector2(hr.position.x, hr.position.y), Vector2(hr.end.x, hr.position.y)], [Vector2(hr.position.x, hr.end.y), Vector2(hr.end.x, hr.end.y)]] if along_x \
+				else [[Vector2(hr.position.x, hr.position.y), Vector2(hr.position.x, hr.end.y)], [Vector2(hr.end.x, hr.position.y), Vector2(hr.end.x, hr.end.y)]]
+			for sd: Array in sides:
+				var a: Vector2 = sd[0]
+				var b: Vector2 = sd[1]
+				var lo := Vector3(minf(a.x, b.x) - 0.04, y0 + 0.1, minf(a.y, b.y) - 0.04)
+				var hi := Vector3(maxf(a.x, b.x) + 0.04, y0 + 1.05, maxf(a.y, b.y) + 0.04)
+				k.box(lo, hi, Color(0.62, 0.8, 0.88, 0.5))
+				k.box(Vector3(lo.x - 0.02, hi.y, lo.z - 0.02), Vector3(hi.x + 0.02, hi.y + 0.06, hi.z + 0.02), Color(0.7, 0.72, 0.74))
+			# Deckenstirn: dunkle Kante, damit die Öffnung als Loch erkennbar ist
+			k.box(Vector3(hr.position.x, y0 - 0.25, hr.position.y), Vector3(hr.end.x, y0 - 0.2, hr.end.y), Color(0.3, 0.3, 0.32))
 		if f == -1:
 			_wall_ring(k, ring, -fh, -0.25, CONCRETE, 0.4)
 		slab.add_child(k.instance("Boden"))
@@ -769,6 +794,53 @@ static func _polygon(k: Kit, ring: PackedVector2Array, y0: float, y1: float, col
 		top.append(Vector3(p.x, y1, p.y))
 		bot.append(Vector3(p.x, y0, p.y))
 	k.prism(bot, top, col)
+
+
+## Umriss ohne die Rechtecke holes: in einfache Teilstücke zerlegt (je Loch vier Streifen drumherum).
+static func _cut_holes(ring: PackedVector2Array, holes: Array) -> Array:
+	var pieces: Array = [ring]
+	var big := 1e5
+	for h: Rect2 in holes:
+		var next: Array = []
+		for pc: PackedVector2Array in pieces:
+			var bb := Rect2(pc[0], Vector2.ZERO)
+			for q: Vector2 in pc:
+				bb = bb.expand(q)
+			if not bb.intersects(h):
+				next.append(pc)
+				continue
+			var regions := [Rect2(-big, -big, big * 2.0, h.position.y + big), Rect2(-big, h.end.y, big * 2.0, big),
+				Rect2(-big, h.position.y, h.position.x + big, h.size.y), Rect2(h.end.x, h.position.y, big, h.size.y)]
+			for rg: Rect2 in regions:
+				var poly := PackedVector2Array([rg.position, Vector2(rg.end.x, rg.position.y), rg.end, Vector2(rg.position.x, rg.end.y)])
+				for res: PackedVector2Array in Geometry2D.intersect_polygons(pc, poly):
+					if res.size() >= 3:
+						next.append(res)
+		pieces = next
+	return pieces
+
+
+## Teilstrecken von a bis b auf der Linie bei c (quer = true: Linie entlang z bei x = c), ohne die Löcher.
+static func _free_spans(a: float, b: float, c: float, holes: Array, quer: bool) -> Array:
+	var spans: Array = [Vector2(a, b)]
+	for h: Rect2 in holes:
+		var lo := h.position.y if quer else h.position.x
+		var hi := h.end.y if quer else h.end.x
+		var cl := h.position.x if quer else h.position.y
+		var ch := h.end.x if quer else h.end.y
+		if c < cl or c > ch:
+			continue
+		var next: Array = []
+		for sp: Vector2 in spans:
+			if hi <= sp.x or lo >= sp.y:
+				next.append(sp)
+				continue
+			if lo > sp.x:
+				next.append(Vector2(sp.x, lo))
+			if hi < sp.y:
+				next.append(Vector2(hi, sp.y))
+		spans = next
+	return spans
 
 
 ## Wandring entlang des Umrisses (Dicke t, nach innen).
@@ -997,7 +1069,7 @@ static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 			_bridge_base(n)
 		"befeuerungsstation":
 			_light_station(n)
-		"rollhalt", "papi", "anflugbefeuerung":
+		"rollhalt", "papi", "anflugbefeuerung", "wendeplatte":
 			_marker_base(n, id)
 	return n
 
@@ -1042,6 +1114,9 @@ static func _marker_base(n: Node3D, id: String) -> void:
 			k.cyl(Vector3(0, 0.07, 0), Vector3(0, 0.08, 0), 0.6, 0.6, Color(0.72, 0.1, 0.08), 16)
 		"papi":
 			k.box(Vector3(-1.5, 0, -1.5), Vector3(1.5, 0.3, 1.5), CONCRETE)
+		"wendeplatte":
+			# Belag und Markierung zeichnet airfield.gd; hier nur ein flacher Griff zum Anklicken
+			k.cyl(Vector3(0, 0, 0), Vector3(0, 0.03, 0), 2.0, 2.0, Color(0.3, 0.3, 0.29), 16)
 		_:
 			k.box(Vector3(-2.0, 0, -2.0), Vector3(2.0, 0.3, 2.0), CONCRETE)
 			k.box(Vector3(-0.6, 0.3, -0.6), Vector3(0.6, 1.6, 0.6), Color(0.85, 0.85, 0.82))
@@ -1111,7 +1186,12 @@ static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
 	var red := Color(0.72, 0.18, 0.13)
 	var white := Color(0.88, 0.88, 0.85)
 	var y := 0.05
+	# Markierung "voll": wie bisher; "eigene": keine gelbe Mittellinie (Rollführungslinien zeichnet der
+	# Spieler mit dem Werkzeug Rolllinie); "aus": nur Andockanzeige, Betankung und Bodenstrom
+	var mark := String((n.get_meta("opts", {}) as Dictionary).get("markierung", "voll"))
 	var flat := func(a: Vector2, b: Vector2, c: Color) -> void:
+		if mark == "aus":
+			return
 		k.box(Vector3(minf(a.x, b.x), 0.0, minf(a.y, b.y)), Vector3(maxf(a.x, b.x), y, maxf(a.y, b.y)), c)
 	# Haltebalken je Flugzeugmuster am Bugrad, beschriftet (abwechselnd links und rechts der Linie)
 	var max_bar := -INF
@@ -1137,10 +1217,12 @@ static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
 		flat.call(Vector2(-1.6, z - 0.15), Vector2(1.6, z + 0.15), yellow)
 		var sx := 1.0 if side_i % 2 == 0 else -1.0
 		var txt := String(b[1])
-		PixelFont.draw_ground(k, txt, Vector3(sx * (2.4 + float(PixelFont.width(txt)) * 0.08), y + 0.01, z), Vector3(0, 0, 1), 0.16, yellow)
+		if mark != "aus":
+			PixelFont.draw_ground(k, txt, Vector3(sx * (2.4 + float(PixelFont.width(txt)) * 0.08), y + 0.01, z), Vector3(0, 0, 1), 0.16, yellow)
 		side_i += 1
 	# Mittellinie bis hinter die Haltebalken
-	flat.call(Vector2(-0.18, -hd), Vector2(0.18, max_bar + 0.6), yellow)
+	if mark == "voll":
+		flat.call(Vector2(-0.18, -hd), Vector2(0.18, max_bar + 0.6), yellow)
 	# Sicherheitslinien: Standgrenzen (rot), Kopf des Stands
 	for side: float in [-1.0, 1.0]:
 		flat.call(Vector2(side * hw - 0.15, -hd), Vector2(side * hw + 0.15, hd), red)
@@ -1162,7 +1244,8 @@ static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
 		flat.call(Vector2(x0, z1 - 0.2), Vector2(x1, z1), white)
 		flat.call(Vector2(x0, z0), Vector2(x0 + side * 0.2, z1), white)
 		flat.call(Vector2(x1 - side * 0.2, z0), Vector2(x1, z1), white)
-		PixelFont.draw_ground(k, "GSE", Vector3((x0 + x1) * 0.5, y + 0.01, (z0 + z1) * 0.5), Vector3(0, 0, -1), 0.3, white)
+		if mark != "aus":
+			PixelFont.draw_ground(k, "GSE", Vector3((x0 + x1) * 0.5, y + 0.01, (z0 + z1) * 0.5), Vector3(0, 0, -1), 0.3, white)
 	# Unterflur-Betankung an beiden Flügeln, Bodenstrom an der Nase
 	var fuel_x := 7.5 if code == "C" else 12.5
 	for side: float in [-1.0, 1.0]:
@@ -1184,7 +1267,8 @@ static func _stand(n: Node3D, remote: bool, id: String = "stand") -> void:
 			while z < 19.4:
 				flat.call(Vector2(xx, z), Vector2(xx + 0.2, minf(z + 1.0, 19.6)), white)
 				z += 2.0
-		PixelFont.draw_ground(k, "BUS", Vector3((bx0 + bx1) * 0.5, y + 0.01, 12.2), Vector3(0, 0, -1), 0.3, white)
+		if mark != "aus":
+			PixelFont.draw_ground(k, "BUS", Vector3((bx0 + bx1) * 0.5, y + 0.01, 12.2), Vector3(0, 0, -1), 0.3, white)
 		var wz := -13.0
 		while wz < 4.4:
 			flat.call(Vector2(8.6, wz), Vector2(11.4, wz + 0.5), white)
@@ -1569,6 +1653,34 @@ static func make_plane(kind: String, livery: Color, style: int = 0, cargo: bool 
 	for sx: float in [-1.0, 1.0]:
 		_glow(land, Vector3(sx * float(s["r"]) * 1.15, float(wr[1]) - 0.05, float(wr[0]) - 0.02), Vector3(0.35, 0.2, 0.1), Color(1.0, 0.97, 0.85))
 	_glow(land, Vector3(0, cy - r + 0.05, float(s["nose_gear_z"]) - 0.3), Vector3(0.3, 0.2, 0.1), Color(1.0, 0.97, 0.85))
+	# Lichtkegel in der Luft: von der Flügelwurzel nach vorn und 7° nach unten (flights.gd regelt die Stärke)
+	var cone := MeshInstance3D.new()
+	cone.name = "Lichtkegel"
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.35
+	cm.bottom_radius = 11.0
+	cm.height = 110.0
+	cm.radial_segments = 16
+	cm.rings = 1
+	cm.cap_top = false
+	cm.cap_bottom = false
+	cone.mesh = cm
+	cone.material_override = cone_material()
+	cone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var fwd := Vector3(0, -sin(deg_to_rad(7.0)), -cos(deg_to_rad(7.0)))
+	var yax := -fwd
+	var xax := Vector3(1, 0, 0)
+	cone.basis = Basis(xax, yax, xax.cross(yax))
+	cone.position = Vector3(0, float(wr[1]) - 0.1, float(wr[0]) - 0.5) + fwd * 55.0
+	land.add_child(cone)
+	# Positionslichter: links rot, rechts grün, hinten weiß (leuchten, solange das Flugzeug Strom hat)
+	var nav := Node3D.new()
+	nav.name = "Positionslichter"
+	n.add_child(nav)
+	var tip0: Array = Models._wing_at(s, float(s["tip_x"]))
+	_glow(nav, Vector3(-(float(s["tip_x"]) + 0.08), float(tip0[1]) + 0.05, float(tip0[0]) + 0.15), Vector3(0.16, 0.12, 0.16), Color(1.0, 0.12, 0.08))
+	_glow(nav, Vector3(float(s["tip_x"]) + 0.08, float(tip0[1]) + 0.05, float(tip0[0]) + 0.15), Vector3(0.16, 0.12, 0.16), Color(0.15, 1.0, 0.35))
+	_glow(nav, Vector3(0, cy + r * 0.42 - float(s["tail_drop"]) * 0.3, float(s["len"]) * 0.5 + 0.05), Vector3(0.14, 0.12, 0.12), Color(1, 1, 1))
 	var lp := light_pool(70.0, 6.0, 26.0, 0.7)
 	lp.name = "Bodenlicht"
 	lp.top_level = true
@@ -1759,6 +1871,181 @@ static func _shop_sign(n: Node3D, stil: String) -> void:
 	n.add_child(k.instance("Schild"))
 
 
+## Weg der Rolltreppenstufen (lokal, unten -Z, oben +Z): unten flach aus der Kammplatte, 30°-Steigung
+## mit gerundeten Übergängen, oben flach. Wie bei Schindler/Kone: 1000-mm-Stufen, Glasbalustrade.
+const ESC_FLAT := 1.1
+static func escalator_path() -> PackedVector3Array:
+	var fh := Catalog.FLOOR_H
+	var z0 := -5.0 + 0.4
+	var z1 := 5.0 - 0.4
+	var ka := z0 + ESC_FLAT
+	var kb := z1 - ESC_FLAT
+	var out := PackedVector3Array()
+	var n := 90
+	for i in range(n + 1):
+		var z := lerpf(z0, z1, float(i) / float(n))
+		# weiche Rampe: smoothstep-artige Kurve zwischen den Knicken, gerade Mitte
+		var y := 0.0
+		var r := 0.85
+		if z <= ka - r:
+			y = 0.0
+		elif z >= kb + r:
+			y = fh
+		else:
+			var slope := fh / (kb - ka)
+			var lin := clampf((z - ka) * slope, 0.0, fh)
+			if z < ka + r:
+				var u := (z - (ka - r)) / (2.0 * r)
+				lin = slope * 2.0 * r * u * u * 0.5
+			elif z > kb - r:
+				var u2 := ((kb + r) - z) / (2.0 * r)
+				lin = fh - slope * 2.0 * r * u2 * u2 * 0.5
+			y = lin
+		out.append(Vector3(0, y + 0.08, z))
+	return out
+
+
+## Punkt auf dem Pfad bei Bogenlänge s (Pfad und kumulierte Längen).
+static func path_point(path: PackedVector3Array, cum: PackedFloat32Array, s: float) -> Vector3:
+	var total := cum[cum.size() - 1]
+	s = clampf(s, 0.0, total)
+	var lo := 0
+	var hi := cum.size() - 1
+	while hi - lo > 1:
+		var m := (lo + hi) / 2
+		if cum[m] <= s:
+			lo = m
+		else:
+			hi = m
+	var seg := maxf(cum[hi] - cum[lo], 0.0001)
+	return path[lo].lerp(path[hi], (s - cum[lo]) / seg)
+
+
+static func path_cum(path: PackedVector3Array) -> PackedFloat32Array:
+	var cum := PackedFloat32Array([0.0])
+	for i in range(1, path.size()):
+		cum.append(cum[i - 1] + path[i].distance_to(path[i - 1]))
+	return cum
+
+
+## Senkrechtes Band entlang des Pfads bei x (unten lo, oben hi über dem Pfad).
+static func _ribbon(k: Kit, path: PackedVector3Array, x: float, lo: float, hi: float, col: Color, step: int = 3) -> void:
+	var i := 0
+	while i < path.size() - 1:
+		var j := mini(i + step, path.size() - 1)
+		var a := path[i]
+		var b := path[j]
+		k.quad(Vector3(x, a.y + lo, a.z), Vector3(x, b.y + lo, b.z), Vector3(x, b.y + hi, b.z), Vector3(x, a.y + hi, a.z), col, Vector3(0, (a.y + b.y) * 0.5 + (lo + hi) * 0.5, (a.z + b.z) * 0.5))
+		i = j
+
+
+## Waagrechtes Band entlang des Pfads von x0 bis x1 in Höhe dy über dem Pfad.
+static func _deck(k: Kit, path: PackedVector3Array, x0: float, x1: float, dy: float, col: Color, step: int = 3) -> void:
+	var i := 0
+	while i < path.size() - 1:
+		var j := mini(i + step, path.size() - 1)
+		var a := path[i]
+		var b := path[j]
+		k.quad(Vector3(x0, a.y + dy, a.z), Vector3(x1, a.y + dy, a.z), Vector3(x1, b.y + dy, b.z), Vector3(x0, b.y + dy, b.z), col, Vector3((x0 + x1) * 0.5, (a.y + b.y) * 0.5 + dy - 1.0, (a.z + b.z) * 0.5))
+		i = j
+
+
+static func _escalator(n: Node3D, k: Kit) -> void:
+	var path := escalator_path()
+	var steel := Color(0.78, 0.79, 0.8)
+	var steel_dark := Color(0.55, 0.56, 0.58)
+	var glass := Color(0.62, 0.8, 0.88, 0.5)
+	var rubber := Color(0.08, 0.08, 0.09)
+	# Fachwerk mit Edelstahlverkleidung: Seiten, Unterseite, Abdeckung neben dem Handlauf
+	for sx: float in [-0.82, 0.82]:
+		_ribbon(k, path, sx, -1.05, 0.12, steel)
+	_deck(k, path, -0.82, 0.82, -1.05, Color(0.84, 0.85, 0.86))
+	for sx2: Array in [[-0.82, -0.6], [0.6, 0.82]]:
+		_deck(k, path, sx2[0], sx2[1], 0.12, steel_dark)
+	# Sockelleiste (Edelstahl) und Glasbalustrade mit Handlauf
+	for sx3: float in [-0.53, 0.53]:
+		_ribbon(k, path, sx3, -0.1, 0.12, Color(0.86, 0.87, 0.88))
+	for sx4: float in [-0.6, 0.6]:
+		_ribbon(k, path, sx4, 0.12, 0.98, glass, 2)
+		var i := 0
+		while i < path.size() - 2:
+			var a := path[i] + Vector3(sx4, 1.0, 0)
+			var b := path[i + 2] + Vector3(sx4, 1.0, 0)
+			k.cyl(a, b, 0.045, 0.045, rubber, 6, false)
+			i += 2
+		# Handlaufköpfe: Bogen über die Kammplatten hinaus
+		for e: Array in [[path[0], -1.0], [path[path.size() - 1], 1.0]]:
+			var c: Vector3 = (e[0] as Vector3) + Vector3(sx4, 0.55, 0)
+			var dir := float(e[1])
+			var prev := c + Vector3(0, 0.45, 0)
+			for q in range(1, 9):
+				var ang := PI * float(q) / 8.0
+				var pt := c + Vector3(0, cos(ang) * 0.45, dir * sin(ang) * 0.45)
+				k.cyl(prev, pt, 0.045, 0.045, rubber, 6, false)
+				prev = pt
+			k.box(c + Vector3(-0.05, -0.55, -0.05 + dir * 0.0), c + Vector3(0.05, 0.4, 0.05) + Vector3(0, 0, dir * 0.4), glass)
+	# Kammplatten (geriffeltes Aluminium) an beiden Enden, bündig mit dem Fußboden
+	var fh := Catalog.FLOOR_H
+	for e2: Array in [[-5.0, -5.0 + 0.45, 0.0], [5.0 - 0.45, 5.0, fh]]:
+		var y := float(e2[2])
+		k.box(Vector3(-0.62, y, float(e2[0])), Vector3(0.62, y + 0.1, float(e2[1])), Color(0.68, 0.69, 0.7))
+		var zz := float(e2[0]) + 0.06
+		while zz < float(e2[1]) - 0.05:
+			k.box(Vector3(-0.55, y + 0.1, zz), Vector3(0.55, y + 0.115, zz + 0.03), Color(0.56, 0.57, 0.58))
+			zz += 0.09
+		# gelbe Kammzähne an der Kante zur Stufe
+		var ze := float(e2[1]) if y < 0.5 else float(e2[0])
+		k.box(Vector3(-0.5, y + 0.1, ze - 0.05), Vector3(0.5, y + 0.12, ze + 0.05), Color(0.95, 0.78, 0.1))
+	# Stufen als MultiMesh, terminal.gd lässt sie den Pfad entlanglaufen
+	var sk := Kit.new()
+	sk.box(Vector3(-0.5, -0.04, -0.2), Vector3(0.5, 0.0, 0.2), Color(0.22, 0.23, 0.25))
+	for gx: int in range(9):
+		var x := -0.44 + float(gx) * 0.11
+		sk.box(Vector3(x, 0.0, -0.19), Vector3(x + 0.05, 0.012, 0.19), Color(0.3, 0.31, 0.33))
+	sk.box(Vector3(-0.5, 0.0, 0.16), Vector3(0.5, 0.014, 0.2), Color(0.95, 0.78, 0.1))     # gelbe Vorderkante
+	sk.box(Vector3(-0.5, 0.0, -0.2), Vector3(-0.44, 0.014, 0.2), Color(0.95, 0.78, 0.1))   # gelbe Seitenränder
+	sk.box(Vector3(0.44, 0.0, -0.2), Vector3(0.5, 0.014, 0.2), Color(0.95, 0.78, 0.1))
+	sk.box(Vector3(-0.5, -0.3, -0.21), Vector3(0.5, -0.04, -0.18), Color(0.25, 0.26, 0.28))  # Setzstufe
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = sk.commit()
+	var cum := path_cum(path)
+	var cnt := int(cum[cum.size() - 1] / 0.4)
+	mm.instance_count = cnt
+	for i2 in range(cnt):
+		mm.set_instance_transform(i2, Transform3D(Basis.IDENTITY, path_point(path, cum, float(i2) * 0.4)))
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "Stufen"
+	mmi.multimesh = mm
+	mmi.material_override = Kit.material()
+	mmi.set_meta("no_bake", true)
+	n.add_child(mmi)
+
+
+## Treppe nach Vorbild: Betonläufe mit Natursteinstufen und Kantenschutz, Wangen, Glasgeländer, Handlauf.
+static func _stairs(k: Kit) -> void:
+	var fh := Catalog.FLOOR_H
+	var nst := 28
+	var run := 8.0 / float(nst)
+	var rise := fh / float(nst)
+	var stone := Color(0.74, 0.72, 0.68)
+	for i in range(nst):
+		var y := float(i + 1) * rise
+		var z := -4.0 + float(i) * run
+		k.box(Vector3(-1.3, y - 0.05, z), Vector3(1.3, y, z + run + 0.02), stone)
+		k.box(Vector3(-1.3, y - rise, z - 0.01), Vector3(1.3, y - 0.05, z + 0.02), stone.darkened(0.12))
+		k.box(Vector3(-1.3, y - 0.012, z), Vector3(1.3, y + 0.004, z + 0.04), Color(0.3, 0.3, 0.32))   # Kantenschutz
+	var path := PackedVector3Array()
+	for i3 in range(nst + 1):
+		path.append(Vector3(0, float(i3) * rise, -4.0 + float(i3) * run))
+	for sx: float in [-1.38, 1.38]:
+		# Wange aus Sichtbeton unter dem Lauf
+		_ribbon(k, path, sx, -0.55, 0.12, Color(0.66, 0.66, 0.64), 1)
+		_ribbon(k, path, sx, 0.12, 0.98, Color(0.62, 0.8, 0.88, 0.5), 2)
+		k.cyl(path[0] + Vector3(sx, 1.0, 0), path[path.size() - 1] + Vector3(sx, 1.0, 0), 0.03, 0.03, Color(0.75, 0.76, 0.78), 6, false)
+	_deck(k, path, -1.38, 1.38, -0.55, Color(0.7, 0.7, 0.68), 1)
+
+
 ## Rolltreppe, Aufzug, Treppe (verbinden mit der Ebene darüber), Passkontrolle und Zoll.
 static func _inside_more(n: Node3D, id: String) -> void:
 	var k := Kit.new()
@@ -1767,26 +2054,7 @@ static func _inside_more(n: Node3D, id: String) -> void:
 	var fh := Catalog.FLOOR_H
 	match id:
 		"rolltreppe":
-			# Fachwerk-Unterbau, gläserne Balustraden, Handläufe; Stufen bewegt terminal.gd
-			var slope := Basis(Vector3.RIGHT, -atan(fh / 8.0))
-			var len := sqrt(64.0 + fh * fh)
-			var mid := Vector3(0, fh * 0.5, 0)
-			k.box(Vector3(-1.0, -0.6, -len * 0.5), Vector3(1.0, -0.05, len * 0.5), steel, Transform3D(slope, mid))
-			for sx: float in [-0.95, 0.95]:
-				k.box(Vector3(sx - 0.04, 0.0, -len * 0.5), Vector3(sx + 0.04, 0.95, len * 0.5), glass, Transform3D(slope, mid))
-				k.box(Vector3(sx - 0.07, 0.95, -len * 0.5), Vector3(sx + 0.07, 1.05, len * 0.5), Color(0.12, 0.12, 0.13), Transform3D(slope, mid))
-			k.box(Vector3(-1.0, 0, -5.0), Vector3(1.0, 0.08, -4.0), steel)
-			k.box(Vector3(-1.0, fh - 0.05, 4.0), Vector3(1.0, fh + 0.05, 5.0), steel)
-			var steps := Node3D.new()
-			steps.name = "Stufen"
-			steps.set_meta("no_bake", true)
-			n.add_child(steps)
-			var sk := Kit.new()
-			for i in range(24):
-				var t := float(i) / 24.0
-				var p := Vector3(0, lerpf(0.05, fh, t), lerpf(-4.0, 4.0, t))
-				sk.box(p + Vector3(-0.85, 0, -0.16), p + Vector3(0.85, 0.06, 0.16), Color(0.3, 0.31, 0.33) if i % 2 == 0 else Color(0.36, 0.37, 0.4))
-			steps.add_child(sk.instance("StufenModell"))
+			_escalator(n, k)
 		"aufzug":
 			for c: Vector2 in [Vector2(-1.4, -1.4), Vector2(1.4, -1.4), Vector2(1.4, 1.4), Vector2(-1.4, 1.4)]:
 				k.box(Vector3(c.x - 0.08, 0, c.y - 0.08), Vector3(c.x + 0.08, fh + 0.4, c.y + 0.08), steel)
@@ -1805,16 +2073,7 @@ static func _inside_more(n: Node3D, id: String) -> void:
 				ck.box(Vector3(c.x - 0.05, 0.1, c.y - 0.05), Vector3(c.x + 0.05, 2.3, c.y + 0.05), steel)
 			cab.add_child(ck.instance("KabineModell"))
 		"treppe":
-			var nst := int(fh / 0.18)
-			for i in range(nst):
-				var y := float(i + 1) * fh / float(nst)
-				var z := -4.0 + float(i) * 8.0 / float(nst)
-				k.box(Vector3(-1.4, y - 0.18, z), Vector3(1.4, y, z + 8.0 / float(nst) + 0.02), Color(0.62, 0.6, 0.56))
-			for sx: float in [-1.45, 1.45]:
-				var slope := Basis(Vector3.RIGHT, -atan(fh / 8.0))
-				var len := sqrt(64.0 + fh * fh)
-				k.box(Vector3(sx - 0.04, 0.9, -len * 0.5), Vector3(sx + 0.04, 1.0, len * 0.5), Color(0.15, 0.15, 0.16), Transform3D(slope, Vector3(0, fh * 0.5, 0)))
-				k.box(Vector3(sx - 0.03, 0.0, -len * 0.5), Vector3(sx + 0.03, 0.9, len * 0.5), glass, Transform3D(slope, Vector3(0, fh * 0.5, 0)))
+			_stairs(k)
 		"passkontrolle":
 			k.box(Vector3(-3, 0, -3), Vector3(3, 0.05, 3), Color(0.32, 0.34, 0.4))
 			for i in range(3):
@@ -1850,6 +2109,17 @@ static func _inside_more(n: Node3D, id: String) -> void:
 
 ## Lichtkegel auf dem Boden (nachts sichtbar): Trapez von der Lampe (Breite w0) nach vorn (-Z) bis len (Breite w1).
 static var _beam_mat: ShaderMaterial = null
+
+
+static var _cone_mat: ShaderMaterial = null
+
+
+## Gemeinsames Material der Lichtkegel (Stärke "vis" setzt flights.gd je Bild: Nacht, Nebel, Regen).
+static func cone_material() -> ShaderMaterial:
+	if _cone_mat == null:
+		_cone_mat = ShaderMaterial.new()
+		_cone_mat.shader = load("res://shaders/cone.gdshader")
+	return _cone_mat
 
 
 static func light_pool(length: float, w0: float, w1: float, strength: float = 0.55) -> MeshInstance3D:

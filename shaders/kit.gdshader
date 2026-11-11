@@ -1,5 +1,5 @@
 // Detailmodelle aus dem Baukasten: Vertexfarben (sRGB), weiche oder flache Normalen.
-// Alpha der Vertexfarbe markiert Leuchtflächen: 0.6 = Fenster (nachts warm erleuchtet),
+// Alpha der Vertexfarbe markiert Leuchtflächen: 0.6 = Fenster (nachts warm erleuchtet), 0.5 = Glas ohne Licht,
 // 0.3 = Lampe (nachts hell), 0.8 = Laub (wiegt im Wind), 1.0 = normale Oberfläche.
 shader_type spatial;
 render_mode cull_disabled;
@@ -48,10 +48,16 @@ void fragment() {
 	if (COLOR.a < 0.45) {
 		// Lampe: nachts hell leuchtend
 		EMISSION = base * night * 6.0 + base * 0.15;
+	} else if (COLOR.a > 0.47 && COLOR.a < 0.53) {
+		// Glas ohne Licht dahinter (Balustraden, Geländer): glatt und spiegelnd
+		ROUGHNESS = 0.12;
+		SPECULAR = 0.7;
 	} else if (COLOR.a < 0.7) {
 		// Fenster: nachts zu gut zwei Dritteln warm erleuchtet, tagsüber leicht spiegelnd
-		float on = step(0.3, hash(floor(wpos.xz * 0.6) + floor(wpos.y * 0.4)));
-		EMISSION = vec3(1.0, 0.78, 0.5) * night * on * 1.4;
+		// Fenster: nachts warm erleuchtet, leicht unregelmäßig (keine harten Blöcke); Oberlichter im Dach schwächer
+		float on = 0.7 + 0.3 * hash(floor(wpos.xz * 0.25) + floor(wpos.y * 0.25));
+		float up = smoothstep(0.5, 0.9, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
+		EMISSION = vec3(1.0, 0.8, 0.56) * night * on * mix(0.85, 0.22, up);
 		ROUGHNESS = 0.25;
 		SPECULAR = 0.6;
 	}

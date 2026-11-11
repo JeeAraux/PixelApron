@@ -55,6 +55,10 @@ const OPTIONS := {
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]], ["oberdeck", "Oberdeck (A380)", [false, true]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
+	"stand": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
+	"stand_aussen": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
+	"stand_gross": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
+	"stand_f": [["markierung", "Markierung", ["voll", "eigene", "aus"]]],
 }
 const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig": "eckig", "abgerundet": "abgerundet", "rund": "rund",
 	"flach": "Flachdach", "gewoelbt": "Tonnendach", "shed": "Sheddach", "schengen": "Schengen", "non_schengen": "Non-Schengen",
@@ -62,6 +66,7 @@ const OPTION_TEXT := {"glas": "Glas", "beton": "Beton", "holz": "Holz", "eckig":
 	"cafe": "Café", "baeckerei": "Bäckerei", "bar": "Bar", "restaurant": "Restaurant", "kiosk": "Kiosk", "dutyfree": "Duty Free",
 	"buecher": "Bücher", "elektronik": "Elektronik", "apotheke": "Apotheke", "mode": "Mode", "oval": "Oval", "karussell": "Karussell", "schiebe": "Schiebetür", "dreh": "Drehtür",
 	"automatik": "Automatik (Glas)", "fluegel": "Flügeltür", "personal": "Personaltür",
+	"voll": "mit Einrolllinie", "eigene": "Linien selbst zeichnen", "aus": "keine",
 	"laub": "Laubbaum", "nadel": "Nadelbaum", "birke": "Birke", "pappel": "Pappel", "obst": "Obstbaum"}
 var junction_controls: Dictionary = {}   # Kreuzung (gerundete Lage) -> rechts, vorfahrt, ampel
 var satisfaction := 75.0
@@ -258,6 +263,7 @@ func build_line(kind: String, points: Array, free: bool = false, plain: bool = f
 	if Catalog.has_sides(kind):
 		rec["side"] = side
 	if Catalog.is_wall(kind):
+		ensure_basement(hall_at(samples[0]), view_floor)
 		rec["floor"] = view_floor
 		(rec["node"] as Node3D).position.y = float(view_floor) * Catalog.FLOOR_H
 		_apply_interior(rec["node"], true)
@@ -720,7 +726,7 @@ func _apply_interior(n: Node3D, wall: bool = false) -> void:
 	for f in range(-1, 4):
 		var slab := n.get_node_or_null("Ebene%d" % f) as Node3D
 		if slab != null:
-			slab.visible = (not interior_view and f >= 0) or (interior_view and f <= view_floor and (f >= 0 or view_floor < 0) \
+			slab.visible = (not interior_view and f >= 0) or (interior_view and f <= view_floor and (f >= 0 or view_floor <= 0) \
 				and (not section_view or f == _lowest_floor(n)))
 
 
@@ -761,6 +767,33 @@ func hall_basement(h: Dictionary) -> bool:
 	return bool(opt(h, "keller"))
 
 
+## Kosten, um einer Halle einen Keller zu geben (0, wenn sie schon einen hat).
+func basement_cost(h: Dictionary) -> int:
+	if h.is_empty() or hall_basement(h):
+		return 0
+	return int((h["rect"] as Rect2).get_area() * float(Catalog.ITEMS["halle"]["cost_m2"]) * 0.6)
+
+
+## Wird im Untergeschoss gebaut und die Halle hat noch keinen Keller, wird er mit angelegt.
+func ensure_basement(h: Dictionary, f: int) -> String:
+	if f >= 0 or h.is_empty() or hall_basement(h):
+		return ""
+	var c := basement_cost(h)
+	var why := cycle_option(h, "keller", 1)
+	if why == "":
+		toast.emit("Keller unter der Halle angelegt (%s)" % fmt_money(c))
+	return why
+
+
+## Fehlertext für eine Ebene der Halle (Keller wird bei Bedarf angelegt, wenn das Geld reicht).
+func floor_problem(h: Dictionary, f: int, extra: int = 0) -> String:
+	if f >= hall_levels(h):
+		return "Diese Halle hat kein %s (Ebenen im Infofeld der Halle einstellen)" % floor_name(f)
+	if f < 0 and not hall_basement(h) and not can_afford(basement_cost(h) + extra):
+		return "Für den Keller fehlt Geld: %s nötig" % fmt_money(basement_cost(h) + extra)
+	return ""
+
+
 ## Ebenen, die es irgendwo gibt: [niedrigste, höchste]
 func floor_range() -> Vector2i:
 	var hi := 0
@@ -789,7 +822,8 @@ func _apply_floor(it: Dictionary) -> void:
 		node.visible = interior_view and floor_of(it) == view_floor
 	elif Catalog.is_inside(String(it["id"])):
 		var f := floor_of(it)
-		var both := bool(Catalog.ITEMS[it["id"]].get("bag_lift", false)) and f + 1 == view_floor
+		# Verbinder (Rolltreppe, Treppe, Aufzug, Gepäcklift) reichen in die Ebene darüber
+		var both := _two_floors(String(it["id"])) and f + 1 == view_floor
 		node.visible = (floor_shown(f) or both) if interior_view else (f >= 0 and not lod_far)
 	else:
 		node.visible = not (interior_view and view_floor < 0)
@@ -895,7 +929,8 @@ func _rebuild_node(rec: Dictionary) -> void:
 	if rec["id"] == "halle":
 		var r: Rect2 = rec["rect"]
 		rec["cuts"] = facade_cuts(rec)
-		node = Factory.make_hall(r.size.x, r.size.y, rec.get("opts", {}), rec["cuts"])
+		rec["holes"] = slab_holes(rec)
+		node = Factory.make_hall(r.size.x, r.size.y, rec.get("opts", {}), rec["cuts"], rec["holes"])
 	else:
 		node = Factory.make_item(String(rec["id"]), rec.get("opts", {}))
 	node.transform = old.transform
@@ -1192,6 +1227,14 @@ func stop_snap(id: String, p: Vector3) -> Array:
 ## Befeuerung und Markierungen einrasten. Rückgabe [Lage, Drehung] oder leer.
 ## pistenende: 12 m vor einer Schwelle in Pistenrichtung. papi: links neben dem Aufsetzpunkt.
 ## rollweg: auf die Mittellinie des nächsten Rollwegs.
+const PAD_AT := 32.0   # Wendekreis: Mitte so weit hinter der Schwelle
+
+
+## Seitlicher Abstand der Außenkante der Wendespur von der Pistenmitte (Durchmesser des Wendekreises).
+static func pad_width() -> float:
+	return float(Catalog.LINES["piste"]["width"]) * 0.5 + 24.0
+
+
 func marker_snap(id: String, p: Vector3) -> Array:
 	var mode := String(Catalog.ITEMS[id].get("marker", ""))
 	var hw := float(Catalog.LINES["piste"]["width"]) * 0.5
@@ -1216,6 +1259,22 @@ func marker_snap(id: String, p: Vector3) -> Array:
 					bd = d
 					best = [q, rot_for_normal(-inward if mode == "pistenende" else inward)]
 		return best
+	if mode == "wende":
+		# Wendeplatte: Mitte des Wendekreises neben dem Pistenende, Seite nach dem Mauszeiger
+		var best3: Array = []
+		var bd3 := 500.0
+		for r: Array in runway_list():
+			for e in range(2):
+				var thr: Vector3 = r[e]
+				var inward := ((r[1 - e] as Vector3) - thr).normalized()
+				var lat := inward.cross(Vector3.UP).normalized()
+				var side := 1.0 if (p - thr).dot(lat) >= 0.0 else -1.0
+				var q := thr + inward * PAD_AT + lat * side * pad_width() * 0.5
+				var d := Vector2(q.x - p.x, q.z - p.z).length()
+				if d < bd3:
+					bd3 = d
+					best3 = [q, rot_for_normal(-inward)]
+		return best3
 	if mode == "rollweg":
 		var best2: Array = []
 		var bd2 := 14.0
@@ -1273,6 +1332,19 @@ func facade_cuts(hall: Dictionary) -> Array:
 var _facade_queue: Array = []
 
 ## Fassade einer Halle neu bauen, wenn sich Eingänge oder Brücken geändert haben (gesammelt am Bildende).
+## Deckenöffnungen über Rolltreppen, Treppen und Aufzügen: [[Ebene, Rechteck lokal zur Hallenmitte, Drehung]].
+func slab_holes(hall: Dictionary) -> Array:
+	var out := []
+	var c: Vector2 = (hall["rect"] as Rect2).get_center()
+	for it: Dictionary in inside_of(hall):
+		if not bool(Catalog.ITEMS.get(String(it["id"]), {}).get("connector", false)):
+			continue
+		var r: Rect2 = it["rect"]
+		out.append([floor_of(it) + 1, Rect2(r.position - c, r.size).grow(0.05), int(it.get("rot", 0))])
+	out.sort_custom(func(a: Array, b: Array) -> bool: return str(a) < str(b))
+	return out
+
+
 func queue_facade(hall: Dictionary) -> void:
 	if _facade_queue.is_empty():
 		call_deferred("flush_facades")
@@ -1290,7 +1362,7 @@ func flush_facades() -> void:
 		if not (hall in items):
 			continue
 		var cuts := facade_cuts(hall)
-		if str(cuts) == str(hall.get("cuts", [])):
+		if str(cuts) == str(hall.get("cuts", [])) and str(slab_holes(hall)) == str(hall.get("holes", [])):
 			continue
 		_rebuild_node(hall)
 		changed = true
@@ -1362,8 +1434,9 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 		if hall.is_empty():
 			return "Nur innerhalb einer Terminalhalle"
 		var f := view_floor
-		if f >= hall_levels(hall) or (f < 0 and not hall_basement(hall)):
-			return "Diese Halle hat keine %s (Ebenen im Infofeld der Halle einstellen)" % floor_name(f)
+		var why_floor := floor_problem(hall, f, int(def["cost"]))
+		if why_floor != "":
+			return why_floor
 		if _two_floors(id) and f + 1 >= hall_levels(hall):
 			return "Darüber gibt es keine Ebene: der Halle erst eine weitere Ebene geben"
 		if id == "eingang" and f != 0:
@@ -1432,6 +1505,9 @@ func can_place_wall(a: Vector3, b: Vector3) -> String:
 	var hall := hall_at(a)
 	if hall.is_empty() or not is_same(hall, hall_at(b)):
 		return "Wände nur innerhalb einer Terminalhalle"
+	var why_floor := floor_problem(hall, view_floor)
+	if why_floor != "":
+		return why_floor
 	var tmp := {"samples": PackedVector3Array([a, b])}
 	for v: Vector3 in wall_probe(tmp):
 		for it: Dictionary in inside_of(hall):
@@ -1509,6 +1585,8 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 	var f := 0
 	if Catalog.is_inside(id):
 		f = view_floor if floor == -99 else floor
+		if ensure_basement(hall_for_rect(footprint(id, pos, rot)), f) != "":
+			return {}
 	var node := Factory.make_item(id, opts)
 	node.position = Vector3(pos.x, float(f) * Catalog.FLOOR_H, pos.z)
 	node.rotation.y = float(rot) * PI * 0.5
@@ -1519,7 +1597,7 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 		rec["hall"] = hall_for_rect(rec["rect"])
 		rec["floor"] = f
 		_apply_floor(rec)
-	if (id == "eingang" or id == "rolltor") and rec.has("hall"):
+	if (id == "eingang" or id == "rolltor" or _two_floors(id)) and rec.has("hall"):
 		queue_facade(rec["hall"])
 	elif bool(Catalog.ITEMS[id].get("bridge", false)):
 		var hsb := hall_side(bridge_anchor(rec))
@@ -1541,6 +1619,9 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 func _door_wall_why(hall: Dictionary, f: int, r: Rect2, rot: int) -> String:
 	var c := r.get_center()
 	var along := Vector2(1, 0) if rot % 2 == 0 else Vector2(0, 1)
+	var half := maxf(r.size.x, r.size.y) * 0.5
+	# Wände auf der Türlinie sammeln (auch mehrere hintereinander): die Tür muss ganz auf Wand sitzen
+	var spans := []
 	for l: Dictionary in walls_of(hall):
 		if floor_of(l) != f:
 			continue
@@ -1548,17 +1629,21 @@ func _door_wall_why(hall: Dictionary, f: int, r: Rect2, rot: int) -> String:
 		var a := Vector2(s[0].x, s[0].z)
 		var b := Vector2(s[s.size() - 1].x, s[s.size() - 1].z)
 		var d := b - a
-		if d.length() < 0.5:
+		if d.length() < 0.5 or absf(d.normalized().dot(along)) < 0.98:
 			continue
-		var dn := d.normalized()
-		if absf(dn.dot(along)) < 0.98:
+		var ta := (a - c).dot(along)
+		var tb := (b - c).dot(along)
+		if ((a + along * -ta) - c).length() > 0.35:
 			continue
-		var t := (c - a).dot(dn)
-		var half := maxf(r.size.x, r.size.y) * 0.5
-		if t < half - 0.05 or t > d.length() - half + 0.05:
+		spans.append(Vector2(minf(ta, tb), maxf(ta, tb)))
+	spans.sort_custom(func(x: Vector2, y: Vector2) -> bool: return x.x < y.x)
+	var reach := -half
+	for sp: Vector2 in spans:
+		if sp.x > reach + 0.05:
 			continue
-		if (a + dn * t).distance_to(c) < 0.35:
-			return ""
+		reach = maxf(reach, sp.y)
+	if reach >= half - 0.05:
+		return ""
 	return "Tür auf eine Innenwand setzen (quer zur Wand, nicht an deren Ende)"
 
 
@@ -1583,9 +1668,10 @@ func wall_cuts(l: Dictionary) -> Array:
 		var t := (c - a).dot(dn)
 		var half := maxf(r.size.x, r.size.y) * 0.5
 		var along := Vector2(1, 0) if r.size.x >= r.size.y else Vector2(0, 1)
-		if (a + dn * t).distance_to(c) > 0.4 or t < half - 0.1 or t > d.length() - half + 0.1 or absf(dn.dot(along)) < 0.98:
+		if (a + dn * t).distance_to(c) > 0.4 or t + half < 0.05 or t - half > d.length() - 0.05 or absf(dn.dot(along)) < 0.98:
 			continue
-		out.append([t - half, t + half])
+		# auch Türen, die nur zum Teil auf diesem Wandstück sitzen (Wand endet an der Tür)
+		out.append([maxf(t - half, 0.0), minf(t + half, d.length())])
 	# Kofferbänder, die durch die Wand laufen: Öffnung nur in Bandhöhe (Fluggäste kommen nicht durch)
 	for bl: Dictionary in lines:
 		if bl["kind"] != "kofferband" or floor_of(bl) != floor_of(l):
@@ -1745,9 +1831,7 @@ func room_problem(r: Rect2) -> String:
 	var hall := hall_for_rect(r)
 	if hall.is_empty():
 		return "Räume nur innerhalb einer Terminalhalle"
-	if view_floor >= hall_levels(hall) or (view_floor < 0 and not hall_basement(hall)):
-		return "Diese Halle hat keine " + floor_name(view_floor)
-	return ""
+	return floor_problem(hall, view_floor)
 
 
 func room_edges(r: Rect2) -> Array:
@@ -1764,24 +1848,43 @@ func room_edges(r: Rect2) -> Array:
 			continue
 		if not horizontal and (absf(a.x - hr.position.x) < 0.6 or absf(a.x - hr.end.x) < 0.6):
 			continue
-		# schon eine Wand auf dieser Linie, die die Seite ganz abdeckt?
-		var covered := false
+		# vorhandene Wände auf dieser Linie abziehen: nur die Lücken bekommen eine neue Wand
+		var u0 := minf(a.x, b.x) if horizontal else minf(a.y, b.y)
+		var u1 := maxf(a.x, b.x) if horizontal else maxf(a.y, b.y)
+		var line_v := a.y if horizontal else a.x
+		var gaps: Array = [Vector2(u0, u1)]
 		for l: Dictionary in walls_of(hall):
 			if floor_of(l) != view_floor:
 				continue
 			var sm: PackedVector3Array = l["samples"]
 			var la := Vector2(sm[0].x, sm[0].z)
 			var lb := Vector2(sm[sm.size() - 1].x, sm[sm.size() - 1].z)
-			if horizontal and absf(la.y - a.y) < 0.3 and absf(lb.y - a.y) < 0.3:
-				covered = covered or (minf(la.x, lb.x) <= minf(a.x, b.x) + 0.3 and maxf(la.x, lb.x) >= maxf(a.x, b.x) - 0.3)
-			elif not horizontal and absf(la.x - a.x) < 0.3 and absf(lb.x - a.x) < 0.3:
-				covered = covered or (minf(la.y, lb.y) <= minf(a.y, b.y) + 0.3 and maxf(la.y, lb.y) >= maxf(a.y, b.y) - 0.3)
-		if not covered:
+			var on_line := (absf(la.y - line_v) < 0.3 and absf(lb.y - line_v) < 0.3) if horizontal \
+				else (absf(la.x - line_v) < 0.3 and absf(lb.x - line_v) < 0.3)
+			if not on_line:
+				continue
+			var w0 := minf(la.x, lb.x) if horizontal else minf(la.y, lb.y)
+			var w1 := maxf(la.x, lb.x) if horizontal else maxf(la.y, lb.y)
+			var next: Array = []
+			for g: Vector2 in gaps:
+				if w1 <= g.x + 0.05 or w0 >= g.y - 0.05:
+					next.append(g)
+					continue
+				if w0 > g.x + 0.3:
+					next.append(Vector2(g.x, w0))
+				if w1 < g.y - 0.3:
+					next.append(Vector2(w1, g.y))
+			gaps = next
+		var lo := hr.grow(-0.05)
+		for g: Vector2 in gaps:
+			if g.y - g.x < 0.5:
+				continue
+			var ga := Vector2(g.x, line_v) if horizontal else Vector2(line_v, g.x)
+			var gb := Vector2(g.y, line_v) if horizontal else Vector2(line_v, g.y)
 			# Enden an der Außenwand knapp nach innen ziehen (sonst liegt der Punkt nicht in der Halle)
-			var lo := hr.grow(-0.05)
-			a = Vector2(clampf(a.x, lo.position.x, lo.end.x), clampf(a.y, lo.position.y, lo.end.y))
-			b = Vector2(clampf(b.x, lo.position.x, lo.end.x), clampf(b.y, lo.position.y, lo.end.y))
-			out.append([Vector3(a.x, 0, a.y), Vector3(b.x, 0, b.y)])
+			ga = Vector2(clampf(ga.x, lo.position.x, lo.end.x), clampf(ga.y, lo.position.y, lo.end.y))
+			gb = Vector2(clampf(gb.x, lo.position.x, lo.end.x), clampf(gb.y, lo.position.y, lo.end.y))
+			out.append([Vector3(ga.x, 0, ga.y), Vector3(gb.x, 0, gb.y)])
 	return out
 
 
@@ -1799,8 +1902,11 @@ func build_room(r: Rect2, zone_id: String, door_art: String, room_kind: String =
 	var why := room_problem(r)
 	if why != "":
 		return why
-	if not free and not can_afford(room_cost(r, zone_id)):
+	if not free and not can_afford(room_cost(r, zone_id) + basement_cost(hall_for_rect(r)) * int(view_floor < 0)):
 		return "Nicht genug Geld"
+	why = ensure_basement(hall_for_rect(r), view_floor)
+	if why != "":
+		return why
 	var edges := room_edges(r)
 	var built := []
 	for e: Array in edges:
@@ -1850,8 +1956,9 @@ func can_place_zone(id: String, r: Rect2, f: int = -99) -> String:
 	var hall := hall_for_rect(r)
 	if hall.is_empty():
 		return "Bereiche nur innerhalb einer Terminalhalle"
-	if fl >= hall_levels(hall) or (fl < 0 and not hall_basement(hall)):
-		return "Diese Halle hat keine " + floor_name(fl)
+	var why_floor := floor_problem(hall, fl)
+	if why_floor != "":
+		return why_floor
 	if r.size.x < 1.0 or r.size.y < 1.0:
 		return "Zu klein"
 	if not can_afford(zone_cost(id, r)):
@@ -1861,6 +1968,8 @@ func can_place_zone(id: String, r: Rect2, f: int = -99) -> String:
 
 func build_zone(id: String, r: Rect2, free: bool = false, f: int = -99) -> Dictionary:
 	var fl := view_floor if f == -99 else f
+	if ensure_basement(hall_for_rect(r), fl) != "":
+		return {}
 	var cost := 0 if free else zone_cost(id, r)
 	if not can_afford(cost):
 		toast.emit("Nicht genug Geld")
@@ -2636,6 +2745,12 @@ func tunnel_cuts() -> Array:
 					var dn := d.normalized()
 					out.append([c.x, c.y, dn.x, dn.y, d.length() * 0.5 + 0.6, w])
 				a = b
+	# Deckenöffnungen über Rolltreppen und Treppen aus dem Keller: dort fehlt der Rasen unter der Halle
+	for it: Dictionary in items:
+		if floor_of(it) < 0 and bool(Catalog.ITEMS.get(String(it["id"]), {}).get("connector", false)):
+			var r: Rect2 = it["rect"]
+			var c2 := r.get_center()
+			out.append([c2.x, c2.y, 1.0, 0.0, r.size.x * 0.5 + 0.05, r.size.y * 0.5 + 0.05])
 	return out
 
 
@@ -2773,7 +2888,7 @@ func remove(rec: Dictionary, refund: float = 0.5) -> void:
 		for inner: Dictionary in inside_of(rec) + walls:
 			_remove_one(inner, refund)
 	var facade_hall: Dictionary = {}
-	if rec.get("id", "") in ["eingang", "rolltor"]:
+	if rec.get("id", "") in ["eingang", "rolltor"] or _two_floors(String(rec.get("id", ""))):
 		facade_hall = rec.get("hall", {})
 	elif rec.get("id", "") == "fluggastbruecke":
 		var hsr := hall_side(bridge_anchor(rec))

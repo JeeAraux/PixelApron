@@ -7,6 +7,7 @@ extends RefCounted
 const Catalog = preload("res://scripts/catalog.gd")
 
 const STEP := 6
+const LANE_OFF := 1.75
 const CELL := 24.0
 
 var astar := AStar3D.new()
@@ -68,6 +69,12 @@ func build(lines: Array, with_taxi: bool, stands: Array = []) -> void:
 			var j: int = best[lj][1]
 			if not astar.are_points_connected(i, j):
 				astar.connect_points(i, j)
+	# Knoten auf Standflächen meiden: dort stehen Flugzeuge, quer hindurch fährt niemand (Busse, Schlepper …)
+	for st: Dictionary in stands:
+		var sr: Rect2 = (st["rect"] as Rect2).grow(-1.0)
+		for j in range(pos.size()):
+			if kinds[j] != "betriebsstrasse" and sr.has_point(Vector2(pos[j].x, pos[j].z)):
+				astar.set_point_weight_scale(j, 40.0)
 	# Stände: Zufahrt vom Kopf des Stands (Nasenseite) zur nächsten Betriebsstraße
 	for st: Dictionary in stands:
 		var node: Node3D = st["node"]
@@ -148,8 +155,16 @@ func route(a: Vector3, b: Vector3, max_d: float = 60.0) -> PackedVector3Array:
 	if ids.is_empty() and na != nb:
 		return PackedVector3Array()
 	var out := PackedVector3Array([a])
-	for id in ids:
-		var q := pos[id]
+	for j in range(ids.size()):
+		var q := pos[ids[j]]
+		# Rechtsverkehr: auf Betriebsstraßen in der rechten Spur (1,75 m neben der Mitte)
+		if kinds[ids[j]] == "betriebsstrasse" and ids.size() > 1:
+			var pa := pos[ids[maxi(j - 1, 0)]]
+			var pb := pos[ids[mini(j + 1, ids.size() - 1)]]
+			var dir := pb - pa
+			dir.y = 0.0
+			if dir.length() > 0.1:
+				q += dir.normalized().cross(Vector3.UP) * LANE_OFF
 		if out[out.size() - 1].distance_to(q) > 2.0:
 			out.append(q)
 	if out[out.size() - 1].distance_to(b) > 0.5:
