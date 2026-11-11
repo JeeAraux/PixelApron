@@ -22,6 +22,13 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.27: Große Hallen, Vorfeld als Fläche, Obergeschosse nach Maß**
+  - **Busgarage, Feuerwache und Gepäckumschlag nach Größe:** Im Infofeld lässt sich die Zahl der Tore einstellen (Gepäckumschlag bis 8, Busgarage bis 8, Feuerwache bis 6). Die Halle wächst mit, jede Spur hat ihr eigenes Rolltor und ihre Einrichtung: Löschfahrzeuge, Arbeitsgruben und Waschplatz, Abladebänder mit Sammelband und Leitstand. In der Innenansicht ist das Dach ab, man sieht hinein.
+  - **Gepäckzüge fahren in die Halle:** Die Züge fahren durch das Tor in eine freie Spur des Gepäckumschlags, laden dort ab und setzen rückwärts hinaus. Die Koffer laufen über das Sammelband zur Sortierung und weiter zum Gepäckband, wo sie von der Rampe auf das Band rutschen.
+  - **Vorfeld als Fläche:** Neues Werkzeug „Vorfeldfläche“: Beton wird als Rechteck aufgezogen, mehrere Flächen ergeben jede Form. Stände, Haltestellen und Masten stehen darauf, Bodenfahrzeuge fahren frei, Flugzeuge nur auf den Rollführungslinien.
+  - **Bushaltebuchten an der Betriebsstraße:** Die Vorfeldbus-Haltestelle rastet am Rand der Betriebsstraße als Bucht ein.
+  - **Obergeschosse mit eigenen Maßen:** Mit dem Werkzeug „Geschossfläche“ (Terminal → Halle) zieht man im gezeigten Obergeschoss einen neuen Umriss auf. Höhere Geschosse dürfen kleiner sein und springen zurück, darunter entsteht eine Dachterrasse mit Glasgeländer. Kleinere Flächen werden anteilig erstattet.
+  - **Geführte Vorfelder:** Eine Fläche gilt erst dann als „nur auf Linien“, wenn dort wirklich Rollführungslinien liegen, eine kurze Linie sperrt keinen Rollweg mehr.
 - **Update 0.26: Wetter, Keller, Pushback und Rollwege**
   - **Nebel und Nacht:** Kein weißes Flimmern mehr über Laternen und Lichtkegeln im Nebel. Stattdessen ziehen Nebelschwaden knapp über dem Boden, Tower und Dächer ragen heraus. Die Nacht ist dunkler und ruhiger, Fenster leuchten gleichmäßig warm, Oberlichter im Dach nur schwach.
   - **Landescheinwerfer:** Lichtkegel in der Luft bei Nacht, Nebel und Regen, weich ein- und ausgeblendet. Dazu kommen rote und grüne Positionslichter und der Doppelblitz der Strobes.

@@ -18,6 +18,7 @@ const YELLOW := Color(0.9, 0.72, 0.16)
 
 const IDS := ["trafo", "heizzentrale", "wasseranschluss", "vorfelddepot", "tanklager", "busgarage", "catering", "personalgebaeude", "rettungswache", "wohngebiet"]
 const Landmarks = preload("res://scripts/landmarks.gd")
+const Catalog = preload("res://scripts/catalog.gd")
 const Models = preload("res://scripts/models.gd")
 const CLAD := Color(0.7, 0.73, 0.74)
 const RENDER := Color(0.88, 0.87, 0.83)
@@ -43,7 +44,10 @@ static func build(n: Node3D, id: String) -> bool:
 		"tanklager":
 			_fuel_farm(n, k)
 		"busgarage":
-			_bus_depot(n, k)
+			if Catalog.tore_of("busgarage", n.get_meta("opts", {})) > 0:
+				Landmarks.sized_hall(n, "busgarage", n.get_meta("opts", {}))
+			else:
+				_bus_depot(n, k)
 		"catering":
 			_catering(n, k)
 		"personalgebaeude":

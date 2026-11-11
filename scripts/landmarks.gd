@@ -8,6 +8,7 @@ const Kit = preload("res://scripts/mesh_kit.gd")
 const PixelFont = preload("res://scripts/pixel_font.gd")
 const DecoAnim = preload("res://scripts/deco_anim.gd")
 const Models = preload("res://scripts/models.gd")
+const Catalog = preload("res://scripts/catalog.gd")
 
 const CONCRETE := Color(0.66, 0.65, 0.61)
 const RENDER := Color(0.88, 0.87, 0.83)
@@ -45,7 +46,10 @@ static func build(n: Node3D, id: String) -> bool:
 		"tower":
 			_tower(n, k, opts)
 		"feuerwache":
-			_fire_station(n, k)
+			if Catalog.tore_of("feuerwache", opts) > 0:
+				sized_hall(n, "feuerwache", opts)
+			else:
+				_fire_station(n, k)
 		"parkhaus":
 			_car_park(n, k, opts)
 	n.add_child(k.instance("Bau"))
@@ -1400,3 +1404,198 @@ static func _car_park_entry(n: Node3D, k: Kit, top: float) -> void:
 	PixelFont.draw(k, "P", sp + Vector3(0, 4.0, -0.13), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), 0.13, Color(0.98, 0.98, 0.98, 0.3))
 	k.box(sp + Vector3(-0.85, 2.5, -0.12), sp + Vector3(0.85, 3.3, -0.04), DARK)
 	PixelFont.draw(k, "FREI", sp + Vector3(0, 2.9, -0.13), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), 0.065, GREEN_LAMP)
+
+
+# ================================================================== Hallen mit wählbarer Torzahl
+
+## Busgarage, Feuerwache und Gepäckumschlag in frei wählbarer Größe (Catalog.SIZED, Bauform "tore"):
+## Fahrzeughalle mit Rolltoren vorn (+Z), Seitenteil links (Büro, Waschhalle, Leitstand), Dach als eigener
+## Knoten "Dach" (in der Innenansicht ausgeblendet, damit man hineinsieht). Drinnen je Tor ein Stellplatz:
+## Feuerwehr mit Löschfahrzeug (LF0, LF1 …) und Spinden, Busse mit Arbeitsgrube und Werkbank,
+## Gepäckumschlag mit Entladeband je Spur, Sammelband zum Förderbandtunnel an der Rückwand.
+static func sized_hall(n: Node3D, id: String, opts: Dictionary) -> void:
+	var sz: Dictionary = Catalog.SIZED[id]
+	var s := Catalog.size_of(id, opts)
+	var doors := Catalog.doors_of(id, opts)
+	var w := s.x
+	var d := s.y
+	var x0 := -w * 0.5
+	var x1 := w * 0.5
+	var z0 := -d * 0.5
+	var z1 := d * 0.5
+	var xs := x0 + float(sz["side"])    # Beginn der Fahrzeughalle
+	var hh := 8.0 if id == "gepaeckumschlag" else 7.5
+	var k := Kit.new()
+	var rk := Kit.new()                 # Dach
+	var wall := {"feuerwache": BRICK, "busgarage": Color(0.78, 0.79, 0.78), "gepaeckumschlag": Color(0.62, 0.68, 0.74)}[id] as Color
+	var door_col := {"feuerwache": FIRE_RED, "busgarage": Color(0.95, 0.75, 0.2), "gepaeckumschlag": Color(0.86, 0.87, 0.88)}[id] as Color
+	# Boden der Halle und Vorplatz-Kante
+	k.box(Vector3(x0, 0, z0), Vector3(x1, 0.08, z1), Color(0.56, 0.57, 0.56))
+	# Wände: hinten, links, rechts; vorn Pfeiler zwischen den Toren und Sturz darüber
+	k.box(Vector3(x0, 0, z0), Vector3(x1, hh, z0 + 0.3), wall)
+	k.box(Vector3(x0, 0, z0), Vector3(x0 + 0.3, hh, z1), wall)
+	k.box(Vector3(x1 - 0.3, 0, z0), Vector3(x1, hh, z1), wall)
+	k.box(Vector3(xs - 0.15, 0, z0), Vector3(xs + 0.15, hh, z1), wall.darkened(0.05))   # Trennwand Seitenteil
+	var edges := [xs]
+	for e: Array in doors:
+		var cx := (e[0] as Vector3).x
+		var dw := float(e[1])
+		edges.append(cx - dw * 0.5 - 0.12)
+		edges.append(cx + dw * 0.5 + 0.12)
+	edges.append(x1)
+	for i in range(0, edges.size() - 1, 2):
+		var a := float(edges[i])
+		var b := float(edges[i + 1])
+		if b - a > 0.05:
+			k.box(Vector3(a, 0, z1 - 0.3), Vector3(b, hh, z1), wall)
+	var dh := float(sz["dh"])
+	k.box(Vector3(xs, dh + 0.3, z1 - 0.3), Vector3(x1, hh, z1), wall)
+	# Sockel, Traufe, Fugen bei Klinker
+	k.box(Vector3(x0 - 0.05, 0, z0 - 0.05), Vector3(x1 + 0.05, 0.4, z0 + 0.05), CONCRETE)
+	var eave := CONCRETE if id == "feuerwache" else STEEL
+	for e: Array in [[Vector3(x0 - 0.05, hh - 0.35, z0 - 0.05), Vector3(x1 + 0.05, hh, z0 + 0.35)], [Vector3(x0 - 0.05, hh - 0.35, z1 - 0.35), Vector3(x1 + 0.05, hh, z1 + 0.05)],
+			[Vector3(x0 - 0.05, hh - 0.35, z0), Vector3(x0 + 0.35, hh, z1)], [Vector3(x1 - 0.35, hh - 0.35, z0), Vector3(x1 + 0.05, hh, z1)]]:
+		k.box(e[0], e[1], eave)
+	if id == "feuerwache":
+		_joints(k, Vector3(x0, 0.4, z0), Vector3(x1, hh - 0.35, z0), Vector3(0, 0, -1), 0.27, BRICK.darkened(0.22))
+	else:
+		# Trapezblech: senkrechte Rippen auf der Rückwand und den Seiten
+		var rx := x0 + 0.4
+		while rx < x1 - 0.3:
+			k.box(Vector3(rx, 0.4, z0 - 0.04), Vector3(rx + 0.12, hh - 0.35, z0), wall.darkened(0.12))
+			rx += 0.9
+	# Fensterband hinten
+	var wx := xs + 2.5
+	while wx < x1 - 2.0:
+		_window(k, Vector3(wx, hh - 2.2, z0), Vector3(1.4, 0, 0), Vector3(0, 0.5, 0), Vector3(0, 0, -1), 2)
+		wx += 4.5
+	# Tore mit Anfahrschutz und Stellplätze dahinter
+	for i in range(doors.size()):
+		var e: Array = doors[i]
+		var c: Vector3 = e[0]
+		var dw := float(e[1])
+		var dd := float(e[3])
+		roll_door(n, k, i, Vector3(c.x, 0, z1 - 0.16), dw, dh, door_col, 4 if id == "feuerwache" else 3)
+		for sx: float in [-1.0, 1.0]:
+			var bp := Vector3(c.x + sx * (dw * 0.5 + 0.45), 0, z1 + 0.45)
+			k.cyl(bp, bp + Vector3(0, 1.0, 0), 0.13, 0.13, YELLOW, 10)
+			k.box(Vector3(c.x + sx * (float(sz["sp"]) * 0.5) - 0.07, 0.08, z1 - dd - 0.5), Vector3(c.x + sx * (float(sz["sp"]) * 0.5) + 0.07, 0.09, z1 - 0.4), YELLOW)
+		# Licht über jedem Stellplatz
+		for lz: float in [z1 - dd * 0.3, z1 - dd * 0.75]:
+			k.box(Vector3(c.x - 0.9, hh - 0.6, lz), Vector3(c.x + 0.9, hh - 0.52, lz + 0.3), LAMP)
+		match id:
+			"feuerwache":
+				var lf := MeshInstance3D.new()
+				lf.name = "LF%d" % i
+				lf.mesh = fire_truck_mesh()
+				lf.position = Vector3(c.x, 0.08, z1 - 6.0)
+				lf.rotation.y = PI
+				lf.set_meta("no_bake", true)
+				n.add_child(lf)
+				# Spinde mit Schutzkleidung und Helmen, Abgasabsaugung
+				k.box(Vector3(c.x - 2.5, 0.08, z0 + 0.3), Vector3(c.x + 2.5, 2.3, z0 + 0.75), STEEL)
+				for j in range(7):
+					var jx := c.x - 2.3 + float(j) * 0.65
+					k.box(Vector3(jx, 1.0, z0 + 0.75), Vector3(jx + 0.45, 1.95, z0 + 0.95), Color(0.72, 0.6, 0.36))
+					k.sphere(Vector3(jx + 0.22, 2.15, z0 + 0.7), 0.14, Color(0.9, 0.9, 0.85), 8, 4)
+				k.cyl(Vector3(c.x, hh - 0.35, z1 - 8.0), Vector3(c.x, 3.9, z1 - 8.0), 0.13, 0.13, DARK, 8)
+			"busgarage":
+				# Stellplatz für einen Gelenk-/Solobus, im ersten Platz eine Arbeitsgrube mit Geländer
+				if i == 0:
+					k.box(Vector3(c.x - 0.6, 0.0, z1 - dd + 2.0), Vector3(c.x + 0.6, 0.09, z1 - 2.0), Color(0.15, 0.15, 0.16))
+					for sx2: float in [-0.75, 0.75]:
+						k.box(Vector3(c.x + sx2 - 0.03, 0.08, z1 - dd + 2.0), Vector3(c.x + sx2 + 0.03, 0.12, z1 - 2.0), YELLOW)
+				k.box(Vector3(c.x - 2.0, 0.08, z0 + 0.3), Vector3(c.x + 2.0, 0.95, z0 + 1.0), Color(0.3, 0.45, 0.62))
+				k.box(Vector3(c.x - 2.0, 0.95, z0 + 0.3), Vector3(c.x + 2.0, 1.0, z0 + 1.0), Color(0.55, 0.42, 0.28))
+				k.box(Vector3(c.x - 1.8, 1.3, z0 + 0.3), Vector3(c.x + 1.8, 2.6, z0 + 0.36), Color(0.5, 0.52, 0.55))
+			"gepaeckumschlag":
+				# Entladeband längs der Spur (Koffer vom Gepäckzug), mündet hinten ins Sammelband
+				var bx := c.x + dw * 0.5 + 1.2
+				var bz0 := z0 + 1.6
+				var bz1 := z1 - 2.0
+				k.box(Vector3(bx - 0.5, 0.0, bz0), Vector3(bx + 0.5, 0.75, bz1), Color(0.45, 0.47, 0.5))
+				k.box(Vector3(bx - 0.42, 0.75, bz0), Vector3(bx + 0.42, 0.8, bz1), Color(0.13, 0.13, 0.14))
+				var rz := bz0 + 1.0
+				while rz < bz1:
+					k.box(Vector3(bx - 0.55, 0.0, rz), Vector3(bx + 0.55, 0.85, rz + 0.12), Color(0.85, 0.7, 0.2))
+					rz += 3.0
+				for q in range(6):
+					var bz := bz0 + 1.5 + float(q) * 3.4
+					if bz < bz1 - 1.0:
+						k.box(Vector3(bx - 0.25, 0.8, bz), Vector3(bx + 0.25, 1.2, bz + 0.6), [Color(0.15, 0.2, 0.45), Color(0.6, 0.1, 0.1), Color(0.1, 0.1, 0.1), Color(0.3, 0.55, 0.35)][(q + i) % 4])
+				# Gehweg zwischen Spur und Band
+				k.box(Vector3(c.x + dw * 0.5 + 0.3, 0.08, bz0 + 1.2), Vector3(bx - 0.6, 0.18, bz1), Color(0.62, 0.62, 0.6))
+	if id == "gepaeckumschlag":
+		# Sammelband entlang der Rückwand zum Förderbandtunnel im Seitenteil
+		k.box(Vector3(xs - 3.0, 0.0, z0 + 1.6), Vector3(x1 - 1.0, 0.75, z0 + 2.6), Color(0.45, 0.47, 0.5))
+		k.box(Vector3(xs - 3.0, 0.75, z0 + 1.7), Vector3(x1 - 1.0, 0.8, z0 + 2.5), Color(0.13, 0.13, 0.14))
+		k.box(Vector3(x0 + 1.2, 0.0, z0 + 0.3), Vector3(xs - 2.6, 3.0, z0 + 3.6), Color(0.08, 0.08, 0.09))     # Tunnelmund
+		k.box(Vector3(x0 + 1.0, 3.0, z0 + 0.3), Vector3(xs - 2.4, 3.4, z0 + 3.8), CONCRETE)
+		PixelFont.draw(k, "GEPAECK", Vector3((xs + x1) * 0.5, hh - 1.0, z1 + 0.02), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.16, Color(0.14, 0.24, 0.45))
+		# Leitstand mit Glasfront
+		k.box(Vector3(x0 + 0.3, 0.08, z1 - 9.0), Vector3(xs - 0.2, 3.4, z1 - 0.3), Color(0.82, 0.83, 0.82))
+		k.box(Vector3(x0 + 1.0, 1.0, z1 - 0.32), Vector3(xs - 1.0, 2.8, z1 - 0.26), WIN)
+	elif id == "busgarage":
+		# Waschhalle im Seitenteil: Portal mit zwei Bürsten, Büro hinten
+		var wcx := (x0 + xs) * 0.5
+		roll_door(n, k, doors.size(), Vector3(wcx, 0, z1 - 0.16), float(sz["side"]) - 3.0, 4.6, Color(0.3, 0.55, 0.85), 2)
+		k.box(Vector3(x0 + 0.3, 0.08, z0 + 0.3), Vector3(xs - 0.2, 0.12, z1 - 0.3), Color(0.38, 0.4, 0.42))
+		for z: float in [-2.0, 2.0]:
+			for sx3: float in [x0 + 1.2, xs - 1.2]:
+				k.box(Vector3(sx3 - 0.15, 0.1, z - 0.15), Vector3(sx3 + 0.15, 4.4, z + 0.15), Color(0.2, 0.45, 0.8))
+			k.box(Vector3(x0 + 1.0, 4.4, z - 0.25), Vector3(xs - 1.0, 4.7, z + 0.25), Color(0.2, 0.45, 0.8))
+		for e2: Array in [[x0 + 2.4, 1.5], [xs - 2.4, -1.5]]:
+			var bk := Kit.new()
+			bk.cyl(Vector3(0, 0, 0), Vector3(0, 3.6, 0), 0.07, 0.07, STEEL, 6)
+			for j in range(10):
+				var a := float(j) / 10.0 * TAU
+				bk.box(Vector3(cos(a) * 0.1 - 0.03, 0.2, sin(a) * 0.1 - 0.03), Vector3(cos(a) * 0.55 + 0.03, 3.5, sin(a) * 0.55 + 0.03), Color(0.25, 0.55, 0.95) if j % 2 == 0 else Color(0.85, 0.2, 0.2))
+			var br := _part(n, "DrehBuerste%d" % j_hash(e2[0]), bk, Vector3(float(e2[0]), 0.4, 0))
+			br.set_meta("speed", float(e2[1]) * 2.0)
+		k.box(Vector3(x0 + 0.3, 0.0, z0 + 0.3), Vector3(xs - 0.2, hh - 0.4, z0 + 7.0), RENDER)
+		for wy: float in [1.8, 4.8]:
+			_window(k, Vector3(x0, wy, z0 + 3.6), Vector3(0, 0, 2.2), Vector3(0, 0.6, 0), Vector3(-1, 0, 0), 2)
+		k.box(Vector3(x0 + 1.0, hh - 2.0, z1 + 0.01), Vector3(x0 + 5.0, hh - 0.9, z1 + 0.08), Color(0.16, 0.24, 0.38))
+		PixelFont.draw(k, "BUS", Vector3(x0 + 3.0, hh - 1.45, z1 + 0.09), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.12, Color(0.98, 0.85, 0.3))
+	elif id == "feuerwache":
+		# Bürotrakt mit Leitstelle (zwei Geschosse) und Schlauchturm mit Sirene und Blaulicht
+		var oh := hh + 0.4
+		k.box(Vector3(x0, 0, z0), Vector3(xs - 0.15, oh, z1), RENDER)
+		k.box(Vector3(x0, oh - 0.55, z1 - 0.01), Vector3(xs, oh, z1 + 0.06), FIRE_RED)
+		for wyy: float in [1.85, 5.35]:
+			var wx2 := x0 + 1.6
+			while wx2 < xs - 1.0:
+				_window(k, Vector3(wx2, wyy, z1), Vector3(0.7, 0, 0), Vector3(0, 0.7, 0), Vector3(0, 0, 1), 1)
+				wx2 += 2.4
+		k.box(Vector3(x0 + 1.0, 0, z1), Vector3(x0 + 3.0, 2.7, z1 + 0.06), FRAME)
+		k.box(Vector3(x0 + 1.1, 0.1, z1 + 0.04), Vector3(x0 + 2.9, 2.6, z1 + 0.1), WIN)
+		var th := 18.0
+		k.box(Vector3(x0 + 0.5, 0, z0 + 0.5), Vector3(x0 + 4.0, th, z0 + 4.0), BRICK)
+		_joints(k, Vector3(x0 + 0.5, 0.4, z0 + 0.5), Vector3(x0 + 4.0, th, z0 + 0.5), Vector3(0, 0, -1), 0.27, BRICK.darkened(0.22))
+		k.box(Vector3(x0 + 0.3, th, z0 + 0.3), Vector3(x0 + 4.2, th + 0.4, z0 + 4.2), CONCRETE)
+		k.cyl(Vector3(x0 + 2.25, th + 0.4, z0 + 2.25), Vector3(x0 + 2.25, th + 1.4, z0 + 2.25), 0.12, 0.12, STEEL, 6)
+		k.box(Vector3(x0 + 1.6, th + 1.4, z0 + 1.6), Vector3(x0 + 2.9, th + 1.9, z0 + 2.9), Color(0.75, 0.76, 0.78))
+		_blinker(n, Vector3(x0 + 2.25, th + 2.1, z0 + 2.25), BLUE_LAMP, 0.18, 0.8, 0.0)
+		PixelFont.draw(k, "FEUERWEHR", Vector3((xs + x1) * 0.5, hh - 1.0, z1 + 0.02), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), 0.13, WHITE)
+	# Dach: Flachdach mit Attika, Lichtbändern und Lüftern; bei der Feuerwache Solarmodule
+	rk.box(Vector3(x0, hh - 0.05, z0), Vector3(x1, hh + 0.1, z1), ROOF)
+	_parapet(rk, x0, z0, x1, z1, hh + 0.1, 0.5, wall if id == "feuerwache" else STEEL)
+	var sx4 := xs + 3.0
+	while sx4 < x1 - 3.0:
+		if id == "feuerwache":
+			rk.box(Vector3(sx4 - 1.4, hh + 0.12, z0 + 2.0), Vector3(sx4 + 1.4, hh + 0.5, z1 - 2.0), Color(0.12, 0.17, 0.32))
+		else:
+			rk.box(Vector3(sx4 - 0.8, hh + 0.1, z0 + 2.5), Vector3(sx4 + 0.8, hh + 0.45, z1 - 2.5), Color(0.55, 0.7, 0.8, 0.6))
+		sx4 += 6.0
+	rk.box(Vector3(x0 + 2.0, hh + 0.1, z0 + 6.0), Vector3(x0 + 4.0, hh + 1.2, z0 + 8.0), Color(0.7, 0.72, 0.74))
+	var roof := MeshInstance3D.new()
+	roof.name = "Dach"
+	roof.mesh = rk.commit()
+	roof.material_override = Kit.material()
+	roof.set_meta("no_bake", true)
+	n.add_child(roof)
+	n.add_child(k.instance("Halle"))
+
+
+static func j_hash(x: Variant) -> int:
+	return absi(int(float(x) * 10.0)) % 997

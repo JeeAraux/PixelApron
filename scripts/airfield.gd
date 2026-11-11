@@ -151,6 +151,7 @@ func rebuild() -> void:
 	cur_lit = true
 	_junction_signs(k)
 	_taxi_junctions(km)
+	_apron_edges(km)
 	_turn_pad_marks(km)
 	_stands(k, km, lamps)
 	_add(k, "Flugfeld", false)
@@ -714,6 +715,42 @@ func _taxi_junctions(km: Kit) -> void:
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+## Vorfeldflächen: doppelte gelbe Randlinie am Außenrand der zusammenhängenden Fläche (Kanten, an die eine
+## andere Vorfeldfläche anschließt, bleiben frei).
+func _apron_edges(km: Kit) -> void:
+	var rects := []
+	for a: Dictionary in game.items_of("vorfeldflaeche"):
+		rects.append(a["rect"])
+	for r: Rect2 in rects:
+		var edges := [[r.position, Vector2(r.end.x, r.position.y), Vector2(0, -1)], [Vector2(r.position.x, r.end.y), r.end, Vector2(0, 1)],
+			[r.position, Vector2(r.position.x, r.end.y), Vector2(-1, 0)], [Vector2(r.end.x, r.position.y), r.end, Vector2(1, 0)]]
+		for e: Array in edges:
+			var a: Vector2 = e[0]
+			var b: Vector2 = e[1]
+			var out: Vector2 = e[2]
+			var len := a.distance_to(b)
+			var dir := (b - a) / maxf(len, 0.01)
+			var t := 0.0
+			var run_start := -1.0
+			while t <= len + 0.01:
+				var q := a + dir * minf(t, len) + out * 0.6
+				var covered := false
+				for r2: Rect2 in rects:
+					if r2 != r and r2.has_point(q):
+						covered = true
+						break
+				if not covered and run_start < 0.0:
+					run_start = t
+				if (covered or t >= len) and run_start >= 0.0:
+					var t1 := minf(t, len)
+					for inset: float in [0.3, 0.75]:
+						var p0 := a + dir * run_start - out * inset
+						var p1 := a + dir * t1 - out * inset
+						_strip(km, PackedVector3Array([Vector3(p0.x, 0, p0.y), Vector3(p1.x, 0, p1.y)]), 0.075, MARK_YELLOW)
+					run_start = -1.0
+				t += 1.0
 
 
 ## Wendeplatten: Belag neben dem Pistenende und gelbe Wendespur (Knoten legt airside.gd an).

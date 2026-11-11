@@ -913,6 +913,7 @@ func _claim_flow(p_id: int) -> void:
 	var route: PackedVector3Array = game.bag_routes().get(band_id, PackedVector3Array())
 	if route.size() < 2:
 		return
+	route = _claim_drop(route, band_id)
 	claim_sent[p_id] = true
 	var cum := PackedFloat32Array([0.0])
 	for i in range(1, route.size()):
@@ -928,6 +929,30 @@ func _claim_flow(p_id: int) -> void:
 		crowd.add_child(mi)
 		mi.position = route[0]
 		moving_bags.append({"node": mi, "route": route, "cum": cum, "s": -float(i) * 2.2, "v": CLAIM_SPEED, "claim": true})
+
+
+## Am Gepäckband: nach Steilförderer und Rutsche kippt der Koffer über die Kante der Insel auf das Band
+## und fährt ein Stück mit (danach übernimmt die umlaufende Kofferreihe des Bands).
+func _claim_drop(route: PackedVector3Array, band_id: int) -> PackedVector3Array:
+	var nd := instance_from_id(band_id) as Node3D
+	if nd == null or not is_instance_valid(nd):
+		return route
+	var xf := nd.global_transform
+	var fy := route[route.size() - 1].y - 0.9
+	var out := route.duplicate()
+	var add := func(x: float, y: float, z: float) -> void:
+		var w := xf * Vector3(x, 0, z)
+		out.append(Vector3(w.x, fy + y, w.z))
+	add.call(-3.05, 0.86, 0.5)     # über die Inselkante
+	add.call(-2.75, 0.62, 1.0)     # fällt auf die Bahn
+	add.call(-2.5, 0.59, 1.17)
+	var d := 1.2
+	while d < 7.2 + PI * 1.17 * 0.7:
+		var tp: Array = Interior._track_point(d)
+		var q: Vector3 = tp[0]
+		add.call(q.x, 0.59, q.z)
+		d += 0.6
+	return out
 
 
 ## Ein Koffer vom Gepäckzug läuft durchs Rolltor zur Sortierung (wenn ein Kofferband anschließt).
@@ -1753,6 +1778,14 @@ func _make_grid(h: Dictionary, mode: String = "dep", f: int = 0) -> AStarGrid2D:
 	g.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	g.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	g.update()
+	if f >= 1:
+		# kleineres Obergeschoss: außerhalb seines Umrisses ist keine Decke
+		var fr: Rect2 = game.floor_rect(h, f)
+		if not fr.is_equal_approx(r):
+			for x in range(g.region.position.x, g.region.end.x):
+				for z in range(g.region.position.y, g.region.end.y):
+					if not fr.has_point(Vector2(float(x) + 0.5, float(z) + 0.5)):
+						g.set_point_solid(Vector2i(x, z), true)
 	for it: Dictionary in game.inside_of(h):
 		var itf := GameState.floor_of(it)
 		var def: Dictionary = Catalog.ITEMS[it["id"]]

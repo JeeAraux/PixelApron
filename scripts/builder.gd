@@ -245,6 +245,25 @@ func on_click(p: Vector3) -> void:
 				game.toast.emit(zwhy)
 			_refresh()
 			return
+		if tool == "geschoss":
+			var gr := GameState.storey_rect(points[0], hover)
+			var gwhy := game.set_storey(game.hall_at(Vector3(gr.get_center().x, 0, gr.get_center().y)), game.view_floor, gr)
+			if gwhy == "":
+				points.clear()
+			else:
+				game.toast.emit(gwhy)
+			_refresh()
+			return
+		if tool == "vorfeldflaeche":
+			var ar := GameState.apron_rect(points[0], hover)
+			var awhy := game.can_place_apron(ar)
+			if awhy == "":
+				game.build_apron(ar)
+				points.clear()
+			else:
+				game.toast.emit(awhy)
+			_refresh()
+			return
 		var r := GameState.hall_rect(points[0], hover)
 		var why := game.can_place_hall(r)
 		if why == "":
@@ -561,6 +580,13 @@ func _snap(p: Vector3) -> Vector3:
 		if not ms.is_empty():
 			rot = int(ms[1])
 			return ms[0]
+	if is_item_tool() and tool == "bushalt":
+		# Vorfeld-Haltestelle: als Bucht an eine Betriebsstraße einrasten (sonst frei auf dem Vorfeld)
+		var bs2: Array = game.apron_bay_snap(tool, p)
+		if not bs2.is_empty() and not game._on_kind(p, "vorfeld"):
+			rot = int(bs2[1])
+			snap_kind = "bucht"
+			return bs2[0]
 	if is_item_tool() and (Catalog.ITEMS[tool].get("access", {}) as Dictionary).has("halt"):
 		var ss: Array = game.stop_snap(tool, p)
 		if not ss.is_empty():
@@ -1044,6 +1070,36 @@ func _refresh_rect() -> void:
 		_marker(hover, 1.2)
 	for p: Vector3 in points:
 		_marker(p, 1.6)
+	if tool == "geschoss":
+		var fy := float(maxi(game.view_floor, 0)) * Catalog.FLOOR_H
+		if points.is_empty() or not has_hover:
+			info.emit(String(def["name"]), String(def["desc"]) + "\nIn der Innenansicht ein Obergeschoss wählen (Bild auf/ab), dann erste Ecke drücken und ziehen.", 0)
+			return
+		var gr := GameState.storey_rect(points[0], hover)
+		var hh: Dictionary = game.hall_at(Vector3(gr.get_center().x, 0, gr.get_center().y))
+		var gwhy: String = game.storey_problem(hh, game.view_floor, gr)
+		var gbm := BoxMesh.new()
+		gbm.size = Vector3(maxf(gr.size.x, 0.5), 0.4, maxf(gr.size.y, 0.5))
+		preview.mesh = gbm
+		preview.position = Vector3(gr.get_center().x, fy + 0.3, gr.get_center().y)
+		preview.material_override = mat_ok if gwhy == "" else mat_bad
+		info.emit(String(def["name"]), "%s: %d × %d m\n%s" % [game.floor_name(game.view_floor), int(gr.size.x), int(gr.size.y),
+			gwhy if gwhy != "" else "Loslassen oder gegenüberliegende Ecke klicken"], 1 if gwhy == "" else 2)
+		return
+	if tool == "vorfeldflaeche":
+		if points.is_empty() or not has_hover:
+			info.emit(title, String(def["desc"]) + "\nErste Ecke drücken und ziehen.\n" + per, 0)
+			return
+		var ar := GameState.apron_rect(points[0], hover)
+		var awhy := game.can_place_apron(ar)
+		var abm := BoxMesh.new()
+		abm.size = Vector3(maxf(ar.size.x, 0.5), 0.3, maxf(ar.size.y, 0.5))
+		preview.mesh = abm
+		preview.position = Vector3(ar.get_center().x, 0.15, ar.get_center().y)
+		preview.material_override = mat_ok if awhy == "" else mat_bad
+		info.emit(title, "%d × %d m · %s\n%s" % [int(ar.size.x), int(ar.size.y), GameState.fmt_money(game.apron_cost(ar)),
+			awhy if awhy != "" else "Loslassen oder gegenüberliegende Ecke klicken"], 1 if awhy == "" else 2)
+		return
 	if points.is_empty() or not has_hover:
 		info.emit(title, "Klicke die erste Ecke der Halle.\n" + per, 0)
 		return

@@ -572,6 +572,17 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 	elif form == "rund":
 		radius = minf(hw, hd) * 0.45
 	var ring := _perimeter(hw, hd, radius)
+	# eigener Grundriss je Obergeschoss (kleiner als das Erdgeschoss möglich)
+	var frs: Array = floor_rects(w, d, opts, levels)
+	var rings: Array = []
+	var ctrs: Array = []
+	var stepped := false
+	for f in range(levels):
+		var fr: Rect2 = frs[f]
+		if f > 0 and not fr.is_equal_approx(frs[0]):
+			stepped = true
+		rings.append(ring if fr.is_equal_approx(frs[0]) else _rect_ring(fr, radius))
+		ctrs.append(fr.get_center())
 	# Böden je Ebene mit Fugenraster
 	for f in range(-1 if cellar else 0, levels):
 		var slab := Node3D.new()
@@ -585,16 +596,18 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 		for hole: Array in holes:
 			if int(hole[0]) == f:
 				hs.append(hole[1])
-		for piece: PackedVector2Array in _cut_holes(ring, hs):
+		var fring: PackedVector2Array = rings[f] if f >= 0 else ring
+		var frr: Rect2 = frs[f] if f >= 0 else frs[0]
+		for piece: PackedVector2Array in _cut_holes(fring, hs):
 			_polygon(k, piece, y0 - (0.25 if f != 0 else 0.0), y0 + 0.1, fc)
-		var x := -hw + 4.0
-		while x < hw - 0.5:
-			for seg: Vector2 in _free_spans(-hd + radius * 0.3, hd - radius * 0.3, x, hs, true):
+		var x := snappedf(frr.position.x + 2.0, 4.0) if f > 0 else -hw + 4.0
+		while x < frr.end.x - 0.5:
+			for seg: Vector2 in _free_spans(frr.position.y + radius * 0.3, frr.end.y - radius * 0.3, x, hs, true):
 				k.box(Vector3(x - 0.04, y0 + 0.1, seg.x), Vector3(x + 0.04, y0 + 0.11, seg.y), fc.darkened(0.08))
 			x += 4.0
-		var z := -hd + 4.0
-		while z < hd - 0.5:
-			for seg: Vector2 in _free_spans(-hw + radius * 0.3, hw - radius * 0.3, z, hs, false):
+		var z := snappedf(frr.position.y + 2.0, 4.0) if f > 0 else -hd + 4.0
+		while z < frr.end.y - 0.5:
+			for seg: Vector2 in _free_spans(frr.position.x + radius * 0.3, frr.end.x - radius * 0.3, z, hs, false):
 				k.box(Vector3(seg.x, y0 + 0.1, z - 0.04), Vector3(seg.y, y0 + 0.11, z + 0.04), fc.darkened(0.08))
 			z += 4.0
 		# Glasbrüstung an den Längsseiten der Öffnung (die Stirnseiten bleiben für den Ein- und Ausstieg frei)
@@ -635,21 +648,40 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 		var y0 := 0.6 + float(f) * fh
 		var y1 := float(f + 1) * fh + (4.6 - fh if f == levels - 1 else 0.0) - 1.4
 		var fc: Array = cuts if f == 0 else []
+		var rg: PackedVector2Array = rings[f]
+		var cc: Vector2 = ctrs[f]
+		if f > 0 and not (frs[f] as Rect2).is_equal_approx(frs[f - 1]):
+			# zurückgesetztes Geschoss: Sockel über der Terrasse
+			_wall_ring(hk, rg, float(f) * fh, y0, band, 0.3, [], cc)
 		if facade == "glas":
-			_wall_ring(hk, ring, y0, y1, GLASS, 0.24, fc)
-			_mullions(hk, ring, y0, y1, 2.0, Color(0.34, 0.38, 0.4), fc)
+			_wall_ring(hk, rg, y0, y1, GLASS, 0.24, fc, cc)
+			_mullions(hk, rg, y0, y1, 2.0, Color(0.34, 0.38, 0.4), fc, cc)
 			# Riegel der Pfosten-Riegel-Fassade
 			var ty := y0 + 1.15
 			while ty < y1 - 0.3:
-				_wall_ring(hk, ring, ty, ty + 0.08, Color(0.36, 0.4, 0.42), 0.27, fc)
+				_wall_ring(hk, rg, ty, ty + 0.08, Color(0.36, 0.4, 0.42), 0.27, fc, cc)
 				ty += 1.25
 		else:
-			_wall_ring(hk, ring, y0, y1, wall_col, 0.3, fc)
-			_wall_ring(hk, ring, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), GLASS, 0.34, fc)
-			_mullions(hk, ring, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), 1.6, band, fc)
+			_wall_ring(hk, rg, y0, y1, wall_col, 0.3, fc, cc)
+			_wall_ring(hk, rg, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), GLASS, 0.34, fc, cc)
+			_mullions(hk, rg, y0 + 0.9, minf(y0 + 3.2, y1 - 0.2), 1.6, band, fc, cc)
 			if facade == "holz":
-				_mullions(hk, ring, y1 - 0.9, y1, 0.5, band, fc)
-		_wall_ring(hk, ring, y1, y1 + 1.4 if f < levels - 1 else top, band, 0.3, fc)
+				_mullions(hk, rg, y1 - 0.9, y1, 0.5, band, fc, cc)
+		var last := f == levels - 1
+		var terrace := not last and not (frs[f + 1] as Rect2).is_equal_approx(frs[f])
+		_wall_ring(hk, rg, y1, top if last else float(f + 1) * fh, band, 0.3, fc, cc)
+		if terrace:
+			# Dachterrasse über dem größeren Geschoss: Platte, Abdeckblech, Glasgeländer
+			var tn := Node3D.new()
+			tn.name = "Terrasse%d" % f
+			n.add_child(tn)
+			var tk := Kit.new()
+			var ty0 := float(f + 1) * fh
+			_polygon(tk, rg, ty0 - 0.35, ty0 + 0.04, ROOF)
+			_wall_ring(tk, rg, ty0, ty0 + 0.12, Color(0.72, 0.73, 0.74), 0.34, [], cc)
+			_wall_ring(tk, rg, ty0 + 0.12, ty0 + 1.05, Color(0.62, 0.8, 0.88, 0.5), 0.08, [], cc)
+			_wall_ring(tk, rg, ty0 + 1.05, ty0 + 1.12, Color(0.7, 0.72, 0.74), 0.1, [], cc)
+			tn.add_child(tk.instance("Terrasse"))
 	# Laibungen und Stürze der Öffnungen (Eingänge, Brückenköpfe)
 	for c: Array in cuts:
 		var q: Vector2 = c[0]
@@ -666,12 +698,14 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 		hk.box(Vector3(minf(l0.x, l1.x + inn.x), ch, minf(l0.y, l1.y + inn.y)) - Vector3(0.02, 0, 0.02),
 			Vector3(maxf(l0.x, l1.x + inn.x), ch + 0.18, maxf(l0.y, l1.y + inn.y)) + Vector3(0.02, 0, 0.02), Color(0.3, 0.33, 0.35))
 	# Attika mit Abdeckblech, Schriftzug in feinen Pixeln
-	_wall_ring(hk, ring, top - 0.08, top + 0.02, Color(0.72, 0.73, 0.74), 0.36)
-	if w >= 30.0:
-		var px := clampf(w / 260.0, 0.12, 0.34) + 0.03 * float(levels - 1)
-		PixelFont.draw(hk, "TERMINAL", Vector3(0, top - 0.75, hd + 0.31), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), px, Color(0.14, 0.24, 0.45))
-		if w >= 120.0:
-			PixelFont.draw(hk, "GATES", Vector3(0, top - 0.75, -hd - 0.31), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), px * 0.8, Color(0.14, 0.24, 0.45))
+	var trr: Rect2 = frs[levels - 1]
+	var tc := trr.get_center()
+	_wall_ring(hk, rings[levels - 1], top - 0.08, top + 0.02, Color(0.72, 0.73, 0.74), 0.36, [], tc)
+	if trr.size.x >= 30.0:
+		var px := clampf(trr.size.x / 260.0, 0.12, 0.34) + 0.03 * float(levels - 1)
+		PixelFont.draw(hk, "TERMINAL", Vector3(tc.x, top - 0.75, trr.end.y + 0.31), Vector3(1, 0, 0), Vector3.UP, Vector3(0, 0, 1), px, Color(0.14, 0.24, 0.45))
+		if trr.size.x >= 120.0:
+			PixelFont.draw(hk, "GATES", Vector3(tc.x, top - 0.75, trr.position.y - 0.31), Vector3(-1, 0, 0), Vector3.UP, Vector3(0, 0, -1), px * 0.8, Color(0.14, 0.24, 0.45))
 	high.add_child(hk.instance("Fassade"))
 	if bool(opts.get("vordach", false)) and radius < 0.1:
 		_canopy(n, hw, hd)
@@ -691,11 +725,33 @@ static func make_hall(w: float, d: float, opts: Dictionary = {}, cuts: Array = [
 			var e2 := q2 + along2 * (float(c[1]) * 0.5 + 0.06) * sgn
 			k_post(lk, Vector3(e2.x, 0.0, e2.y), nrm2, 1.6, Color(0.3, 0.33, 0.35))
 	low.add_child(lk.instance("Bruestung"))
+	if stepped:
+		# eigene Brüstung je abweichendem Obergeschoss (feste Höhe; die Halle blendet sie je Ebene ein)
+		for f in range(1, levels):
+			var tl := Node3D.new()
+			tl.name = "TiefE%d" % f
+			tl.position.y = float(f) * fh
+			tl.visible = false
+			n.add_child(tl)
+			var tk2 := Kit.new()
+			var rg2: PackedVector2Array = rings[f]
+			var c2: Vector2 = ctrs[f]
+			_wall_ring(tk2, rg2, 0.0, 0.6, CONCRETE, 0.3, [], c2)
+			_wall_ring(tk2, rg2, 0.6, 1.3, Color(0.55, 0.75, 0.85, 0.6), 0.32, [], c2)
+			_wall_ring(tk2, rg2, 1.3, 1.45, WALL, 0.34, [], c2)
+			tl.add_child(tk2.instance("Bruestung"))
 	# Dach
 	var roof := Node3D.new()
 	roof.name = "Dach"
 	n.add_child(roof)
 	var rk := Kit.new()
+	if stepped:
+		roof.position = Vector3(tc.x, 0, tc.y)
+		hw = trr.size.x * 0.5
+		hd = trr.size.y * 0.5
+		w = trr.size.x
+		d = trr.size.y
+		radius = minf(radius, minf(w, d) * 0.45)
 	var ring_out := _perimeter(hw + 0.4, hd + 0.4, radius + (0.4 if radius > 0.0 else 0.0))
 	_polygon(rk, ring_out, top - 0.6, top, ROOF)
 	_wall_ring(rk, ring_out, top, top + 0.5, band, 0.35)
@@ -774,6 +830,32 @@ static func _canopy(n: Node3D, hw: float, hd: float) -> void:
 
 
 ## Umriss eines Rechtecks mit gerundeten Ecken (gegen den Uhrzeigersinn), radius 0 = eckig.
+## Grundriss je Ebene (lokal zur Hallenmitte): Ebene 0 ist die ganze Halle, höhere Ebenen aus opts "ebenen"
+## {"1": [x0, z0, x1, z1], …}; ohne eigenen Eintrag erbt eine Ebene den Umriss darunter, nie größer als dieser.
+static func floor_rects(w: float, d: float, opts: Dictionary, levels: int) -> Array:
+	var out: Array = []
+	var prev := Rect2(-w * 0.5, -d * 0.5, w, d)
+	var eb: Dictionary = opts.get("ebenen", {})
+	for f in range(maxi(levels, 1)):
+		var r := prev
+		if f > 0 and eb.has(str(f)):
+			var a: Array = eb[str(f)]
+			var cand := Rect2(float(a[0]), float(a[1]), float(a[2]) - float(a[0]), float(a[3]) - float(a[1])).intersection(prev)
+			if cand.size.x >= 4.0 and cand.size.y >= 4.0:
+				r = cand
+		out.append(r)
+		prev = r
+	return out
+
+
+static func _rect_ring(r: Rect2, radius: float) -> PackedVector2Array:
+	var c := r.get_center()
+	var out := PackedVector2Array()
+	for q: Vector2 in _perimeter(r.size.x * 0.5, r.size.y * 0.5, minf(radius, minf(r.size.x, r.size.y) * 0.45)):
+		out.append(q + c)
+	return out
+
+
 static func _perimeter(hw: float, hd: float, radius: float) -> PackedVector2Array:
 	var out := PackedVector2Array()
 	if radius < 0.05:
@@ -844,7 +926,7 @@ static func _free_spans(a: float, b: float, c: float, holes: Array, quer: bool) 
 
 
 ## Wandring entlang des Umrisses (Dicke t, nach innen).
-static func _wall_ring(k: Kit, ring: PackedVector2Array, y0: float, y1: float, col: Color, t: float, cuts: Array = []) -> void:
+static func _wall_ring(k: Kit, ring: PackedVector2Array, y0: float, y1: float, col: Color, t: float, cuts: Array = [], ctr: Vector2 = Vector2.ZERO) -> void:
 	if y1 - y0 < 0.01:
 		return
 	for i in range(ring.size()):
@@ -856,7 +938,7 @@ static func _wall_ring(k: Kit, ring: PackedVector2Array, y0: float, y1: float, c
 			continue
 		var mid := (a + b) * 0.5
 		var dir := Vector3(d.x, 0, d.y) / len
-		var inward := Vector3(-mid.x, 0, -mid.y).normalized()
+		var inward := Vector3(ctr.x - mid.x, 0, ctr.y - mid.y).normalized()
 		var side := dir.cross(Vector3.UP)
 		if side.dot(inward) < 0.0:
 			side = -side
@@ -923,7 +1005,7 @@ static func _seg_cuts(a: Vector2, b: Vector2, cuts: Array, y0: float) -> Array:
 
 
 ## Senkrechte Sprossen alle step Meter entlang des Umrisses.
-static func _mullions(k: Kit, ring: PackedVector2Array, y0: float, y1: float, step: float, col: Color, cuts: Array = []) -> void:
+static func _mullions(k: Kit, ring: PackedVector2Array, y0: float, y1: float, step: float, col: Color, cuts: Array = [], ctr: Vector2 = Vector2.ZERO) -> void:
 	for i in range(ring.size()):
 		var a := ring[i]
 		var b := ring[(i + 1) % ring.size()]
@@ -939,7 +1021,7 @@ static func _mullions(k: Kit, ring: PackedVector2Array, y0: float, y1: float, st
 			if cut:
 				continue
 			var p := a.lerp(b, float(j) / float(nseg))
-			var outv := Vector2(p.x, p.y).normalized()
+			var outv := (p - ctr).normalized()
 			var q := p + outv * 0.02
 			k.box(Vector3(q.x - 0.07, y0, q.y - 0.07), Vector3(q.x + 0.07, y1, q.y + 0.07), col)
 
@@ -1061,8 +1143,13 @@ static func _make_item_raw(id: String, opts: Dictionary = {}) -> Node3D:
 			_bus_stop(n)
 		"haltestelle":
 			_city_stop(n)
+		"vorfeldflaeche":
+			_apron_area(n, float(opts.get("w", 20.0)), float(opts.get("d", 20.0)))
 		"gepaeckumschlag":
-			_baggage_hall(n)
+			if Catalog.tore_of("gepaeckumschlag", opts) > 0:
+				Landmarks.sized_hall(n, "gepaeckumschlag", opts)
+			else:
+				_baggage_hall(n)
 		"flutlicht":
 			_floodlight(n)
 		"fluggastbruecke":
@@ -1387,6 +1474,9 @@ static func _bus_stop(n: Node3D) -> void:
 	var k := Kit.new()
 	var white := Color(0.88, 0.88, 0.85)
 	var y := 0.05
+	# Belag der Bucht mit schrägen Ein- und Ausfahrten (auch neben einer Betriebsstraße auf Rasen)
+	k.prism([Vector3(-19.0, 0.0, -3.6), Vector3(19.0, 0.0, -3.6), Vector3(14.5, 0.0, 2.2), Vector3(-14.5, 0.0, 2.2)],
+		[Vector3(-19.0, 0.035, -3.6), Vector3(19.0, 0.035, -3.6), Vector3(14.5, 0.035, 2.2), Vector3(-14.5, 0.035, 2.2)], Color(0.26, 0.255, 0.24))
 	# Haltebucht markiert (zwei Busse hintereinander), Zickzacklinie
 	k.box(Vector3(-14.0, 0.0, -2.2), Vector3(14.0, y, -2.0), white)
 	k.box(Vector3(-14.0, 0.0, 2.0), Vector3(14.0, y, 2.2), Color(0.88, 0.70, 0.18))
@@ -1869,6 +1959,30 @@ static func _shop_sign(n: Node3D, stil: String) -> void:
 		k.quad(Vector3(x, 2.85, 2.95), Vector3(x + 0.975, 2.85, 2.95), Vector3(x + 0.975, 2.35, 3.6), Vector3(x, 2.35, 3.6),
 			col if i % 2 == 0 else Color(0.95, 0.94, 0.9), Vector3(0, 0, 0))
 	n.add_child(k.instance("Schild"))
+
+
+## Vorfeldfläche: Betonplatten (gleicher Shader wie das Vorfeld), doppelte gelbe Randlinie.
+static func _apron_area(n: Node3D, w: float, d: float) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var y := 0.03
+	var pts := [Vector3(-w * 0.5, y, -d * 0.5), Vector3(w * 0.5, y, -d * 0.5), Vector3(w * 0.5, y, d * 0.5), Vector3(-w * 0.5, y, d * 0.5)]
+	for i: int in [0, 2, 1, 0, 3, 2]:
+		st.set_uv(Vector2(0.5, 0.0))
+		st.set_normal(Vector3.UP)
+		st.add_vertex(pts[i])
+	var mi := MeshInstance3D.new()
+	mi.name = "Belag"
+	mi.mesh = st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/line.gdshader")
+	mat.set_shader_parameter("base_color", Catalog.LINES["vorfeld"]["color"])
+	mat.set_shader_parameter("mark", 5)
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.set_meta("no_bake", true)
+	n.add_child(mi)
+	# Randlinien zeichnet airfield.gd (nur am Außenrand, nicht zwischen aneinanderliegenden Flächen)
 
 
 ## Weg der Rolltreppenstufen (lokal, unten -Z, oben +Z): unten flach aus der Kammplatte, 30°-Steigung

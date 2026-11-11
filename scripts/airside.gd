@@ -109,7 +109,17 @@ func build(lines: Array, stands: Array, markers: Array = []) -> void:
 				best_f = f
 				best_li = li
 		if best_li >= 0:
-			guided[best_li] = true
+			guided[best_li] = int(guided.get(best_li, 0)) + 1
+	# nur Flächen, auf denen ein guter Teil gezeichnet ist (nicht schon, wenn eine Linie dort nur beginnt)
+	for li: int in guided.keys():
+		var sm2: PackedVector3Array = lines[li]["samples"]
+		var len := 0.0
+		for j in range(1, sm2.size()):
+			len += sm2[j].distance_to(sm2[j - 1])
+		if float(guided[li]) * 3.0 < minf(120.0, len * 0.4):
+			guided.erase(li)
+		else:
+			guided[li] = true
 	# Standflächen sperren
 	in_stand.resize(pos.size())
 	in_stand.fill(0)
@@ -161,7 +171,7 @@ func _lead_targets(lp: Vector3, fwd: Vector3) -> Array:
 	var apron := []
 	var marked := []
 	for i in range(pos.size()):
-		if in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld", "rolllinie"]):
+		if i >= in_stand.size() or in_stand[i] == 1 or not (kind[i] in ["rollweg", "rollweg_breit", "vorfeld", "rolllinie"]):
 			continue
 		var d := pos[i].distance_to(lp)
 		if d > 42.0 or (pos[i] - lp).dot(fwd) > 4.0:

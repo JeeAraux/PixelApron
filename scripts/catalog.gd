@@ -92,6 +92,12 @@ const ITEMS := {
 		"desc": "900 m lange Lichterkette mit Querbalken und Lauffeuer vor einer Pistenschwelle (CAT I). Rastet am Pistenende ein, leuchtet mit der Befeuerungsstation. Anflüge bei Nacht und schlechtem Wetter werden pünktlicher."},
 	"papi": {"name": "PAPI", "short": "Gleitwinkelfeuer", "size": Vector2(6, 6), "h": 1.3, "cost": 60000, "grid": 1.0, "marker": "papi",
 		"desc": "Gleitwinkelbefeuerung: vier Lampenkästen links neben dem Aufsetzpunkt zeigen den Piloten rot und weiß. Rastet neben der Piste ein."},
+	"geschoss": {"name": "Geschossfläche", "short": "Geschossfläche", "size": Vector2(20, 20), "h": 0.1, "cost": 0, "cost_m2": 0, "grid": 2.0,
+		"rect_tool": true, "min": Vector2(10, 10), "max": Vector2(800, 600),
+		"desc": "Neuer Umriss für das gezeigte Obergeschoss einer Halle, als Rechteck aufgezogen: höhere Geschosse dürfen kleiner sein als das Erdgeschoss (zurückgesetzt, mit Dachterrasse), nie größer als das Geschoss darunter. Ein Rechteck über die ganze untere Fläche setzt den Umriss zurück."},
+	"vorfeldflaeche": {"name": "Vorfeldfläche", "short": "Vorfeld (Fläche)", "size": Vector2(20, 20), "h": 0.1, "cost": 0, "cost_m2": 45, "grid": 2.0,
+		"rect_tool": true, "min": Vector2(10, 10), "max": Vector2(800, 600),
+		"desc": "Betonfläche fürs Vorfeld, als Rechteck aufgezogen (mehrere Flächen ergeben jede Form). Stände, Haltestellen und Masten stehen darauf. Flugzeuge rollen hier nur auf gezeichneten Rollführungslinien (Werkzeug Rolllinie), die Bodenfahrzeuge fahren frei."},
 	"wendeplatte": {"name": "Wendeplatte", "size": Vector2(10, 10), "h": 0.3, "cost": 220000, "grid": 1.0, "marker": "wende",
 		"desc": "Verbreiterung am Pistenende, auf der Flugzeuge umkehren (Backtrack): Wo kein Rollweg bis zum Pistenende führt, rollen Abflüge auf der Piste dorthin, wenden auf der Platte und starten in voller Länge; gelandete Flugzeuge kehren hier um, wenn die Abrollwege hinter ihnen liegen. Rastet am Pistenende ein, die Seite folgt dem Mauszeiger."},
 	"rollhalt": {"name": "Rollhalteort", "size": Vector2(4, 4), "h": 1.2, "cost": 15000, "grid": 1.0, "marker": "rollweg",
@@ -99,7 +105,7 @@ const ITEMS := {
 	"flutlicht": {"name": "Flutlichtmast", "size": Vector2(2, 2), "h": 25.0, "cost": 30000, "grid": 1.0,
 		"desc": "25 m hoher Mast mit vier Scheinwerfern. Leuchtet nachts das Vorfeld aus."},
 	"bushalt": {"name": "Vorfeld-Haltestelle", "short": "Bushaltestelle", "size": Vector2(28, 7), "h": 3.4, "cost": 35000, "grid": 1.0, "on": "vorfeld",
-		"desc": "Haltebucht mit Dach für die Vorfeldbusse, nah am Bus-Gate. Hier steigen die Passagiere der Außenpositionen ein und aus."},
+		"desc": "Haltebucht mit Dach für die Vorfeldbusse, nah am Bus-Gate. Hier steigen die Passagiere der Außenpositionen ein und aus. Auf dem Vorfeld frei setzen oder als Bucht an den Rand einer Betriebsstraße (rastet ein)."},
 	"vorfelddepot": {"name": "Gerätehalle", "size": Vector2(26, 16), "h": 7.0, "cost": 380000, "grid": 2.0,
 		"needs": {"strom": 30}, "garage": ["gpu", "bandlader", "zug", "schlepper", "treppe"],
 		"doors": [[Vector3(-9, 0, 8), 4.6, 4.4, 4.5], [Vector3(-3, 0, 8), 4.6, 4.4, 4.5], [Vector3(3, 0, 8), 4.6, 4.4, 4.5], [Vector3(9, 0, 8), 4.6, 4.4, 4.5]], "desc": "Tankwagen, Gepäckschlepper und Catering. Ohne Depot mit Strom dauert jede Abfertigung anderthalbmal so lang."},
@@ -342,9 +348,9 @@ const ITEMS := {
 
 ## Kategorien des Baumenüs: [Schlüssel, Titel, Teile]
 const CATEGORIES := [
-	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]],
+	["wege", "Wege", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg", "spuren", "kreuzung", "rollweg", "rollweg_breit", "vorfeld", "vorfeldflaeche", "rolllinie", "piste", "betriebsstrasse"]],
 	["flug", "Flugbetrieb", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt", "flutlicht", "rollhalt", "wendeplatte", "befeuerungsstation", "anflugbefeuerung", "papi", "tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "hangar", "feuerwache", "rettungswache", "personalgebaeude", "frachtterminal", "winterdienst"]],
-	["terminal", "Terminal", ["halle", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum",
+	["terminal", "Terminal", ["halle", "geschoss", "raum", "innenwand", "glaswand", "tuer", "bereich_oeffentlich", "bereich_sicherheit", "bereich_personal", "eingang", "rolltor", "checkin", "kofferband", "gepaecklift", "gepaeckanlage", "sicherheit", "sb_ausgang", "passkontrolle", "zoll", "gate", "busgate", "gepaeckband", "gepaeckroentgen", "gepaeckermittlung", "rolltreppe", "aufzug", "treppe", "personalraum",
 		"raum_lager", "raum_kueche", "raum_sanitaet", "raum_pause", "raum_technik", "regal", "kuechenzeile", "behandlungsliege", "spind", "schaltschrank"]],
 	["ausstattung", "Ausstattung", ["wc", "heizkoerper", "cafe", "shop", "airline_lounge", "sitzreihe", "pflanze", "anzeige", "kunst", "infoschalter", "kiosk", "rollsteig"]],
 	["moebel", "Möbel", ["uhr", "lounge", "bistrotisch", "snackautomat", "getraenkeautomat", "geldautomat", "trinkbrunnen", "werbebildschirm",
@@ -357,12 +363,12 @@ const CATEGORIES := [
 ## Untergruppen der Baukategorien (Abschnitte und Sprungmarken in der Bauleiste)
 const GROUPS := {
 	"wege": [["Straßen", ["strasse", "strasse4", "einbahn", "tunnel", "gehweg"]], ["Verkehr regeln", ["spuren", "kreuzung"]],
-		["Flugfeld", ["rollweg", "rollweg_breit", "vorfeld", "rolllinie", "piste", "betriebsstrasse"]]],
+		["Flugfeld", ["rollweg", "rollweg_breit", "vorfeld", "vorfeldflaeche", "rolllinie", "piste", "betriebsstrasse"]]],
 	"flug": [["Stände", ["stand", "stand_aussen", "stand_gross", "stand_f", "fluggastbruecke", "bushalt"]],
 		["Befeuerung", ["flutlicht", "rollhalt", "wendeplatte", "befeuerungsstation", "anflugbefeuerung", "papi"]],
 		["Betrieb", ["tower", "vorfelddepot", "tanklager", "busgarage", "catering", "gepaeckumschlag", "foerderband", "personalgebaeude"]],
 		["Werft und Dienste", ["hangar", "feuerwache", "rettungswache", "frachtterminal", "winterdienst"]]],
-	"terminal": [["Halle", ["halle", "raum", "innenwand", "glaswand", "tuer", "eingang", "rolltor"]],
+	"terminal": [["Halle", ["halle", "geschoss", "raum", "innenwand", "glaswand", "tuer", "eingang", "rolltor"]],
 		["Bereiche", ["bereich_oeffentlich", "bereich_sicherheit", "bereich_personal"]],
 		["Abflug", ["checkin", "kofferband", "gepaecklift", "gepaeckanlage", "gepaeckroentgen", "sicherheit", "passkontrolle", "gate", "busgate"]],
 		["Ankunft", ["gepaeckband", "gepaeckermittlung", "zoll", "sb_ausgang"]],
@@ -526,6 +532,48 @@ static func is_marking(kind: String) -> bool:
 	return LINES.has(kind) and bool(LINES[kind].get("marking", false))
 
 
+## Gebäude mit wählbarer Torzahl (Bauform "tore"): Breite = Tore × Torabstand + Seitenteil, Tiefe fest.
+## sp Torabstand, dw/dh Torbreite/-höhe, dd Tiefe der Stellplätze hinter dem Tor, side Seitenteil (Büro,
+## Waschhalle), z Seite der Tore (+1 vorn wie bei Garagen). tore[0] ist die Vorgabe beim Bauen.
+## Alte Spielstände bekommen tore = 0: dann gelten Maße, Tore und Modell von früher.
+const SIZED := {
+	"busgarage": {"sp": 12.0, "dw": 5.0, "dh": 4.6, "dd": 15.0, "side": 10.0, "depth": 36.0, "tore": [4, 5, 6, 8, 3, 2]},
+	"feuerwache": {"sp": 7.5, "dw": 5.4, "dh": 5.4, "dd": 12.5, "side": 14.0, "depth": 28.0, "tore": [4, 5, 6, 3, 2]},
+	"gepaeckumschlag": {"sp": 9.0, "dw": 5.0, "dh": 4.4, "dd": 24.0, "side": 8.0, "depth": 36.0, "tore": [4, 5, 6, 8, 3]},
+}
+
+
+static func tore_of(id: String, opts: Dictionary) -> int:
+	if not SIZED.has(id):
+		return 0
+	return int(opts.get("tore", (SIZED[id]["tore"] as Array)[0]))
+
+
+## Grundfläche eines Bauteils (bei Gebäuden mit Torzahl nach Bauform, bei Flächen nach Breite und Tiefe).
+static func size_of(id: String, opts: Dictionary = {}) -> Vector2:
+	if opts.has("w") and opts.has("d"):
+		return Vector2(float(opts["w"]), float(opts["d"]))
+	var t := tore_of(id, opts)
+	if t <= 0:
+		return ITEMS[id]["size"]
+	var sz: Dictionary = SIZED[id]
+	return Vector2(float(t) * float(sz["sp"]) + float(sz["side"]), float(sz["depth"]))
+
+
+## Tore [Mitte unten lokal, Breite, Höhe, Tiefe] wie "doors" im Katalog; Seitenteil links (-X).
+static func doors_of(id: String, opts: Dictionary = {}) -> Array:
+	var t := tore_of(id, opts)
+	if t <= 0:
+		return ITEMS[id].get("doors", [])
+	var sz: Dictionary = SIZED[id]
+	var s := size_of(id, opts)
+	var out := []
+	for i in range(t):
+		var x := -s.x * 0.5 + float(sz["side"]) + float(sz["sp"]) * (float(i) + 0.5)
+		out.append([Vector3(x, 0, s.y * 0.5), float(sz["dw"]), float(sz["dh"]), float(sz["dd"])])
+	return out
+
+
 static func is_marker(id: String) -> bool:
 	return ITEMS.has(id) and ITEMS[id].has("marker")
 
@@ -554,7 +602,7 @@ static func is_floor_line(kind: String) -> bool:
 
 ## Gehört dieses Werkzeug zum Terminalbau (dann Innenansicht einschalten)?
 static func is_terminal_tool(id: String) -> bool:
-	return id == "halle" or id == "raum" or is_inside(id) or is_floor_line(id)
+	return id == "halle" or id == "geschoss" or id == "raum" or is_inside(id) or is_floor_line(id)
 
 
 static func is_underground(kind: String) -> bool:

@@ -838,8 +838,8 @@ func _step_job(j: Dictionary, sim: float) -> void:
 					continue
 				var gd: Dictionary = vd.get("load_door", {})
 				if not gd.is_empty() and is_instance_valid(gd.get("node")):
-					var dk := _door_key(gd, 0)
-					door_rec[dk] = [gd, 0]
+					var dk := _gate_key(gd)
+					door_rec[dk] = _gate_rec(gd)
 					door_want[dk] = maxf(float(door_want.get(dk, 0.0)), clock + 2.0)
 				var rate := 1.6
 				if terminal != null and int(terminal.transfer_pool) > 0:
@@ -1631,8 +1631,8 @@ func _hose(a: Vector3, b: Vector3, r: float, col: Color) -> Node3D:
 
 func _rebuild_net() -> void:
 	net_dirty = false
-	net.build(game.lines, false, game.stands())
-	fire_net.build(game.lines, true, game.stands())
+	net.build(game.lines, false, game.stands(), game.items_of("vorfeldflaeche"))
+	fire_net.build(game.lines, true, game.stands(), game.items_of("vorfeldflaeche"))
 	unconnected = []
 	for id: String in ["vorfelddepot", "tanklager", "busgarage", "catering", "feuerwache"]:
 		for rec: Dictionary in game.items_of(id):
@@ -1648,7 +1648,8 @@ func _rebuild_net() -> void:
 ## Tore oder Stellplätze eines Gebäudes: je [innen, außen, Tor?, Index] in Weltkoordinaten.
 func _spots(rec: Dictionary) -> Array:
 	var def: Dictionary = Catalog.ITEMS.get(String(rec["id"]), {})
-	var list: Array = def.get("doors", def.get("bays", []))
+	var list: Array = Catalog.doors_of(String(rec["id"]), rec.get("opts", {})) if def.has("doors") or Catalog.SIZED.has(String(rec["id"])) \
+		else def.get("bays", [])
 	var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
 	var p: Vector3 = rec["pos"]
 	var out := []
@@ -1656,7 +1657,7 @@ func _spots(rec: Dictionary) -> Array:
 		var e: Array = list[i]
 		var local: Vector3 = e[0]
 		var depth := float(e[3]) if e.size() > 3 else 3.5
-		out.append([p + b * (local + Vector3(0, 0, -depth)), p + b * (local + Vector3(0, 0, 7.0)), def.has("doors"), i])
+		out.append([p + b * (local + Vector3(0, 0, -depth)), p + b * (local + Vector3(0, 0, 7.0)), not list.is_empty() and (def.has("doors") or Catalog.SIZED.has(String(rec["id"]))), i])
 	return out
 
 
@@ -1812,6 +1813,23 @@ func sort_spot(near: Vector3) -> Array:
 		if not game.supplied(rec, "strom"):
 			continue
 		var b := Basis(Vector3.UP, float(rec["rot"]) * PI * 0.5)
+		if Catalog.tore_of("gepaeckumschlag", rec.get("opts", {})) > 0:
+			# große Halle: je Tor eine Spur, der Zug fährt hinein (vorn +Z)
+			var dl: Array = Catalog.doors_of("gepaeckumschlag", rec["opts"])
+			for bi in range(dl.size()):
+				var loc: Vector3 = (dl[bi] as Array)[0]
+				var g := {"pos": (rec["pos"] as Vector3) + b * (loc - Vector3(0, 0, 1.0)), "rot": int(rec["rot"]), "node": rec["node"],
+					"umschlag": rec, "bay": bi, "depth": float((dl[bi] as Array)[3])}
+				var pt2 := door_point(g) + b * Vector3(0, 0, 4.5)
+				var d2 := pt2.distance_to(near)
+				if not _bay_busy(g):
+					d2 -= 1.0
+				else:
+					d2 += 200.0
+				if d2 < bd:
+					bd = d2
+					best = [pt2, -(b * Vector3(0, 0, 1)), true, g]
+			continue
 		var size: Vector2 = Catalog.ITEMS["gepaeckumschlag"]["size"]
 		# Rolltore liegen auf der Vorfeldseite (-Z)
 		var pt: Vector3 = (rec["pos"] as Vector3) + b * Vector3(0, 0, -(size.y * 0.5 + 5.0))
@@ -1876,6 +1894,29 @@ static func door_point(g: Dictionary) -> Vector3:
 	return Vector3(p.x, 0, p.z) + n * 1.0
 
 
+## Tor-Schlüssel und Tor-Eintrag eines Sortier-Tors: Rolltor einer Halle oder Tor einer Spur im Gepäckumschlag.
+func _gate_key(gate: Dictionary) -> String:
+	if gate.has("umschlag"):
+		return _door_key(gate["umschlag"], int(gate["bay"]))
+	return _door_key(gate, 0)
+
+
+func _gate_rec(gate: Dictionary) -> Array:
+	if gate.has("umschlag"):
+		return [gate["umschlag"], int(gate["bay"])]
+	return [gate, 0]
+
+
+## Steht schon ein Zug in dieser Spur des Gepäckumschlags (oder fährt hinein)?
+func _bay_busy(gate: Dictionary) -> bool:
+	for o: Dictionary in sorting:
+		var g2: Variant = o.get("sort_door")
+		if g2 is Dictionary and (g2 as Dictionary).has("umschlag") and is_same((g2 as Dictionary)["umschlag"], gate["umschlag"]) \
+				and int((g2 as Dictionary)["bay"]) == int(gate["bay"]) and bool((o.get("sort", {}) as Dictionary).get("inside", false)):
+			return true
+	return false
+
+
 ## Ankunftszug fährt zur Sortierung, lädt dort ab und fährt dann heim. false = keine Sortierung erreichbar.
 func _to_sorting(v: Dictionary) -> bool:
 	var sp := sort_spot(v["pos"])
@@ -1905,12 +1946,12 @@ func _to_sorting(v: Dictionary) -> bool:
 				break
 		target = base + end_dir * 7.0
 	# Ist die Einfahrt hinter dem Rolltor frei, fährt der erste Zug durchs Tor in die Halle
-	var inside := not gate.is_empty() and slot == 0 and game.gate_bay_free(gate)
+	var inside := not gate.is_empty() and ((gate.has("umschlag") and not _bay_busy(gate)) or (slot == 0 and not gate.has("umschlag") and game.gate_bay_free(gate)))
 	var n_out := Vector3.ZERO
 	if inside:
 		n_out = -(sp[1] as Vector3)
 		end_dir = -n_out
-		target = door_point(gate) - n_out * 7.0
+		target = door_point(gate) - n_out * (float(gate["depth"]) * 0.62 if gate.has("umschlag") else 7.0)
 	var road := net.route(v["pos"], (door_point(gate) + n_out * 12.0) if inside else target, 60.0)
 	if road.size() < 2:
 		return false
@@ -1931,8 +1972,8 @@ func _to_sorting(v: Dictionary) -> bool:
 	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2]), "inside": inside}
 	v["sort_slot"] = slot
 	if not gate.is_empty():
-		var key := _door_key(gate, 0)
-		door_rec[key] = [gate, 0]
+		var key := _gate_key(gate)
+		door_rec[key] = _gate_rec(gate)
 		v["sort_door"] = gate
 	sorting.append(v)
 	return true
@@ -2159,7 +2200,7 @@ func _step_sorting(sim: float) -> void:
 			v.erase("sort_door")
 			gate = {}
 		if not gate.is_empty():
-			var key := _door_key(gate, 0)
+			var key := _gate_key(gate)
 			if (v["pos"] as Vector3).distance_to(door_point(gate)) < 34.0:
 				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
 		var st: Dictionary = v["sort"]
@@ -2167,7 +2208,7 @@ func _step_sorting(sim: float) -> void:
 			# in die Halle erst, wenn das Tor offen ist
 			if bool(st.get("inside", false)) and not gate.is_empty() and not bool(st.get("out", false)) \
 					and (v["pos"] as Vector3).distance_to(door_point(gate)) < 10.0 \
-					and float(door_open.get(_door_key(gate, 0), 0.0)) < 0.9:
+					and float(door_open.get(_gate_key(gate), 0.0)) < 0.9:
 				v["v"] = 0.0
 				continue
 			_move(v, sim)
@@ -2177,14 +2218,14 @@ func _step_sorting(sim: float) -> void:
 			sorting.erase(v)
 			v.erase("sort")
 			if not gate.is_empty():
-				door_want[_door_key(gate, 0)] = clock + 3.0
+				door_want[_gate_key(gate)] = clock + 3.0
 				v.erase("sort_door")
 			_send_home(v, "zug")
 			continue
 		st["t"] = float(st["t"]) + sim
 		var n := int(v.get("bags", 0))
 		var want := maxi(0, 24 - int(float(st["t"]) * 1.6))
-		if not gate.is_empty() and float(door_open.get(_door_key(gate, 0), 0.0)) < 0.9:
+		if not gate.is_empty() and float(door_open.get(_gate_key(gate), 0.0)) < 0.9:
 			want = n    # erst abladen, wenn das Tor offen ist
 			st["t"] = 0.0
 		if want < n:
@@ -2203,13 +2244,13 @@ func _step_sorting(sim: float) -> void:
 				var sd := no.cross(Vector3.UP)
 				var dp := door_point(gate)
 				st["out"] = true
-				door_want[_door_key(gate, 0)] = clock + 30.0
+				door_want[_gate_key(gate)] = clock + 30.0
 				_go(v, PackedVector3Array([v["pos"], dp - no * 2.0, dp + no * 5.0, dp + no * 9.0 + sd * 3.0, dp + no * 11.0 + sd * 9.0]), 2.2, true)
 				continue
 			sorting.erase(v)
 			v.erase("sort")
 			if not gate.is_empty():
-				door_want[_door_key(gate, 0)] = clock + 5.0
+				door_want[_gate_key(gate)] = clock + 5.0
 				v.erase("sort_door")
 			_send_home(v, "zug")
 

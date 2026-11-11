@@ -20,7 +20,7 @@ var grid: Dictionary = {}
 var stand_link: Dictionary = {}   # Instanz-ID des Stand-Knotens -> Netzknoten der Zufahrt (oder fehlt)
 
 
-func build(lines: Array, with_taxi: bool, stands: Array = []) -> void:
+func build(lines: Array, with_taxi: bool, stands: Array = [], aprons: Array = []) -> void:
 	astar.clear()
 	stand_link = {}
 	pos = PackedVector3Array()
@@ -46,6 +46,21 @@ func build(lines: Array, with_taxi: bool, stands: Array = []) -> void:
 			if i == s.size() - 1:
 				break
 			i = mini(i + STEP, s.size() - 1)
+	# Vorfeldflächen: Raster alle 10 m, Nachbarn verbunden (jede Fläche zählt als eigener "Weg")
+	for ai in range(aprons.size()):
+		var ar: Rect2 = aprons[ai]["rect"]
+		var nx := maxi(1, int(ar.size.x / 10.0))
+		var nz := maxi(1, int(ar.size.y / 10.0))
+		var ids := {}
+		for gx in range(nx + 1):
+			for gz in range(nz + 1):
+				var q := Vector3(ar.position.x + ar.size.x * float(gx) / float(nx), 0.0, ar.position.y + ar.size.y * float(gz) / float(nz))
+				var id := _add(q, "flaeche", 100000 + ai)
+				ids[Vector2i(gx, gz)] = id
+				for dv: Vector2i in [Vector2i(-1, 0), Vector2i(0, -1), Vector2i(-1, -1), Vector2i(1, -1)]:
+					var key := Vector2i(gx, gz) + dv
+					if ids.has(key):
+						astar.connect_points(id, int(ids[key]))
 	# Querverbindungen zwischen verschiedenen Wegen
 	for i in range(pos.size()):
 		var c := _cell(pos[i])
