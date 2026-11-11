@@ -175,41 +175,83 @@ static func _baggage_belt(s: PackedVector3Array) -> Node3D:
 	var k := Kit.new()
 	var steel := Color(0.42, 0.45, 0.48)
 	var chrome := Color(0.74, 0.76, 0.79)
+	var rubber := Color(0.08, 0.08, 0.09)
+	# Mittellinie mit Höhen; an Knicken auf Gehrung geschnitten, damit Bögen ohne Lücken laufen
+	var pts := PackedVector3Array()
+	for v: Vector3 in s:
+		var p := Vector3(v.x, v.y if v.y > 0.1 else 0.62, v.z)
+		if pts.is_empty() or Vector2(p.x - pts[pts.size() - 1].x, p.z - pts[pts.size() - 1].z).length() > 0.05:
+			pts.append(p)
+	var cnt := pts.size()
+	if cnt < 2:
+		n.add_child(k.instance("Band"))
+		return n
+	var perp := []
+	for i in range(cnt - 1):
+		var d := Vector3(pts[i + 1].x - pts[i].x, 0, pts[i + 1].z - pts[i].z).normalized()
+		perp.append(d.cross(Vector3.UP))
+	var side := []
+	for i in range(cnt):
+		var a: Vector3 = perp[maxi(i - 1, 0)]
+		var b: Vector3 = perp[mini(i, cnt - 2)]
+		var m := (a + b).normalized()
+		if m.length_squared() < 0.5:
+			m = b
+		side.append(m / maxf(0.5, m.dot(b)))
+	# Querschnitt: Wanne (Stahl), Gurt (Gummi), zwei Seitenbleche (Chrom)
+	_sweep(k, pts, side, -0.5, 0.5, -0.14, -0.02, steel, steel)
+	_sweep(k, pts, side, -0.42, 0.42, -0.02, 0.0, rubber, rubber)
+	_sweep(k, pts, side, -0.5, -0.45, -0.02, 0.16, chrome, chrome)
+	_sweep(k, pts, side, 0.45, 0.5, -0.02, 0.16, chrome, chrome)
+	# Stützen bzw. Abhängungen alle 2,4 m
 	var run := 0.0
 	var next_leg := 0.0
-	for i in range(s.size() - 1):
-		var ha := s[i].y if s[i].y > 0.1 else 0.62
-		var hb := s[i + 1].y if s[i + 1].y > 0.1 else 0.62
-		var a := Vector3(s[i].x, ha, s[i].z)
-		var b := Vector3(s[i + 1].x, hb, s[i + 1].z)
+	for i in range(cnt - 1):
+		var a := pts[i]
+		var b := pts[i + 1]
 		var d := b - a
-		var l := d.length()
-		if l < 0.01:
-			continue
-		var xf := Transform3D(Basis.looking_at(d / l, Vector3.UP), (a + b) * 0.5)
-		var hl := l * 0.5 + 0.03
-		k.box(Vector3(-0.5, -0.14, -hl), Vector3(0.5, -0.02, hl), steel, xf)
-		k.box(Vector3(-0.42, -0.02, -hl), Vector3(0.42, 0.0, hl), Color(0.08, 0.08, 0.09), xf)
-		for sx: float in [-0.48, 0.48]:
-			k.box(Vector3(sx - 0.025, -0.02, -hl), Vector3(sx + 0.025, 0.16, hl), chrome, xf)
 		var flat := Vector2(d.x, d.z).length()
+		var sd: Vector3 = perp[i]
 		while next_leg <= run + flat:
 			var f := (next_leg - run) / maxf(flat, 0.001)
 			var p := a.lerp(b, f)
-			var side := Vector3(d.x, 0, d.z).normalized().cross(Vector3.UP)
 			if p.y > 1.5:
 				# unter der Decke: Abhängung an zwei Stangen bis zur Decke der Ebene
 				for sx: float in [-0.45, 0.45]:
-					var q := p + side * sx
+					var q := p + sd * sx
 					k.box(Vector3(q.x - 0.025, p.y - 0.14, q.z - 0.025), Vector3(q.x + 0.025, 4.3, q.z + 0.025), steel)
 			else:
 				for sx: float in [-0.4, 0.4]:
-					var q := p + side * sx
+					var q := p + sd * sx
 					k.box(Vector3(q.x - 0.04, 0.0, q.z - 0.04), Vector3(q.x + 0.04, p.y - 0.14, q.z + 0.04), steel)
 			next_leg += 2.4
 		run += flat
 	n.add_child(k.instance("Band"))
 	return n
+
+
+## Rechteckiger Querschnitt [x0..x1] x [y0..y1] entlang einer Mittellinie (Gehrungsvektoren side).
+static func _sweep(k: Kit, pts: PackedVector3Array, side: Array, x0: float, x1: float, y0: float, y1: float, top: Color, col: Color) -> void:
+	var cnt := pts.size()
+	var ring := func(i: int) -> Array:
+		var sd: Vector3 = side[i]
+		var p := pts[i]
+		return [p + sd * x0 + Vector3(0, y0, 0), p + sd * x1 + Vector3(0, y0, 0), p + sd * x1 + Vector3(0, y1, 0), p + sd * x0 + Vector3(0, y1, 0)]
+	var xm := (x0 + x1) * 0.5
+	var ym := (y0 + y1) * 0.5
+	for i in range(cnt - 1):
+		var ra: Array = ring.call(i)
+		var rb: Array = ring.call(i + 1)
+		var cen := (pts[i] + pts[i + 1]) * 0.5 + ((side[i] as Vector3) + (side[i + 1] as Vector3)) * 0.5 * xm + Vector3(0, ym, 0)
+		k.quad(ra[3], rb[3], rb[2], ra[2], top, cen)
+		k.quad(ra[0], ra[1], rb[1], rb[0], col, cen)
+		k.quad(ra[1], ra[2], rb[2], rb[1], col, cen)
+		k.quad(ra[0], rb[0], rb[3], ra[3], col, cen)
+	for e: int in [0, cnt - 1]:
+		var r: Array = ring.call(e)
+		var c := pts[e] + (side[e] as Vector3) * xm + Vector3(0, ym, 0)
+		var inward := (pts[1] - pts[0]) if e == 0 else (pts[cnt - 2] - pts[cnt - 1])
+		k.quad(r[0], r[1], r[2], r[3], col, c + inward.normalized() * 0.5)
 
 
 ## Bauwerk eines Straßentunnels: Stützwände der offenen Rampen mit Geländer, Portale mit Sturz

@@ -70,6 +70,7 @@ func _analyze() -> void:
 				continue
 			counts[it["id"]] = int(counts.get(it["id"], 0)) + 1
 		counts["checkin_band"] = game.checkins_linked(h).size()
+		counts["claim_band"] = game.claims_linked(h).size()
 		var missing := []
 		for e: Array in ESSENTIAL:
 			var have := int(counts.get(e[0], 0))
@@ -96,6 +97,8 @@ func _analyze() -> void:
 			problems = _security_problems(h, grids[hid])
 			if not game.legacy_belts and int(counts.get("checkin", 0)) > 0 and int(counts["checkin_band"]) == 0:
 				problems.append("Check-in nicht über ein Kofferband mit der Gepäcksortierung verbunden")
+			if not game.legacy_claims and int(counts.get("gepaeckband", 0)) > 0 and int(counts["claim_band"]) == 0:
+				problems.append("Gepäckband nicht über ein Kofferband mit der Gepäcksortierung verbunden (Einlauf an der Schmalseite)")
 		var info := {
 			"hall": h, "counts": counts, "missing": missing, "powered": powered, "area": area, "problems": problems,
 			"complete": powered and missing.is_empty() and problems.is_empty() and int(counts.get("gepaeckanlage", 0)) > 0,
@@ -171,7 +174,9 @@ func capacity_dep() -> float:
 
 
 func capacity_arr() -> float:
-	return float(_sum("gepaeckband") * int(Catalog.ITEMS["gepaeckband"]["cap"]))
+	# nur Gepäckbänder mit Kofferband von der Sortierung (alte Spielstände: alle)
+	var n := _sum("gepaeckband") if game.legacy_claims else _sum("claim_band")
+	return float(n * int(Catalog.ITEMS["gepaeckband"]["cap"]))
 
 
 func set_demand(arr_per_h: float, dep_per_h: float) -> void:
@@ -401,6 +406,9 @@ func hall_summary(h: Dictionary) -> String:
 			lines.append("Sicherheitsbereich: geschlossen, nur über die Kontrolle erreichbar")
 		lines.append("Check-in %d · Kontrolle %d · Gates %d · Bänder %d · WC %d" % [int(c.get("checkin", 0)),
 			int(c.get("sicherheit", 0)), int(c.get("gate", 0)), int(c.get("gepaeckband", 0)), int(c.get("wc", 0))])
+		if int(c.get("gepaeckband", 0)) > 0 and not game.legacy_claims:
+			lines.append("Gepäckbänder am Kofferband von der Sortierung: %d von %d%s" % [int(c.get("claim_band", 0)), int(c.get("gepaeckband", 0)),
+				"" if int(c.get("claim_band", 0)) >= int(c.get("gepaeckband", 0)) else " (Einlauf an der Schmalseite anschließen)"])
 		if int(c.get("checkin", 0)) > 0:
 			lines.append("Check-in am Kofferband zur Sortierung: %d von %d%s" % [int(c.get("checkin_band", 0)), int(c.get("checkin", 0)),
 				"" if int(c.get("checkin_band", 0)) >= int(c.get("checkin", 0)) else (" (übrige Schalter ans Kofferband anschließen)" if not game.legacy_belts else " (Kofferband anschließen: +25 % Durchsatz)")])
@@ -607,8 +615,11 @@ func belt_for(hall: Dictionary, gate: Dictionary) -> Dictionary:
 	var bd := INF
 	var any_best: Dictionary = {}
 	var ad := INF
+	var linked := game.claims_linked(hall)
 	for it: Dictionary in game.inside_of(hall):
 		if it["id"] != "gepaeckband":
+			continue
+		if not game.legacy_claims and not linked.is_empty() and not linked.has((it["node"] as Node).get_instance_id()):
 			continue
 		var d := (it["pos"] as Vector3).distance_to(gate["pos"])
 		var g := int(game.opt(it, "gate"))
@@ -632,6 +643,61 @@ var belt_load: Dictionary = {}    # Band (Instanz-ID) -> Flug-ID, dessen Koffer 
 ## Die Gepäckzüge haben die Koffer eines Flugs in der Sortierung abgeladen: sie laufen aufs Band.
 func bags_arrived(p_id: int, delay: float = 0.0) -> void:
 	bags_ready[p_id] = clock + delay
+	_claim_flow(p_id)
+
+
+var claim_sent: Dictionary = {}   # Flug-ID -> true, sobald seine Koffer zum Band unterwegs sind
+const CLAIM_SPEED := 2.5
+
+
+## Koffer eines Flugs laufen sichtbar von der Sortierung über die Kofferbänder auf sein Gepäckband.
+## Das Band füllt sich, sobald die ersten ankommen (höchstens 40 s später als ohne Weg).
+func _claim_flow(p_id: int) -> void:
+	if claim_sent.has(p_id) or not bags_ready.has(p_id):
+		return
+	var band_id := -1
+	for bid: int in belt_load:
+		if int(belt_load[bid]) == p_id:
+			band_id = bid
+	if band_id < 0:
+		return
+	var route: PackedVector3Array = game.bag_routes().get(band_id, PackedVector3Array())
+	if route.size() < 2:
+		return
+	claim_sent[p_id] = true
+	var cum := PackedFloat32Array([0.0])
+	for i in range(1, route.size()):
+		cum.append(cum[i - 1] + route[i].distance_to(route[i - 1]))
+	var wait := maxf(0.0, float(bags_ready[p_id]) - clock)
+	bags_ready[p_id] = clock + maxf(wait, minf(cum[cum.size() - 1] / CLAIM_SPEED, 40.0))
+	_bag_arrived(route[0])
+	for i in range(10):
+		var mi := MeshInstance3D.new()
+		mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[(p_id + i * 3) % Interior.BAG_COLS.size()])
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visible = false
+		add_child(mi)
+		mi.position = route[0]
+		moving_bags.append({"node": mi, "route": route, "cum": cum, "s": -float(i) * 2.2, "v": CLAIM_SPEED, "claim": true})
+
+
+## Ein Koffer vom Gepäckzug läuft durchs Rolltor zur Sortierung (wenn ein Kofferband anschließt).
+func gate_bag(gate_node: Node) -> void:
+	if not is_instance_valid(gate_node) or moving_bags.size() > 220:
+		return
+	var route: PackedVector3Array = game.bag_routes().get(gate_node.get_instance_id(), PackedVector3Array())
+	if route.size() < 2:
+		return
+	var cum := PackedFloat32Array([0.0])
+	for i in range(1, route.size()):
+		cum.append(cum[i - 1] + route[i].distance_to(route[i - 1]))
+	var mi := MeshInstance3D.new()
+	mi.mesh = Models.bag_mesh_col(Interior.BAG_COLS[moving_bags.size() % Interior.BAG_COLS.size()])
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.visible = false
+	add_child(mi)
+	mi.position = route[0]
+	moving_bags.append({"node": mi, "route": route, "cum": cum, "s": 0.0, "v": CLAIM_SPEED})
 
 
 ## Ankommende betreten das Terminal am Gate (oder durch die Tür des Bus-Gates) und gehen zum Band.
@@ -640,6 +706,7 @@ func _arrivals(p: Dictionary, gate: Dictionary, n: int, start: Vector3, spacing:
 	var band := belt_for(hall, gate)
 	if not band.is_empty():
 		belt_load[(band["node"] as Node).get_instance_id()] = int(p["id"])
+		_claim_flow(int(p["id"]))
 	var rate := lost_rate(hall)
 	var desk := _any(hall, "gepaeckermittlung")
 	for i in range(n):
@@ -1791,12 +1858,13 @@ func _bag_step(sim: float) -> void:
 			scale_timer.erase(dnode)
 	for b: Dictionary in moving_bags.duplicate():
 		var node: MeshInstance3D = b["node"]
-		b["s"] = float(b["s"]) + sim * BAG_SPEED
+		b["s"] = float(b["s"]) + sim * float(b.get("v", BAG_SPEED))
 		var cum: PackedFloat32Array = b["cum"]
 		var route: PackedVector3Array = b["route"]
 		var s := float(b["s"])
 		if s >= cum[cum.size() - 1]:
-			_bag_arrived(route[route.size() - 1])
+			if not b.has("claim"):
+				_bag_arrived(route[route.size() - 1])
 			node.queue_free()
 			moving_bags.erase(b)
 			continue

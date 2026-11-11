@@ -1766,6 +1766,24 @@ func sort_spot(near: Vector3) -> Array:
 		if d < bd:
 			bd = d
 			best = [pt, b * Vector3(0, 0, 1), true]
+	# Rolltore in der Außenwand einer Halle mit Gepäcksortierung: der Zug hält davor, das Tor geht auf
+	for g: Dictionary in game.items_of("rolltor"):
+		var h: Dictionary = g.get("hall", {})
+		if h.is_empty() or GameState.floor_of(g) != 0 or not (h in game.items):
+			continue
+		var has_sorter := false
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] == "gepaeckanlage":
+				has_sorter = true
+				break
+		if not has_sorter:
+			continue
+		var n := Basis(Vector3.UP, float(g["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
+		var pt := door_point(g) + n * 4.5
+		var d := pt.distance_to(near)
+		if d < bd:
+			bd = d
+			best = [pt, -n, false, g]
 	if not best.is_empty():
 		return best
 	for h: Dictionary in game.items_of("halle"):
@@ -1798,6 +1816,13 @@ func sort_spot(near: Vector3) -> Array:
 	return best
 
 
+## Mitte eines Rolltors an der Außenwand (draußen bündig).
+static func door_point(g: Dictionary) -> Vector3:
+	var n := Basis(Vector3.UP, float(g["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
+	var p: Vector3 = g["pos"]
+	return Vector3(p.x, 0, p.z) + n * 1.0
+
+
 ## Ankunftszug fährt zur Sortierung, lädt dort ab und fährt dann heim. false = keine Sortierung erreichbar.
 func _to_sorting(v: Dictionary) -> bool:
 	var sp := sort_spot(v["pos"])
@@ -1812,18 +1837,39 @@ func _to_sorting(v: Dictionary) -> bool:
 	while used.has(slot) and slot < 5:
 		slot += 1
 	var target: Vector3 = (sp[0] as Vector3) + side * (float(slot) * 6.0 - 12.0)
+	var gate: Dictionary = sp[3] if sp.size() > 3 else {}
+	var end_dir := side
+	if not gate.is_empty():
+		# vor dem Rolltor: die Wagen stehen vor der Öffnung, weitere Züge links und rechts daneben.
+		# Der Schlepper hält in Fahrtrichtung 7 m hinter der Mitte, damit die Wagen vor dem Tor stehen.
+		var base: Vector3 = (sp[0] as Vector3) + side * float([0, 16, -16, 32, -32][mini(slot, 4)])
+		var pre := net.route(v["pos"], base, 60.0)
+		# Fahrtrichtung auf der Straße vor dem Abbiegen (letztes Stück, das entlang der Wand läuft)
+		for k in range(pre.size() - 2, -1, -1):
+			var along := (pre[k + 1] - pre[k]).dot(side)
+			if absf(along) > 2.0:
+				end_dir = side if along > 0.0 else -side
+				break
+		target = base + end_dir * 7.0
 	var road := net.route(v["pos"], target, 60.0)
 	if road.size() < 2:
 		return false
 	var way := []
 	for q: Vector3 in road:
 		way.append(q)
+	if not gate.is_empty() and way.size() >= 2:
+		# Anlauf parallel zur Wand, damit die Wagen gerade vor dem Tor stehen
+		way.insert(way.size() - 1, target - end_dir * 14.0)
 	v["rev"] = false
 	v["vmax"] = GSE_V * 1.3
 	v.erase("then")
-	_go(v, _route(way, v["heading"], side), GSE_V * 1.3)
+	_go(v, _route(way, v["heading"], end_dir), GSE_V * 1.3)
 	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2])}
 	v["sort_slot"] = slot
+	if not gate.is_empty():
+		var key := _door_key(gate, 0)
+		door_rec[key] = [gate, 0]
+		v["sort_door"] = gate
 	sorting.append(v)
 	return true
 
@@ -1834,6 +1880,14 @@ func _step_sorting(sim: float) -> void:
 		if not is_instance_valid(v.get("node")):
 			sorting.erase(v)
 			continue
+		var gate: Dictionary = v.get("sort_door", {})
+		if not gate.is_empty() and not is_instance_valid(gate.get("node")):
+			v.erase("sort_door")
+			gate = {}
+		if not gate.is_empty():
+			var key := _door_key(gate, 0)
+			if (v["pos"] as Vector3).distance_to(door_point(gate)) < 34.0:
+				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
 		if bool(v["moving"]):
 			_move(v, sim)
 			continue
@@ -1841,12 +1895,21 @@ func _step_sorting(sim: float) -> void:
 		st["t"] = float(st["t"]) + sim
 		var n := int(v.get("bags", 0))
 		var want := maxi(0, 24 - int(float(st["t"]) * 1.6))
+		if not gate.is_empty() and float(door_open.get(_door_key(gate, 0), 0.0)) < 0.9:
+			want = n    # erst abladen, wenn das Tor offen ist
+			st["t"] = 0.0
 		if want < n:
 			_set_bags(v, want)
+			if not gate.is_empty() and terminal != null:
+				for i in range(n - want):
+					terminal.gate_bag(gate["node"])
 		if want == 0:
 			sorting.erase(v)
 			v.erase("sort")
 			v["sorted"] = true
+			if not gate.is_empty():
+				door_want[_door_key(gate, 0)] = clock + 5.0
+				v.erase("sort_door")
 			if terminal != null and v.has("flight"):
 				# über die Sortierung und das Förderband dauert es noch einen Moment bis zum Band
 				terminal.bags_arrived(int(v["flight"]), 25.0 if bool(st["via_hall"]) else 10.0)

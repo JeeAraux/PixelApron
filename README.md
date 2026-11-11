@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.18: Runde Kofferbänder, Gepäckband-Anschluss, Rolltore**
+  - **Rundungen:** Wo zwei Kofferbänder mit einem Knick aneinanderstoßen, laufen sie in einem gemeinsamen Bogen ineinander. Die Bänder sind jetzt aus einem Stück (Wanne, Gurt, Seitenbleche) und an Knicken auf Gehrung geschnitten; kurze Stücke steigen steiler, damit sie oben am nächsten Band ankommen.
+  - **Gepäckband mit Einlauf:** An der linken Schmalseite steht ein Steilförderer mit Rutsche. Dort muss ein Kofferband aus der Sortierung ankommen, sonst arbeitet das Band nicht (Ankommende gehen nur an angeschlossene Bänder). Die Koffer eines Flugs laufen sichtbar von der Sortierung über die Bänder auf ihr Gepäckband. Ältere Spielstände behalten die alte Regel.
+  - **Rolltor:** neues Bauteil für die Außenwand (rastet bündig ein). Gepäckzüge fahren bei einer Halle mit Sortierung vor das nächste Rolltor, das Tor fährt hoch, die Wagen stehen vor der Öffnung und die Koffer laufen über die Rollenbahn hinein, mit einem Kofferband bis zur Sortierung.
 - **Update 0.17: Kofferwege und europäische Straßen**
   - **Kofferbänder** laufen zwischen den Anschlüssen unter der Decke (Fluggäste gehen darunter durch) und brechen sich durch Wände eine Öffnung. Der neue **Gepäcklift** bringt Koffer in den Keller oder ins Obergeschoss, die Sortierung darf im Keller stehen.
   - **Check-in nur mit Band:** Fluggäste gehen nur an Schalter, die über Kofferbänder mit der Sortierung verbunden sind. Koffer laufen nur, wenn wirklich jemand eincheckt, und folgen ihrem Weg bis zur Sortierung; erst dann läuft deren Ring. Ältere Spielstände behalten die alte Regel.
@@ -154,7 +158,8 @@ Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust s
    - ein **Check-in** und eine **Gepäcksortierung**,
    - eine **Sicherheitskontrolle**, durch die die Passagiere von vorn nach hinten gehen,
    - ein **Gate** an der Außenwand zum Vorfeld, am besten eins je Stand,
-   - ein **Gepäckband**.
+   - ein **Gepäckband**, dessen Einlauf über ein Kofferband mit der Sortierung verbunden ist,
+   - am besten ein **Rolltor** in der Außenwand nahe der Sortierung für die Gepäckzüge.
 
    Fehlt etwas, kommen keine Flüge. Der Flugplan zeigt, was fehlt.
 4. **Wände:** Innenwand und Glaswand ziehst du mit zwei Klicks innerhalb der Halle. Passagiere laufen außen herum.

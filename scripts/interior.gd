@@ -10,6 +10,7 @@ const Models = preload("res://scripts/models.gd")
 const PixelFont = preload("res://scripts/pixel_font.gd")
 const BeltAnim = preload("res://scripts/belt_anim.gd")
 const DecoAnim = preload("res://scripts/deco_anim.gd")
+const Landmarks = preload("res://scripts/landmarks.gd")
 const SCREEN_SHADER = preload("res://shaders/screen.gdshader")
 
 const CHROME := Color(0.74, 0.76, 0.79)
@@ -27,7 +28,7 @@ const BRAND := Color(0.18, 0.3, 0.52)
 const BAG_COLS := [Color(0.62, 0.18, 0.16), Color(0.18, 0.28, 0.5), Color(0.14, 0.14, 0.15), Color(0.5, 0.4, 0.27),
 	Color(0.25, 0.45, 0.3), Color(0.78, 0.75, 0.7), Color(0.85, 0.6, 0.15), Color(0.4, 0.22, 0.45)]
 
-const IDS := ["eingang", "checkin", "gepaecklift", "gepaeckanlage", "sicherheit", "gate", "busgate", "gepaeckband", "wc", "sb_ausgang",
+const IDS := ["eingang", "rolltor", "checkin", "gepaecklift", "gepaeckanlage", "sicherheit", "gate", "busgate", "gepaeckband", "wc", "sb_ausgang",
 	"heizkoerper", "cafe", "shop", "sitzreihe", "pflanze", "anzeige", "kunst", "tuer", "personalraum"]
 
 static var _glass: StandardMaterial3D
@@ -42,6 +43,8 @@ static func build(n: Node3D, id: String, opts: Dictionary) -> bool:
 		"eingang":
 			_entrance(n, k, String(opts.get("tuer", "schiebe")))
 			anim = true
+		"rolltor":
+			_roll_gate(n, k)
 		"checkin":
 			_checkin(n, k)
 		"gepaeckanlage":
@@ -207,6 +210,37 @@ static func _seat_row(k: Kit, c: Vector3, count: int, back: float, col: Color) -
 
 
 # ---------------------------------------------------------------- Eingang
+
+## Rolltor in der Außenwand (Wand bei lokal +Z): Vorhang "Rolltor0" mit Drehpunkt oben, Warnlicht,
+## innen Rollenbahn als Einlauf für die Koffer, gelb-schwarze Sperrfläche, Anfahrschutz, Bedienpult.
+static func _roll_gate(n: Node3D, k: Kit) -> void:
+	Landmarks.roll_door(n, k, 0, Vector3(0, 0, 0.82), 4.6, 3.9, Color(0.78, 0.8, 0.82), 2)
+	# Sperrfläche innen (Schraffur)
+	k.box(Vector3(-2.6, 0.0, -1.0), Vector3(2.6, 0.02, 0.7), Color(0.16, 0.16, 0.17))
+	for i in range(13):
+		var x := -2.5 + float(i) * 0.4
+		k.box(Vector3(x, 0.02, -0.95), Vector3(x + 0.2, 0.025, 0.65), YELLOW)
+	# Anfahrschutz-Poller an beiden Seiten
+	for sx: float in [-2.75, 2.75]:
+		k.cyl(Vector3(sx, 0, 0.35), Vector3(sx, 1.1, 0.35), 0.11, 0.11, YELLOW, 10)
+		for y: float in [0.3, 0.7]:
+			k.cyl(Vector3(sx, y, 0.35), Vector3(sx, y + 0.12, 0.35), 0.115, 0.115, DARK, 10)
+	# Rollenbahn: vom Tor nach innen (Einlauf für die Koffer), auf Bandhöhe
+	k.box(Vector3(-0.5, 0.48, -1.0), Vector3(0.5, 0.56, 0.62), STEEL)
+	for i in range(9):
+		var z := -0.95 + float(i) * 0.19
+		k.cyl(Vector3(-0.44, 0.6, z), Vector3(0.44, 0.6, z), 0.04, 0.04, CHROME, 8)
+	for sx: float in [-0.52, 0.52]:
+		k.box(Vector3(sx - 0.02, 0.48, -1.0), Vector3(sx + 0.02, 0.72, 0.62), STEEL)
+		for z: float in [-0.8, 0.4]:
+			k.box(Vector3(sx - 0.04, 0.0, z - 0.04), Vector3(sx + 0.04, 0.48, z + 0.04), STEEL)
+	# Bedienpult mit Tastern
+	k.box(Vector3(2.2, 0.0, -0.6), Vector3(2.55, 1.2, -0.3), Color(0.5, 0.52, 0.55))
+	k.box(Vector3(2.15, 1.0, -0.62), Vector3(2.6, 1.25, -0.28), Color(0.85, 0.85, 0.82))
+	k.cyl(Vector3(2.3, 1.25, -0.45), Vector3(2.3, 1.29, -0.45), 0.04, 0.04, Color(0.2, 0.75, 0.3), 8)
+	k.cyl(Vector3(2.45, 1.25, -0.45), Vector3(2.45, 1.29, -0.45), 0.04, 0.04, Color(0.85, 0.15, 0.12), 8)
+	PixelFont.draw_ground(k, "TOR", Vector3(0, 0.03, -0.6), Vector3(0, 0, -1), 0.07, Color(0.95, 0.95, 0.9))
+
 
 static func _entrance(n: Node3D, k: Kit, tuer: String) -> void:
 	# Fußmatte innen, Rahmen, Oberlicht, Vordach mit Lichtern und Schriftzug
@@ -633,6 +667,23 @@ static func _claim(n: Node3D, k: Kit, stil: String) -> void:
 		k.box(Vector3(-0.45, -0.05, -d.length() * 0.5), Vector3(0.45, 0.02, d.length() * 0.5), CHROME, Transform3D(Basis.looking_at(d.normalized(), Vector3.UP), (a + b) * 0.5))
 		k.box(Vector3(1.8, 2.6, -1.0), Vector3(3.2, 3.2, 0.4), Color(0.55, 0.56, 0.58))
 		k.box(Vector3(2.0, 2.65, 0.4), Vector3(3.0, 3.1, 0.42), Color(0.15, 0.15, 0.16))
+	# Einlauf an der linken Schmalseite: hier endet das Kofferband aus der Sortierung (lokal -5,5 / 0),
+	# ein Steilförderer hebt die Koffer, eine Rutsche mit Gummivorhang bringt sie über die Bahn auf die Insel
+	var steel_dark := Color(0.5, 0.52, 0.55)
+	k.box(Vector3(-5.75, 0.0, -0.58), Vector3(-5.2, 1.62, 0.58), steel_dark)
+	k.box(Vector3(-5.78, 1.62, -0.62), Vector3(-5.17, 1.7, 0.62), CHROME)
+	k.box(Vector3(-5.79, 0.5, -0.45), Vector3(-5.74, 0.85, 0.45), DARK)
+	var ca := Vector3(-5.2, 1.42, 0)
+	var cb := Vector3(-3.3, top + 0.04, 0)
+	var cd := cb - ca
+	var cx := Transform3D(Basis.looking_at(cd.normalized(), Vector3.UP), (ca + cb) * 0.5)
+	var cl := cd.length() * 0.5
+	k.box(Vector3(-0.48, -0.06, -cl), Vector3(0.48, 0.0, cl), CHROME, cx)
+	for sx: float in [-0.5, 0.5]:
+		k.box(Vector3(sx - 0.025, -0.06, -cl), Vector3(sx + 0.025, 0.22, cl), steel_dark, cx)
+	for i in range(6):
+		var z := -0.42 + float(i) * 0.17
+		k.box(Vector3(-5.2, 1.0, z), Vector3(-5.17, 1.6, z + 0.14), Color(0.1, 0.1, 0.11))
 	# Koffer: eigene Knoten, terminal.gd lässt sie umlaufen (Mittelpunkt 0,76 m hoch)
 	var cases := Node3D.new()
 	cases.name = "Koffer"

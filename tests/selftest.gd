@@ -67,7 +67,7 @@ func run(main: Node) -> void:
 		check(not gg.is_empty() and main.ops.net.route(gg[2], Vector3(-17, 0, -38)).size() > 3, "Fahrweg von der Garage zum Stand: " + vk)
 	check(main.ops.has_garage("tank") and main.ops.has_garage("catering") and main.ops.has_fire_station(), "Tanklager, Catering und Feuerwache versorgt")
 	# 0.10: Fassadenöffnungen, Brücken an der Wand, Zufahrten, Befeuerung, Rollhalteorte, Kurvenregel
-	check((term.get("cuts", []) as Array).size() == 8, "Eingänge und Brückenköpfe öffnen die Fassade (%d Öffnungen)" % (term.get("cuts", []) as Array).size())
+	check((term.get("cuts", []) as Array).size() == 9, "Eingänge, Rolltor und Brückenköpfe öffnen die Fassade (%d Öffnungen)" % (term.get("cuts", []) as Array).size())
 	var flush_ok := true
 	for br: Dictionary in game.items_of("fluggastbruecke"):
 		var hs: Array = game.hall_side(br["pos"])
@@ -453,7 +453,7 @@ func run(main: Node) -> void:
 	var term_b: Dictionary = game.items_of("halle")[0]
 	game.flush_facades()
 	check(newb.size() == nb + 1 and absf((newb[newb.size() - 1]["pos"] as Vector3).z - (-24.0 - float(game.BRIDGE_OFF))) < 0.05
-		and (term_b["cuts"] as Array).size() == 9, "Neue Brücke bündig an der Wand, Fassade geöffnet " + b.reason)
+		and (term_b["cuts"] as Array).size() == 10, "Neue Brücke bündig an der Wand, Fassade geöffnet " + b.reason)
 	game.undo_last()
 	game.flush_facades()
 	b.set_tool("")
@@ -762,6 +762,49 @@ func run(main: Node) -> void:
 	game.remove(kh, 1.0)
 	for l: Dictionary in game.lines.duplicate():
 		if l["kind"] == "kofferband" and (l["samples"] as PackedVector3Array)[0].z > 700.0:
+			game.remove(l, 1.0)
+	game.set_interior_view(false)
+	# 0.18: Ausrundungen, Einläufe der Gepäckbänder, Rolltor für die Gepäckzüge
+	check(game.claims_linked(sh).size() == 2, "Startterminal: beide Gepäckbänder am Kofferband (%d)" % game.claims_linked(sh).size())
+	var rounded := false
+	for l: Dictionary in game.lines:
+		if l["kind"] == "kofferband" and (l["points"][0] as Vector3).is_equal_approx(Vector3(74, 0, -20)):
+			var s0: Vector3 = (l["samples"] as PackedVector3Array)[0]
+			rounded = Vector2(s0.x - 74.0, s0.z + 20.0).length() > 0.3
+	check(rounded, "Kofferbänder laufen an Ecken im Bogen ineinander")
+	var ch: Dictionary = game.build_hall(Rect2(-640, 800, 60, 40))
+	game.set_interior_view(true)
+	game.build_item("gepaeckanlage", Vector3(-600, 0, 815), 0)
+	var cla: Dictionary = game.build_item("gepaeckband", Vector3(-620, 0, 830), 0)
+	var clb: Dictionary = game.build_item("gepaeckband", Vector3(-620, 0, 822), 0)
+	check(game.claims_linked(ch).is_empty(), "Gepäckband ohne Kofferband nicht angeschlossen")
+	game.build_line("kofferband", [Vector3(-604.5, 0, 815), Vector3(-630, 0, 815)])
+	game.build_line("kofferband", [Vector3(-630, 0, 815), Vector3(-630, 0, 830)])
+	game.build_line("kofferband", [Vector3(-630, 0, 830), Vector3(-625.5, 0, 830)])
+	game.refresh_belts()
+	var cl_linked: Dictionary = game.claims_linked(ch)
+	check(cl_linked.size() == 1 and cl_linked.has((cla["node"] as Node).get_instance_id()), "Einlauf des Gepäckbands über Kofferband mit der Sortierung verbunden")
+	check(is_same(tb.belt_for(ch, {"pos": clb["pos"]}), cla), "Ankommende gehen nur an ein angeschlossenes Band")
+	var fid := 777001
+	tb.belt_load[(cla["node"] as Node).get_instance_id()] = fid
+	var mb0: int = tb.moving_bags.size()
+	tb.bags_arrived(fid, 5.0)
+	check(tb.moving_bags.size() == mb0 + 10 and float(tb.bags_ready[fid]) > tb.clock + 5.0, "Koffer laufen sichtbar von der Sortierung aufs Gepäckband")
+	tb.belt_load.erase((cla["node"] as Node).get_instance_id())
+	var rt: Dictionary = game.build_item("rolltor", Vector3(-590, 0, 799.4), 0)
+	check(not rt.is_empty() and int(rt["rot"]) == 2 and is_equal_approx((rt["pos"] as Vector3).z, 801.0), "Rolltor rastet bündig an der Außenwand ein")
+	game.flush_facades()
+	var tall_cut := false
+	for c: Array in game.facade_cuts(ch):
+		tall_cut = tall_cut or float(c[2]) > 4.0
+	check(tall_cut, "Rolltor öffnet die Fassade")
+	game.build_line("kofferband", [Vector3(-590, 0, 802.5), Vector3(-590, 0, 812), Vector3(-595.5, 0, 812)])
+	check(not rt.is_empty() and game.bag_routes().has((rt["node"] as Node).get_instance_id()), "Rollenbahn hinter dem Rolltor führt per Kofferband zur Sortierung")
+	var rsp: Array = main.ops.sort_spot(Vector3(-590, 0, 780))
+	check(rsp.size() > 3 and is_same(rsp[3], rt), "Gepäckzüge fahren vors Rolltor")
+	game.remove(ch, 1.0)
+	for l: Dictionary in game.lines.duplicate():
+		if l["kind"] == "kofferband" and (l["points"][0] as Vector3).z > 790.0:
 			game.remove(l, 1.0)
 	game.set_interior_view(false)
 	game.sandbox = false

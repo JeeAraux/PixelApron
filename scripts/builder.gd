@@ -550,6 +550,11 @@ func _snap(p: Vector3) -> Vector3:
 		var dp := _snap_door(p)
 		if dp != Vector3.INF:
 			return dp
+	if is_item_tool() and tool == "rolltor":
+		var ws: Array = game.wall_snap(tool, p)
+		if not ws.is_empty():
+			rot = int(ws[1])
+			return ws[0]
 	if is_item_tool() and Catalog.is_marker(tool):
 		var ms: Array = game.marker_snap(tool, p)
 		if not ms.is_empty():
@@ -706,9 +711,10 @@ func _snap_belt(p: Vector3) -> Vector3:
 	for l: Dictionary in game.lines:
 		if l["kind"] != "kofferband" or GameState.floor_of(l) != (game.view_floor if game.interior_view else 0):
 			continue
-		var sm: PackedVector3Array = l["samples"]
-		spots.append(sm[0])
-		spots.append(sm[sm.size() - 1])
+		# die Klickpunkte, nicht die ausgerundeten Enden
+		var lp: Array = l["points"]
+		spots.append(lp[0])
+		spots.append(lp[lp.size() - 1])
 	for sp: Vector3 in spots:
 		var d := Vector2(sp.x - p.x, sp.z - p.z).length()
 		if d < best:

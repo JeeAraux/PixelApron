@@ -1051,6 +1051,31 @@ func runway_dist(p: Vector3) -> float:
 	return best
 
 
+## Rolltor: bündig an die nächste Außenwand einer Halle (bis 4 m), Vorderseite (+Z) nach draußen,
+## entlang der Wand im 1-m-Raster. Gibt [Mitte, Drehung] oder [] zurück.
+func wall_snap(id: String, p: Vector3) -> Array:
+	var size: Vector2 = Catalog.ITEMS[id]["size"]
+	var best: Array = []
+	var bd := 4.0
+	for h: Dictionary in items_of("halle"):
+		var r: Rect2 = h["rect"]
+		if not r.grow(4.0).has_point(Vector2(p.x, p.z)):
+			continue
+		var hx := size.x * 0.5
+		var hz := size.y * 0.5
+		# [Abstand, Mitte, Drehung]
+		var cand := [
+			[absf(p.z - r.end.y), Vector3(clampf(snappedf(p.x, 1.0), r.position.x + hx, r.end.x - hx), 0, r.end.y - hz), 0],
+			[absf(p.x - r.end.x), Vector3(r.end.x - hz, 0, clampf(snappedf(p.z, 1.0), r.position.y + hx, r.end.y - hx)), 1],
+			[absf(p.z - r.position.y), Vector3(clampf(snappedf(p.x, 1.0), r.position.x + hx, r.end.x - hx), 0, r.position.y + hz), 2],
+			[absf(p.x - r.position.x), Vector3(r.position.x + hz, 0, clampf(snappedf(p.z, 1.0), r.position.y + hx, r.end.y - hx)), 3]]
+		for c: Array in cand:
+			if float(c[0]) < bd:
+				bd = float(c[0])
+				best = [c[1], c[2]]
+	return best
+
+
 ## Haltestelle, Taxistand, Kiss & Fly: an den Straßenrand einrasten, Vorderseite zur Straße, so dass
 ## die Haltebucht vor dem Bauteil liegt. Nur an geraden, achsparallelen Stellen (Bauteile drehen in
 ## 90-Grad-Schritten). Gibt [Mitte, Drehung] oder [] zurück.
@@ -1155,7 +1180,7 @@ func facade_cuts(hall: Dictionary) -> Array:
 	var hr: Rect2 = hall["rect"]
 	var cen := hr.get_center()
 	for it: Dictionary in inside_of(hall):
-		if it["id"] != "eingang" or floor_of(it) != 0:
+		if not (it["id"] in ["eingang", "rolltor"]) or floor_of(it) != 0:
 			continue
 		var r: Rect2 = it["rect"]
 		var d := [r.position.x - hr.position.x, hr.end.x - r.end.x, r.position.y - hr.position.y, hr.end.y - r.end.y]
@@ -1164,15 +1189,17 @@ func facade_cuts(hall: Dictionary) -> Array:
 			if float(d[i]) < float(d[m]):
 				m = i
 		var rc := r.get_center() - cen
+		var oh := 3.35 if it["id"] == "eingang" else 4.05
+		var shrink := 0.2 if it["id"] == "eingang" else 1.2
 		match m:
 			0:
-				out.append([Vector2(-hr.size.x * 0.5, rc.y), r.size.y - 0.2, 3.35])
+				out.append([Vector2(-hr.size.x * 0.5, rc.y), r.size.y - shrink, oh])
 			1:
-				out.append([Vector2(hr.size.x * 0.5, rc.y), r.size.y - 0.2, 3.35])
+				out.append([Vector2(hr.size.x * 0.5, rc.y), r.size.y - shrink, oh])
 			2:
-				out.append([Vector2(rc.x, -hr.size.y * 0.5), r.size.x - 0.2, 3.35])
+				out.append([Vector2(rc.x, -hr.size.y * 0.5), r.size.x - shrink, oh])
 			3:
-				out.append([Vector2(rc.x, hr.size.y * 0.5), r.size.x - 0.2, 3.35])
+				out.append([Vector2(rc.x, hr.size.y * 0.5), r.size.x - shrink, oh])
 	for b: Dictionary in items_of("fluggastbruecke"):
 		var hs := hall_side(bridge_anchor(b))
 		if hs.is_empty() or not is_same(hs[0], hall):
@@ -1232,6 +1259,12 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 		for other: Dictionary in items_of("fluggastbruecke"):
 			if (other["pos"] as Vector3).distance_to(pos) < 7.0:
 				return "Hier steht schon eine Fluggastbrücke"
+	if id == "rolltor":
+		var ws := wall_snap(id, pos)
+		if ws.is_empty():
+			return "An die Außenwand einer Terminalhalle setzen"
+		pos = ws[0]
+		rot = ws[1]
 	if Catalog.is_marker(id):
 		var ms := marker_snap(id, pos)
 		if ms.is_empty():
@@ -1274,6 +1307,8 @@ func can_place(id: String, pos: Vector3, rot: int) -> String:
 			return "Darüber gibt es keine Ebene: der Halle erst eine weitere Ebene geben"
 		if id == "eingang" and f != 0:
 			return "Eingänge nur im Erdgeschoss"
+		if id == "rolltor" and f != 0:
+			return "Rolltore nur im Erdgeschoss"
 		if bool(def.get("wall", false)) and f >= 0 and not touches_wall(r, hall["rect"]):
 			return "Muss an der Außenwand der Halle stehen"
 		if Catalog.is_door(id):
@@ -1405,6 +1440,11 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 		if not ms.is_empty():
 			pos = ms[0]
 			rot = ms[1]
+	if id == "rolltor":
+		var ws := wall_snap(id, pos)
+		if not ws.is_empty():
+			pos = ws[0]
+			rot = ws[1]
 	var f := 0
 	if Catalog.is_inside(id):
 		f = view_floor if floor == -99 else floor
@@ -1418,7 +1458,7 @@ func build_item(id: String, pos: Vector3, rot: int, free: bool = false, opts: Di
 		rec["hall"] = hall_for_rect(rec["rect"])
 		rec["floor"] = f
 		_apply_floor(rec)
-	if id == "eingang" and rec.has("hall"):
+	if (id == "eingang" or id == "rolltor") and rec.has("hall"):
 		queue_facade(rec["hall"])
 	elif bool(Catalog.ITEMS[id].get("bridge", false)):
 		var hsb := hall_side(bridge_anchor(rec))
@@ -1750,6 +1790,9 @@ const BELT_LOW := 0.62    # Bandhöhe an Schaltern, Sortierung und Lift
 const BELT_HIGH := 2.9    # unter der Decke: Fluggäste gehen darunter durch
 const BELT_RAMP := 5.0
 var legacy_belts := false # Spielstand von vor 0.17: Schalter arbeiten auch ohne Kofferband
+var legacy_claims := false # Spielstand von vor 0.18: Gepäckbänder arbeiten auch ohne Kofferband
+const CLAIM_INLET := Vector3(-5.5, 0, 0)   # Einlauf des Gepäckbands (lokal)
+const GATE_INLET := Vector3(0, 0, -1.5)    # Rollenbahn hinter dem Rolltor (lokal, innen)
 
 
 ## Anschlussstellen für Kofferbänder auf Ebene f: Seiten der Check-ins, Kanten der Sortierung,
@@ -1772,6 +1815,12 @@ func belt_spots(f: int) -> Array:
 		elif id == "gepaecklift" and (itf == f or itf + 1 == f):
 			var p2 := xf * Vector3(0, 0, 1.45)
 			out.append(Vector3(p2.x, 0, p2.z))
+		elif id == "gepaeckband" and itf == f:
+			var p3 := xf * CLAIM_INLET
+			out.append(Vector3(p3.x, 0, p3.z))
+		elif id == "rolltor" and itf == f:
+			var p4 := xf * GATE_INLET
+			out.append(Vector3(p4.x, 0, p4.z))
 	return out
 
 
@@ -1792,28 +1841,114 @@ func belt_profile(samples: PackedVector3Array, f: int) -> PackedVector3Array:
 	var low0 := _belt_end_low(samples[0], f)
 	var low1 := _belt_end_low(samples[n - 1], f)
 	var out := PackedVector3Array()
+	# kurze Stücke mit nur einem niedrigen Ende steigen steiler, damit sie oben am nächsten Band ankommen
+	var ramp := BELT_RAMP if low0 == low1 else clampf(length - 2.0, 1.5, BELT_RAMP)
 	for i in range(n):
 		var h := BELT_HIGH
 		if low0 and low1 and length < 12.0:
 			h = BELT_LOW
 		else:
 			if low0:
-				h = minf(h, BELT_LOW + (BELT_HIGH - BELT_LOW) * clampf((cum[i] - 1.0) / BELT_RAMP, 0.0, 1.0))
+				h = minf(h, BELT_LOW + (BELT_HIGH - BELT_LOW) * clampf((cum[i] - 1.0) / ramp, 0.0, 1.0))
 			if low1:
-				h = minf(h, BELT_LOW + (BELT_HIGH - BELT_LOW) * clampf((length - cum[i] - 1.0) / BELT_RAMP, 0.0, 1.0))
+				h = minf(h, BELT_LOW + (BELT_HIGH - BELT_LOW) * clampf((length - cum[i] - 1.0) / ramp, 0.0, 1.0))
 		out.append(Vector3(samples[i].x, h, samples[i].z))
 	return out
 
 
-## Band neu formen (Höhen) und sein Modell neu bauen. Gibt true zurück, wenn sich etwas geändert hat.
+const BELT_ROUND := 2.2   # Radius der Ausrundung, wo zwei Bänder mit einem Knick aneinanderstoßen
+
+
+static func _rev_path(s: PackedVector3Array) -> PackedVector3Array:
+	var o := PackedVector3Array()
+	for i in range(s.size() - 1, -1, -1):
+		o.append(s[i])
+	return o
+
+
+static func _flat_len(s: PackedVector3Array) -> float:
+	var l := 0.0
+	for i in range(s.size() - 1):
+		l += Vector2(s[i + 1].x - s[i].x, s[i + 1].z - s[i].z).length()
+	return l
+
+
+## Rest eines Pfads ab Abstand d vom Anfang (erster Punkt = Schnittpunkt).
+static func _path_from(s: PackedVector3Array, d: float) -> PackedVector3Array:
+	var run := 0.0
+	for i in range(s.size() - 1):
+		var l := Vector2(s[i + 1].x - s[i].x, s[i + 1].z - s[i].z).length()
+		if run + l >= d:
+			var out := PackedVector3Array([s[i].lerp(s[i + 1], (d - run) / maxf(l, 0.0001))])
+			for j in range(i + 1, s.size()):
+				if j == i + 1 and Vector2(s[j].x - out[0].x, s[j].z - out[0].z).length() < 0.25:
+					continue
+				out.append(s[j])
+			if out.size() < 2:
+				out.append(s[s.size() - 1])
+			return out
+		run += l
+	return PackedVector3Array([s[s.size() - 1], s[s.size() - 1]])
+
+
+## Grundriss eines Kofferbands: aus den Klickpunkten, und wo genau ein anderes Band mit einem Knick
+## anschließt, laufen beide in einem gemeinsamen Bogen zusammen (je die Hälfte einer Bézierkurve).
+func _belt_base(rec: Dictionary) -> PackedVector3Array:
+	var s := line_samples("kofferband", rec["points"])
+	if s.size() < 2:
+		return s
+	var f := floor_of(rec)
+	var my_len := _flat_len(s)
+	for end: int in [0, 1]:
+		var cur := s if end == 0 else _rev_path(s)
+		var e := cur[0]
+		var hits := 0
+		var oth := PackedVector3Array()
+		for l: Dictionary in lines:
+			if l == rec or l["kind"] != "kofferband" or floor_of(l) != f:
+				continue
+			var os := line_samples("kofferband", l["points"])
+			if os.size() < 2:
+				continue
+			for oe: int in [0, 1]:
+				var q := os[0] if oe == 0 else os[os.size() - 1]
+				if Vector2(q.x - e.x, q.z - e.z).length() < 0.35:
+					hits += 1
+					oth = os if oe == 0 else _rev_path(os)
+		if hits != 1 or _belt_end_low(e, f):
+			continue
+		var c := (e + oth[0]) * 0.5
+		var r := minf(BELT_ROUND, 0.4 * minf(my_len, _flat_len(oth)))
+		if r < 0.3:
+			continue
+		var rest := _path_from(cur, r)
+		var p0 := rest[0]
+		var p2 := _path_from(oth, r)[0]
+		var va := Vector3(p0.x - c.x, 0, p0.z - c.z).normalized()
+		var vb := Vector3(p2.x - c.x, 0, p2.z - c.z).normalized()
+		var ang := rad_to_deg(acos(clampf(va.dot(vb), -1.0, 1.0)))
+		if ang < 25.0 or ang > 172.0:
+			continue
+		var arc := PackedVector3Array()
+		for k: int in [5, 4, 3, 2, 1]:
+			var t := float(k) * 0.1
+			arc.append(p0 * (1.0 - t) * (1.0 - t) + c * 2.0 * t * (1.0 - t) + p2 * t * t)
+		arc.append_array(rest)
+		s = arc if end == 0 else _rev_path(arc)
+	return s
+
+
+## Band neu formen (Grundriss mit Ausrundungen, Höhen) und sein Modell neu bauen. Gibt true zurück,
+## wenn sich etwas geändert hat.
 func _reshape_belt(rec: Dictionary) -> bool:
 	var old: PackedVector3Array = rec["samples"]
-	var nw := belt_profile(old, floor_of(rec))
-	var changed := false
-	for i in range(old.size()):
-		if absf(old[i].y - nw[i].y) > 0.01:
-			changed = true
-			break
+	var nw := belt_profile(_belt_base(rec), floor_of(rec))
+	var changed := old.size() != nw.size()
+	if not changed:
+		for i in range(old.size()):
+			if old[i].distance_to(nw[i]) > 0.01:
+				changed = true
+				break
 	var node: Variant = rec["node"]
 	if changed or not is_instance_valid(node) or not bool(rec.get("shaped", false)):
 		rec["samples"] = nw
@@ -1853,7 +1988,8 @@ func _belt_walls() -> void:
 # ---------------------------------------------------------------- Kofferwege
 
 var _routes_dirty := true
-var _routes: Dictionary = {}    # Schalter (Instanz-ID) -> Weg der Koffer (Weltpunkte) bis zur Sortierung
+var _routes: Dictionary = {}    # Schalter/Rolltor (Instanz-ID) -> Weg der Koffer (Weltpunkte) bis zur Sortierung,
+								# Gepäckband (Instanz-ID) -> Weg von der Sortierung bis aufs Band
 
 
 ## Wege der Koffer: von der Waage jedes Check-ins über Sammelbänder, Kofferbänder und Gepäcklifte zur
@@ -1888,6 +2024,19 @@ func bag_routes() -> Dictionary:
 				pts.append(Vector3(p.x, float(f) * fh + 0.45, p.z))
 			desk_start[(it["node"] as Node).get_instance_id()] = [segs.size(), 2]
 			segs.append([pts, f])
+		elif id == "gepaeckband" or id == "rolltor":
+			# Einlauf am Gepäckband: Ende des Kofferbands → Steilförderer → Rutsche auf die Insel.
+			# Rolltor: vom Tor über die Rollenbahn nach innen.
+			var y0 := float(f) * fh
+			var raw: Array = [CLAIM_INLET + Vector3(0, BELT_LOW, 0), Vector3(-5.45, 1.45, 0), Vector3(-3.4, 0.9, 0)] if id == "gepaeckband" \
+				else [Vector3(0, 0.9, 0.9), Vector3(0, 0.62, -0.9), GATE_INLET + Vector3(0, BELT_LOW, 0)]
+			var pts2 := PackedVector3Array()
+			for q: Vector3 in raw:
+				var w := xf * Vector3(q.x, 0, q.z)
+				pts2.append(Vector3(w.x, y0 + q.y, w.z))
+			# Gepäckband: Weg beginnt innen (Index 2) und wird umgedreht; Rolltor: beginnt am Tor (Index 0)
+			desk_start[(it["node"] as Node).get_instance_id()] = [segs.size(), 2 if id == "gepaeckband" else 0, id == "gepaeckband"]
+			segs.append([pts2, f])
 		elif id == "gepaecklift":
 			var c := xf * Vector3(0, 0, 0)
 			var e := xf * Vector3(0, 0, 1.45)
@@ -1972,6 +2121,8 @@ func bag_routes() -> Dictionary:
 			route.append(nodes[cur])
 			cur = nxt[cur]
 			guard += 1
+		if ds.size() > 2 and bool(ds[2]):
+			route = _rev_path(route)
 		_routes[did] = route
 	return _routes
 
@@ -1979,10 +2130,19 @@ func bag_routes() -> Dictionary:
 ## Check-in-Schalter einer Halle, die über Kofferbänder an eine Gepäcksortierung (oder einen
 ## Gepäckumschlag) angeschlossen sind: Instanz-ID des Schalters -> true.
 func checkins_linked(hall: Dictionary) -> Dictionary:
+	return _linked(hall, "checkin")
+
+
+## Gepäckbänder einer Halle, deren Einlauf über Kofferbänder mit einer Sortierung verbunden ist.
+func claims_linked(hall: Dictionary) -> Dictionary:
+	return _linked(hall, "gepaeckband")
+
+
+func _linked(hall: Dictionary, kind: String) -> Dictionary:
 	var routes := bag_routes()
 	var out := {}
 	for it: Dictionary in inside_of(hall):
-		if it["id"] == "checkin":
+		if it["id"] == kind:
 			var did := (it["node"] as Node).get_instance_id()
 			if routes.has(did):
 				out[did] = true
@@ -2321,7 +2481,7 @@ func remove(rec: Dictionary, refund: float = 0.5) -> void:
 		for inner: Dictionary in inside_of(rec) + walls:
 			_remove_one(inner, refund)
 	var facade_hall: Dictionary = {}
-	if rec.get("id", "") == "eingang":
+	if rec.get("id", "") in ["eingang", "rolltor"]:
 		facade_hall = rec.get("hall", {})
 	elif rec.get("id", "") == "fluggastbruecke":
 		var hsr := hall_side(bridge_anchor(rec))
@@ -2404,7 +2564,7 @@ func clear_all() -> void:
 
 func save_game(quiet: bool = false) -> void:
 	before_save.emit()
-	var data := {"version": 9, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
+	var data := {"version": 10, "controls": junction_controls, "money": money, "minutes": minutes, "satisfaction": satisfaction, "lines": [], "items": [],
 		"wind": [wind_dir, wind_kt], "extra": extra, "lotse": atc_manual}
 	var ls: Array = data["lines"]
 	for l: Dictionary in lines:
@@ -2449,6 +2609,7 @@ func load_game() -> bool:
 	clear_all()
 	legacy_lights = int(data.get("version", 0)) < 7
 	legacy_belts = int(data.get("version", 0)) < 9
+	legacy_claims = int(data.get("version", 0)) < 10
 	# Hallen zuerst, damit Wände und Einrichtung ihre Halle finden
 	for it: Dictionary in data.get("items", []):
 		if String(it["id"]) == "halle":
@@ -2534,6 +2695,7 @@ func _auto_holds(d: float) -> Array:
 func load_starter() -> void:
 	legacy_lights = false
 	legacy_belts = false
+	legacy_claims = false
 	var V := func(x: float, z: float) -> Vector3: return Vector3(x, 0.0, z)
 	# Vorfeld bis zum Terminal, dahinter der Parallelrollweg A (Abstand Pistenmitte 168 m nach ICAO,
 	# Rollhalteorte 90 m vor der Pistenmitte), an den Enden Zurollwege, dazwischen zwei Schnellabrollwege.
@@ -2727,8 +2889,18 @@ func _starter_terminal(V: Callable) -> void:
 		put.call("heizkoerper", x, -23.75)
 	for z: float in [-18.0, 6.0]:
 		put.call("heizkoerper", 107.75, z, 1)
-	# Kofferbänder: Check-ins (Sammelband hinten) → unter der Decke → durch Glas- und Innenwand → Sortierung
+	# Kofferbänder: Check-ins (Sammelband hinten) → unter der Decke → durch die Innenwand → Sortierung
 	build_line("kofferband", [V.call(-84.55, 1.34), V.call(-43.45, 1.34)], true)
-	build_line("kofferband", [V.call(-24.55, 1.34), V.call(76, 1.34)], true)
-	build_line("kofferband", [V.call(76, 1.34), V.call(76, -20)], true)
-	build_line("kofferband", [V.call(76, -20), V.call(91.5, -20)], true)
+	build_line("kofferband", [V.call(-24.55, 1.34), V.call(-17, 1.34)], true)
+	build_line("kofferband", [V.call(-17, 1.34), V.call(-17, 5)], true)
+	build_line("kofferband", [V.call(-17, 5), V.call(96, 5)], true)
+	build_line("kofferband", [V.call(96, 5), V.call(96, -16.5)], true)
+	# Sortierung → durch Innen- und Glaswand → Einläufe der beiden Gepäckbänder (Abzweig zum zweiten)
+	build_line("kofferband", [V.call(91.5, -20), V.call(74, -20)], true)
+	build_line("kofferband", [V.call(74, -20), V.call(74, -7)], true)
+	build_line("kofferband", [V.call(74, -7), V.call(39.5, -7)], true)
+	build_line("kofferband", [V.call(39.5, -7), V.call(39.5, -1.5)], true)
+	build_line("kofferband", [V.call(54.5, -1.5), V.call(54.5, -7)], true)
+	# Rolltor hinter der Sortierung: hier halten die Gepäckzüge, die Koffer laufen über die Rollenbahn hinein
+	put.call("rolltor", 104, -23, 2)
+	build_line("kofferband", [V.call(104, -21.5), V.call(101, -21.5)], true)
