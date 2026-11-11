@@ -75,6 +75,28 @@ func tri_n(a: Vector3, b: Vector3, c: Vector3, na: Vector3, nb: Vector3, nc: Vec
 	count += 1
 
 
+## Viereck mit Normalen und Farben je Ecke (Verläufe, z. B. Himmel in Scheiben); außen wie tri().
+func quad_nc(a: Vector3, b: Vector3, c: Vector3, d: Vector3, na: Vector3, nb: Vector3, nc: Vector3, nd: Vector3,
+		ca: Color, cb: Color, cc: Color, cd: Color, center: Vector3) -> void:
+	_tri_nc([a, na, ca], [b, nb, cb], [c, nc, cc], center)
+	_tri_nc([a, na, ca], [c, nc, cc], [d, nd, cd], center)
+
+
+func _tri_nc(p: Array, q: Array, r: Array, center: Vector3) -> void:
+	var n := ((q[0] as Vector3) - (p[0] as Vector3)).cross((r[0] as Vector3) - (p[0] as Vector3))
+	if n.length_squared() < 1e-14:
+		return
+	if n.dot(((p[0] as Vector3) + (q[0] as Vector3) + (r[0] as Vector3)) / 3.0 - center) >= 0.0:
+		var t := q
+		q = r
+		r = t
+	for e: Array in [p, q, r]:
+		st.set_color(e[2])
+		st.set_normal(e[1])
+		st.add_vertex(e[0])
+	count += 1
+
+
 ## Dreieck unverändert übernehmen (Reihenfolge und Normale wie gegeben), z. B. beim Backen.
 func tri_raw(a: Vector3, b: Vector3, c: Vector3, n: Vector3, col: Color) -> void:
 	for v: Vector3 in [a, b, c]:

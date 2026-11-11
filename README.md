@@ -22,6 +22,10 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.25: Fenster nach Vorbild**
+  - **Kabinenfenster in Originalgröße:** Jeder Typ hat Fenstermaß und Fensterabstand nach Herstellerangabe, zum Beispiel A320 mit 22,9 × 31,2 cm im 21-Zoll-Raster, 737 mit 25,4 × 35,6 cm und 787 mit den großen 27,2 × 46,7 cm. Die Fenster sind abgerundet, folgen der Rumpfwölbung, haben einen hellgrauen Rand und im Glas spiegelt sich der Himmel.
+  - **Cockpitscheiben nach Seitenansichten der Vorbilder:** Die Airbus-Anordnung hat sechs Scheiben mit dunklen Holmen und einem hinteren Fenster mit abfallender Oberkante. Die Boeing 737, 767 und 777 haben weiße Holme und schräge Seitenfenster. Die 787 hat nur vier Scheiben mit keilförmigem Seitenfenster. Die Maske des A350 läuft hinten spitz aus, und das Cockpit des A380 sitzt tiefer, zwischen den Decks.
+  - **Türen an der richtigen Stelle:** A320 und A321 haben Türen, Notausstiege und Frachttüren nach den Airbus-Unterlagen (Tür 1 rund 5 m hinter der Nase). Bei den anderen Typen ist die vordere Tür passend nach hinten gerückt.
 - **Update 0.24: Schönere Flugzeuge**
   - **Cockpit wie beim Vorbild:** Große Frontscheiben mit Mittelholm, je zwei Seitenscheiben mit schrägem hinteren Fenster, schwarze Gummirahmen, Scheibenwischer und Himmelsspiegelung. Airbus und Boeing unterscheiden sich in Form und Höhe, der A350 trägt seine dunkle „Maske“.
   - **Nasenformen nach Hersteller:** Die Boeing 737 hat die spitze Nase, die A320-Familie die stumpfe, dazwischen 787, 767, A350 und die Regionaljets. Dazu kommen die Fuge am Radom, Anstellwinkel-Sensoren und statische Druckplatten.
