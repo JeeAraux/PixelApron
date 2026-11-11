@@ -71,6 +71,9 @@ func _analyze() -> void:
 			counts[it["id"]] = int(counts.get(it["id"], 0)) + 1
 		counts["checkin_band"] = game.checkins_linked(h).size()
 		counts["claim_band"] = game.claims_linked(h).size()
+		var desk_eff := 0.0
+		for did: int in game.checkins_linked(h):
+			desk_eff += game.desk_factor(did)
 		var missing := []
 		for e: Array in ESSENTIAL:
 			var have := int(counts.get(e[0], 0))
@@ -104,6 +107,7 @@ func _analyze() -> void:
 			"complete": powered and missing.is_empty() and problems.is_empty() and int(counts.get("gepaeckanlage", 0)) > 0,
 			"warm": clampf(heated / maxf(area, 1.0), 0.0, 1.0), "decor": decor,
 			"wc": int(counts.get("wc", 0)) if game.supplied(h, "wasser") else 0,
+			"desk_eff": desk_eff,
 		}
 		halls.append(info)
 	_rebuild_bridges()
@@ -166,7 +170,9 @@ func capacity_dep() -> float:
 	# Schalter am Kofferband schaffen ein Viertel mehr
 	# nur Schalter mit Kofferband zur Sortierung arbeiten (alte Spielstände: alle, mit Band ein Viertel mehr)
 	var cap := float(Catalog.ITEMS["checkin"]["cap"])
-	var desks := float(_sum("checkin_band")) * cap * 1.25
+	var desks := 0.0
+	for info: Dictionary in _complete():
+		desks += float(info.get("desk_eff", 0.0)) * cap * 1.25
 	if game.legacy_belts:
 		desks += float(_sum("checkin") - _sum("checkin_band")) * cap
 	return minf(desks,
@@ -213,11 +219,28 @@ func retail_per_pax() -> int:
 	return total
 
 
+## Durchleuchtung wirkt, wenn die Koffer der Schalter durch sie laufen (alte Spielstände: wenn sie steht).
+func xray_ok(hall: Dictionary) -> bool:
+	if game.legacy_claims:
+		return not _any(hall, "gepaeckroentgen").is_empty()
+	for it: Dictionary in game.inside_of(hall):
+		if it["id"] == "checkin" and game.desk_screened((it["node"] as Node).get_instance_id()):
+			return true
+	return false
+
+
+func _any_xray_ok() -> bool:
+	for info: Dictionary in _complete():
+		if xray_ok(info["hall"]):
+			return true
+	return false
+
+
 ## Anteil der Fluggäste, deren Koffer nicht ankommt: Durchleuchtung und Förderband zum Umschlag
 ## senken die Fehlleitungen, eine Gepäckband-Zuordnung zum Gate auch.
 func lost_rate(hall: Dictionary) -> float:
 	var r := 0.05
-	if not _any(hall, "gepaeckroentgen").is_empty():
+	if xray_ok(hall):
 		r -= 0.02
 	if not game.baggage_link(hall).is_empty():
 		r -= 0.015
@@ -345,10 +368,10 @@ func factors() -> Array:
 		out.append(["Verlorene Koffer und keine Gepäckermittlung", -4])
 		if hint == "":
 			hint = "Gepäckermittlung (Lost & Found) nahe den Gepäckbändern bauen"
-	if non_schengen_seen and _sum("gepaeckroentgen") == 0:
+	if non_schengen_seen and not _any_xray_ok():
 		out.append(["Gepäck für Non-Schengen-Flüge wird nicht durchleuchtet", -3])
 		if hint == "":
-			hint = "Gepäckdurchleuchtung in den Personalbereich neben die Gepäcksortierung stellen"
+			hint = "Gepäckdurchleuchtung in den Kofferweg zwischen Check-in und Sortierung setzen (Bänder an den Schmalseiten)"
 	if _sum("airline_lounge") > 0:
 		out.append(["Airline-Lounge für Vielflieger", 2])
 	if has_fastlane():
@@ -409,6 +432,15 @@ func hall_summary(h: Dictionary) -> String:
 		if int(c.get("gepaeckband", 0)) > 0 and not game.legacy_claims:
 			lines.append("Gepäckbänder am Kofferband von der Sortierung: %d von %d%s" % [int(c.get("claim_band", 0)), int(c.get("gepaeckband", 0)),
 				"" if int(c.get("claim_band", 0)) >= int(c.get("gepaeckband", 0)) else " (Einlauf an der Schmalseite anschließen)"])
+		var over := game.belts_overloaded().size()
+		if over > 0:
+			lines.append("Kofferband überlastet: %d Bänder mit mehr als %d Schaltern dahinter (Koffer stauen sich, Schalter langsamer)" % [over, GameState.BELT_CAP])
+		var chutes := 0
+		for it: Dictionary in game.inside_of(h):
+			if it["id"] == "gepaeckanlage":
+				chutes += int(game.opt(it, "rutschen"))
+		if chutes > 0:
+			lines.append("Make-up-Rutschen: %d · Transferkoffer in der Sortierung: %d" % [chutes, transfer_pool])
 		if int(c.get("checkin", 0)) > 0:
 			lines.append("Check-in am Kofferband zur Sortierung: %d von %d%s" % [int(c.get("checkin_band", 0)), int(c.get("checkin", 0)),
 				"" if int(c.get("checkin_band", 0)) >= int(c.get("checkin", 0)) else (" (übrige Schalter ans Kofferband anschließen)" if not game.legacy_belts else " (Kofferband anschließen: +25 % Durchsatz)")])
@@ -643,9 +675,13 @@ var belt_load: Dictionary = {}    # Band (Instanz-ID) -> Flug-ID, dessen Koffer 
 ## Die Gepäckzüge haben die Koffer eines Flugs in der Sortierung abgeladen: sie laufen aufs Band.
 func bags_arrived(p_id: int, delay: float = 0.0) -> void:
 	bags_ready[p_id] = clock + delay
+	if not bags_counted.has(p_id):
+		bags_counted[p_id] = true
+		transfer_pool = mini(transfer_pool + roundi(24.0 * transfer_share(p_id)), 400)
 	_claim_flow(p_id)
 
 
+var bags_counted: Dictionary = {}   # Flug-ID -> true, sobald seine Transferkoffer gezählt sind
 var claim_sent: Dictionary = {}   # Flug-ID -> true, sobald seine Koffer zum Band unterwegs sind
 const CLAIM_SPEED := 2.5
 
@@ -682,12 +718,15 @@ func _claim_flow(p_id: int) -> void:
 
 
 ## Ein Koffer vom Gepäckzug läuft durchs Rolltor zur Sortierung (wenn ein Kofferband anschließt).
-func gate_bag(gate_node: Node) -> void:
+func gate_bag(gate_node: Node, outward: bool = false) -> void:
 	if not is_instance_valid(gate_node) or moving_bags.size() > 220:
 		return
 	var route: PackedVector3Array = game.bag_routes().get(gate_node.get_instance_id(), PackedVector3Array())
 	if route.size() < 2:
 		return
+	if outward:
+		# Abflug: aus der Sortierung über die Make-up-Rutsche und das Band hinaus zum Zug am Tor
+		route = GameState._rev_path(route)
 	var cum := PackedFloat32Array([0.0])
 	for i in range(1, route.size()):
 		cum.append(cum[i - 1] + route[i].distance_to(route[i - 1]))
@@ -697,7 +736,29 @@ func gate_bag(gate_node: Node) -> void:
 	mi.visible = false
 	add_child(mi)
 	mi.position = route[0]
-	moving_bags.append({"node": mi, "route": route, "cum": cum, "s": 0.0, "v": CLAIM_SPEED})
+	var bag := {"node": mi, "route": route, "cum": cum, "s": 0.0, "v": CLAIM_SPEED}
+	if outward:
+		bag["claim"] = true
+	moving_bags.append(bag)
+
+
+var transfer_pool := 0   # Transferkoffer, die in der Sortierung auf ihren Anschlussflug warten
+
+
+## Umsteiger-Koffer: ein Teil jedes ankommenden Flugs bleibt in der Sortierung (10–25 %).
+static func transfer_share(p_id: int) -> float:
+	return 0.1 + float(absi(p_id) % 4) * 0.05
+
+
+## Abflugzüge nehmen Transferkoffer mit (je drei geladene Koffer einer aus dem Vorrat).
+func take_transfer(n: int) -> void:
+	transfer_taken += n
+	while transfer_taken >= 3 and transfer_pool > 0:
+		transfer_taken -= 3
+		transfer_pool -= 1
+
+
+var transfer_taken := 0
 
 
 ## Ankommende betreten das Terminal am Gate (oder durch die Tür des Bus-Gates) und gehen zum Band.

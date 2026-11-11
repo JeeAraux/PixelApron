@@ -21,6 +21,7 @@ const MAP_HALF := 3000.0   # Spielfeld 6 × 6 km, Mitte im Ursprung
 static func on_map(p: Vector3, margin: float = 0.0) -> bool:
 	return absf(p.x) <= MAP_HALF - margin and absf(p.z) <= MAP_HALF - margin
 const Factory = preload("res://scripts/factory.gd")
+const Kit = preload("res://scripts/mesh_kit.gd")
 const SAVE_PATH := "user://spielstand.json"
 const START_MONEY := 30000000
 const SPEEDS := [0.0, 1.0, 3.0, 8.0]
@@ -50,6 +51,7 @@ const OPTIONS := {
 	"gepaeckband": [["stil", "Bauart", ["oval", "karussell"]], ["gate", "Für Gate", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]]],
 	"eingang": [["tuer", "Tür", ["schiebe", "dreh"]]],
 	"sicherheit": [["fastlane", "Fast-Lane", [false, true]]],
+	"gepaeckanlage": [["rutschen", "Make-up-Rutschen", [4, 6, 8, 2]]],
 	"tuer": [["art", "Art", ["automatik", "fluegel", "personal"]]],
 	"fluggastbruecke": [["steg", "Steg (m)", [0, 12, 20, 30]]],
 	"baum": [["stil", "Baumart", ["laub", "nadel", "birke", "pappel", "obst"]]],
@@ -793,6 +795,8 @@ func cycle_option(rec: Dictionary, key: String, dir: int) -> String:
 			cost = int(area * float(Catalog.ITEMS["halle"]["cost_m2"]) * 0.6) * (1 if bool(v) else -1)
 	if rec["id"] == "parkhaus" and key == "etagen":
 		cost = 70000 * (int(v) - int(cur))
+	if rec["id"] == "gepaeckanlage" and key == "rutschen":
+		cost = 30000 * (int(v) - int(cur))
 	if rec["id"] == "fluggastbruecke" and key == "steg":
 		# Rotunde nach außen verschieben; der Steg darf über Straßen und Betriebsstraßen gehen
 		var anchor := bridge_anchor(rec)
@@ -1792,7 +1796,10 @@ const BELT_RAMP := 5.0
 var legacy_belts := false # Spielstand von vor 0.17: Schalter arbeiten auch ohne Kofferband
 var legacy_claims := false # Spielstand von vor 0.18: Gepäckbänder arbeiten auch ohne Kofferband
 const CLAIM_INLET := Vector3(-5.5, 0, 0)   # Einlauf des Gepäckbands (lokal)
-const GATE_INLET := Vector3(0, 0, -1.5)    # Rollenbahn hinter dem Rolltor (lokal, innen)
+const GATE_INLET := Vector3(2.1, 0, -1.5)  # Rollenbahn hinter dem Rolltor (lokal, innen, neben der Fahrspur)
+const XRAY_INLET := 4.5                    # Ein-/Auslauf der Gepäckdurchleuchtung (lokal ±X)
+const BELT_CAP := 6                        # so viele Check-in-Schalter verkraftet ein Kofferband
+const GATE_BAY := Vector2(4.0, 10.0)       # Einfahrt hinter einem Rolltor (Breite, Tiefe) für Gepäckzüge
 
 
 ## Anschlussstellen für Kofferbänder auf Ebene f: Seiten der Check-ins, Kanten der Sortierung,
@@ -1821,6 +1828,10 @@ func belt_spots(f: int) -> Array:
 		elif id == "rolltor" and itf == f:
 			var p4 := xf * GATE_INLET
 			out.append(Vector3(p4.x, 0, p4.z))
+		elif id == "gepaeckroentgen" and itf == f:
+			for sx: float in [-XRAY_INLET, XRAY_INLET]:
+				var p5 := xf * Vector3(sx, 0, 0)
+				out.append(Vector3(p5.x, 0, p5.z))
 	return out
 
 
@@ -1960,8 +1971,70 @@ func _reshape_belt(rec: Dictionary) -> bool:
 		line_root.add_child(nn)
 		rec["node"] = nn
 		_apply_visibility(rec)
+		_merges_dirty = true
 		return true
 	return false
+
+
+var _merges_dirty := true
+
+
+## Einschleuser: wo ein Band seitlich auf ein anderes trifft (Ende an der Mitte), steht ein Gehäuse
+## mit Leitblech und Lampe. Hängt als Knoten "Weiche" am zuführenden Band.
+func _belt_merges() -> void:
+	_merges_dirty = false
+	var belts := []
+	for l: Dictionary in lines:
+		if l["kind"] == "kofferband":
+			belts.append(l)
+	for l: Dictionary in belts:
+		var nd: Variant = l["node"]
+		if not is_instance_valid(nd):
+			continue
+		for c: Node in (nd as Node).get_children():
+			if String(c.name).begins_with("Weiche"):
+				c.queue_free()
+	for l: Dictionary in belts:
+		var nd: Variant = l["node"]
+		if not is_instance_valid(nd):
+			continue
+		var sl: PackedVector3Array = l["samples"]
+		var f := floor_of(l)
+		var idx := 0
+		for e: Vector3 in [sl[0], sl[sl.size() - 1]]:
+			if _belt_end_low(e, f):
+				continue
+			var joint := false
+			var hit := Vector3.INF
+			var hdir := Vector3.ZERO
+			for m: Dictionary in belts:
+				if m == l or floor_of(m) != f:
+					continue
+				var sm: PackedVector3Array = m["samples"]
+				if Vector2(sm[0].x - e.x, sm[0].z - e.z).length() < 0.6 or Vector2(sm[sm.size() - 1].x - e.x, sm[sm.size() - 1].z - e.z).length() < 0.6:
+					joint = true
+					break
+				for i in range(1, sm.size() - 1):
+					if Vector2(sm[i].x - e.x, sm[i].z - e.z).length() < 1.3:
+						hit = sm[i]
+						hdir = (sm[i + 1] - sm[i - 1])
+						break
+			if joint or hit == Vector3.INF:
+				continue
+			hdir.y = 0.0
+			var k := Kit.new()
+			var bas := Basis.looking_at(hdir.normalized() if hdir.length() > 0.01 else Vector3.FORWARD, Vector3.UP)
+			var xf := Transform3D(bas, hit)
+			k.box(Vector3(-0.85, 0.18, -0.9), Vector3(0.85, 0.32, 0.9), Color(0.55, 0.57, 0.6), xf)
+			for sx: float in [-0.85, 0.85]:
+				k.box(Vector3(sx - 0.04, -0.15, -0.9), Vector3(sx + 0.04, 0.18, 0.9), Color(0.42, 0.45, 0.48), xf)
+			for i in range(5):
+				var z := -0.8 + float(i) * 0.36
+				k.box(Vector3(-0.86, 0.32, z), Vector3(0.86, 0.34, z + 0.18), Color(0.92, 0.74, 0.18), xf)
+			k.box(Vector3(0.6, 0.34, -0.15), Vector3(0.74, 0.46, 0.0), Color(0.3, 0.9, 0.4, 0.3), xf)
+			var mi := k.instance("Weiche%d" % idx)
+			(nd as Node).add_child(mi)
+			idx += 1
 
 
 ## Nach Änderungen an Bändern, Schaltern, Sortierung oder Liften: Höhen anpassen, Wände neu schneiden.
@@ -1972,6 +2045,8 @@ func refresh_belts() -> void:
 			any = _reshape_belt(l) or any
 	if any:
 		_belt_walls()
+	if _merges_dirty:
+		_belt_merges()
 	_routes_dirty = true
 
 
@@ -1999,6 +2074,7 @@ func bag_routes() -> Dictionary:
 		return _routes
 	_routes_dirty = false
 	_routes = {}
+	_desk_info = {}
 	var fh := Catalog.FLOOR_H
 	var segs := []    # [Punkte (Welt), Ebene]
 	for l: Dictionary in lines:
@@ -2008,7 +2084,8 @@ func bag_routes() -> Dictionary:
 		var f := floor_of(l)
 		for v: Vector3 in (l["samples"] as PackedVector3Array):
 			pts.append(Vector3(v.x, float(f) * fh + v.y, v.z))
-		segs.append([pts, f])
+		segs.append([pts, f, l])
+		l["desks"] = 0
 	var desk_start := {}   # Schalter-ID -> Index des Waagenpunkts
 	var nodes := PackedVector3Array()
 	var seg_of := PackedInt32Array()
@@ -2029,7 +2106,7 @@ func bag_routes() -> Dictionary:
 			# Rolltor: vom Tor über die Rollenbahn nach innen.
 			var y0 := float(f) * fh
 			var raw: Array = [CLAIM_INLET + Vector3(0, BELT_LOW, 0), Vector3(-5.45, 1.45, 0), Vector3(-3.4, 0.9, 0)] if id == "gepaeckband" \
-				else [Vector3(0, 0.9, 0.9), Vector3(0, 0.62, -0.9), GATE_INLET + Vector3(0, BELT_LOW, 0)]
+				else [Vector3(GATE_INLET.x, 0.9, 0.9), Vector3(GATE_INLET.x, 0.62, -0.9), GATE_INLET + Vector3(0, BELT_LOW, 0)]
 			var pts2 := PackedVector3Array()
 			for q: Vector3 in raw:
 				var w := xf * Vector3(q.x, 0, q.z)
@@ -2042,6 +2119,13 @@ func bag_routes() -> Dictionary:
 			var e := xf * Vector3(0, 0, 1.45)
 			segs.append([PackedVector3Array([Vector3(e.x, float(f) * fh + BELT_LOW, e.z), Vector3(c.x, float(f) * fh + BELT_LOW, c.z),
 				Vector3(c.x, float(f + 1) * fh + BELT_LOW, c.z), Vector3(e.x, float(f + 1) * fh + BELT_LOW, e.z)]), f])
+		elif id == "gepaeckroentgen":
+			# Durchlauf: Koffer fahren durch den Tunnel (zählt als durchleuchtet)
+			var pts3 := PackedVector3Array()
+			for q: Vector3 in [Vector3(-XRAY_INLET, BELT_LOW, 0), Vector3(-4, 0.84, 0), Vector3(0, 0.84, 0), Vector3(4, 0.84, 0), Vector3(XRAY_INLET, BELT_LOW, 0)]:
+				var w := xf * Vector3(q.x, 0, q.z)
+				pts3.append(Vector3(w.x, float(f) * fh + q.y, w.z))
+			segs.append([pts3, f, "xray"])
 		elif id == "gepaeckanlage" or id == "gepaeckumschlag":
 			targets.append([(it["rect"] as Rect2).grow(1.6), float(f) * fh])
 	# Knoten
@@ -2124,7 +2208,91 @@ func bag_routes() -> Dictionary:
 		if ds.size() > 2 and bool(ds[2]):
 			route = _rev_path(route)
 		_routes[did] = route
+		# Schalter: über welche Bänder (Last) und durch eine Durchleuchtung?
+		if ds.size() == 2:
+			var seen := {}
+			var xr := false
+			cur = start
+			guard = 0
+			while cur >= 0 and guard < 4000:
+				var sg: Array = segs[seg_of[cur]]
+				if sg.size() > 2:
+					if sg[2] is Dictionary and not seen.has(seg_of[cur]):
+						seen[seg_of[cur]] = true
+						(sg[2] as Dictionary)["desks"] = int((sg[2] as Dictionary).get("desks", 0)) + 1
+					elif sg[2] is String:
+						xr = true
+				cur = nxt[cur]
+				guard += 1
+			var bl := []
+			for si: int in seen:
+				bl.append(segs[si][2])
+			_desk_info[did] = {"xray": xr, "belts": bl}
 	return _routes
+
+
+var _desk_info: Dictionary = {}   # Schalter-ID -> {xray: bool, belts: [Bänder auf dem Weg]}
+
+
+## Koffer dieses Schalters laufen durch eine Gepäckdurchleuchtung.
+func desk_screened(did: int) -> bool:
+	bag_routes()
+	return bool((_desk_info.get(did, {}) as Dictionary).get("xray", false))
+
+
+## Leistung eines Schalters nach der Last seiner Bänder: über BELT_CAP Schalter auf einem Band
+## stauen sich die Koffer, der Schalter schafft anteilig weniger.
+func desk_factor(did: int) -> float:
+	bag_routes()
+	var f := 1.0
+	for l: Dictionary in (_desk_info.get(did, {}) as Dictionary).get("belts", []):
+		var n := int(l.get("desks", 0))
+		if n > BELT_CAP:
+			f = minf(f, float(BELT_CAP) / float(n))
+	return f
+
+
+## Kofferbänder mit mehr als BELT_CAP Schaltern dahinter.
+func belts_overloaded() -> Array:
+	bag_routes()
+	var out := []
+	for l: Dictionary in lines:
+		if l["kind"] == "kofferband" and int(l.get("desks", 0)) > BELT_CAP:
+			out.append(l)
+	return out
+
+
+## Fläche hinter einem Rolltor, in die ein Gepäckzug einfahren kann (Weltrechteck).
+func gate_bay(g: Dictionary) -> Rect2:
+	var xf := (g["node"] as Node3D).transform
+	var a := xf * Vector3(-GATE_BAY.x * 0.5, 0, 1.0)
+	var b := xf * Vector3(GATE_BAY.x * 0.5, 0, 1.0 - GATE_BAY.y)
+	return Rect2(Vector2(minf(a.x, b.x), minf(a.z, b.z)), Vector2(absf(a.x - b.x), absf(a.z - b.z)))
+
+
+## Ist die Einfahrt hinter dem Rolltor frei (keine Einrichtung, keine niedrigen Bänder, keine Wand)?
+func gate_bay_free(g: Dictionary) -> bool:
+	if floor_of(g) != 0 or not g.has("hall"):
+		return false
+	var r := gate_bay(g).grow(-0.05)
+	for it: Dictionary in inside_of(g["hall"]):
+		if it == g or Catalog.is_zone(String(it["id"])) or floor_of(it) != 0:
+			continue
+		if r.intersects(it["rect"]):
+			return false
+	for l: Dictionary in lines:
+		if l["kind"] != "kofferband" or floor_of(l) != 0:
+			continue
+		for v: Vector3 in (l["samples"] as PackedVector3Array):
+			if v.y < 2.3 and r.has_point(Vector2(v.x, v.z)):
+				return false
+	for w: Dictionary in walls_of(g["hall"]):
+		if floor_of(w) != 0:
+			continue
+		for v: Vector3 in (w["samples"] as PackedVector3Array):
+			if r.has_point(Vector2(v.x, v.z)):
+				return false
+	return true
 
 
 ## Check-in-Schalter einer Halle, die über Kofferbänder an eine Gepäcksortierung (oder einen
@@ -2828,7 +2996,7 @@ func _starter_terminal(V: Callable) -> void:
 	build_line("glaswand", [V.call(32, -8), V.call(80, -8)], true)
 	build_line("innenwand", [V.call(80, -8), V.call(108, -8)], true)
 	build_line("innenwand", [V.call(80, -24), V.call(80, -8)], true)
-	put.call("tuer", 88, -8, 0, {"art": "personal"})
+	put.call("tuer", 84, -8, 0, {"art": "personal"})
 	put.call("tuer", 80, -14, 1, {"art": "personal"})
 	put.call("sb_ausgang", 30, -8)
 	for x: float in [-15.0, -9.0, -3.0]:
@@ -2880,8 +3048,9 @@ func _starter_terminal(V: Callable) -> void:
 	for x: float in [-140.0, -86.0, -52.0, 18.0, 46.0, 64.0]:
 		put.call("pflanze", x, -9.2)
 	# Personalbereich: Gepäcksortierung und Personalraum
-	put.call("gepaeckanlage", 96, -20)
-	put.call("personalraum", 101, -11)
+	put.call("gepaeckanlage", 90, -20)
+	put.call("gepaeckroentgen", 90, -12.5, 1)
+	put.call("personalraum", 100, -10.5)
 	# Heizkörper an den Außenwänden
 	for x: float in [-136.0, -125.0, -95.0, -82.0, -70.0, -60.0, -35.0, -20.0, -10.0, 10.0, 20.0, 34.0, 60.0, 72.0, 86.0, 100.0]:
 		put.call("heizkoerper", x, 15.75)
@@ -2893,14 +3062,15 @@ func _starter_terminal(V: Callable) -> void:
 	build_line("kofferband", [V.call(-84.55, 1.34), V.call(-43.45, 1.34)], true)
 	build_line("kofferband", [V.call(-24.55, 1.34), V.call(-17, 1.34)], true)
 	build_line("kofferband", [V.call(-17, 1.34), V.call(-17, 5)], true)
-	build_line("kofferband", [V.call(-17, 5), V.call(96, 5)], true)
-	build_line("kofferband", [V.call(96, 5), V.call(96, -16.5)], true)
+	build_line("kofferband", [V.call(-17, 5), V.call(90, 5)], true)
+	# durch die Wand in die Gepäckdurchleuchtung, von dort direkt in die Sortierung
+	build_line("kofferband", [V.call(90, 5), V.call(90, -8)], true)
 	# Sortierung → durch Innen- und Glaswand → Einläufe der beiden Gepäckbänder (Abzweig zum zweiten)
-	build_line("kofferband", [V.call(91.5, -20), V.call(74, -20)], true)
+	build_line("kofferband", [V.call(85.5, -20), V.call(74, -20)], true)
 	build_line("kofferband", [V.call(74, -20), V.call(74, -7)], true)
 	build_line("kofferband", [V.call(74, -7), V.call(39.5, -7)], true)
 	build_line("kofferband", [V.call(39.5, -7), V.call(39.5, -1.5)], true)
 	build_line("kofferband", [V.call(54.5, -1.5), V.call(54.5, -7)], true)
 	# Rolltor hinter der Sortierung: hier halten die Gepäckzüge, die Koffer laufen über die Rollenbahn hinein
-	put.call("rolltor", 104, -23, 2)
-	build_line("kofferband", [V.call(104, -21.5), V.call(101, -21.5)], true)
+	put.call("rolltor", 105, -23, 2)
+	build_line("kofferband", [V.call(102.9, -21.5), V.call(95, -21.5)], true)

@@ -648,6 +648,7 @@ func clear() -> void:
 			(parked as Node3D).visible = true
 	missions.clear()
 	door_want.clear()
+	chute_users.clear()
 
 
 # ---------------------------------------------------------------- Passagiere draußen
@@ -812,13 +813,34 @@ func _step_job(j: Dictionary, sim: float) -> void:
 			_move(vd, sim)
 		if not vd.has("await_door") and not bool(vd["moving"]):
 			if vd.has("load_then"):
-				# an der Sortierung: Koffer aufladen, dann weiter zum Stand
+				# an der Sortierung: Koffer aufladen, dann weiter zum Stand. Jeder Zug braucht eine
+				# freie Make-up-Rutsche; Transferkoffer aus der Sortierung beschleunigen das Laden.
 				var lt: Dictionary = vd["load_then"]
+				if not _chute_free(vd):
+					lt["wait"] = float(lt.get("wait", 0.0)) + sim
+					continue
+				var gd: Dictionary = vd.get("load_door", {})
+				if not gd.is_empty() and is_instance_valid(gd.get("node")):
+					var dk := _door_key(gd, 0)
+					door_rec[dk] = [gd, 0]
+					door_want[dk] = maxf(float(door_want.get(dk, 0.0)), clock + 2.0)
+				var rate := 1.6
+				if terminal != null and int(terminal.transfer_pool) > 0:
+					rate = 2.4
 				lt["t"] = float(lt["t"]) + sim
-				_set_bags(vd, mini(24, int(float(lt["t"]) * 1.6)))
+				var before := int(vd.get("bags", 0))
+				_set_bags(vd, mini(24, int(float(lt["t"]) * rate)))
+				var added := int(vd["bags"]) - before
+				if added > 0 and terminal != null:
+					terminal.take_transfer(added)
+					if not gd.is_empty() and is_instance_valid(gd.get("node")):
+						for k in range(added):
+							terminal.gate_bag(gd["node"], true)
 				if int(vd["bags"]) >= 24:
 					_go(vd, lt["pts"], GSE_V * 1.4)
 					vd.erase("load_then")
+					vd.erase("load_door")
+					chute_users.erase(vd)
 				continue
 			sv["phase"] = "bereit"
 	if bool(j.get("turn_over", false)):
@@ -1719,6 +1741,10 @@ func _dispatch(pp: Dictionary, sv: Dictionary) -> void:
 				if o.has("load_then"):
 					loading += 1
 			var lp: Vector3 = (sp[0] as Vector3) + (sp[1] as Vector3).cross(Vector3.UP) * (8.0 + 6.0 * float(loading % 3))
+			if sp.size() > 3:
+				# am Rolltor: neben der Toröffnung, das Tor geht beim Beladen auf
+				lp = (sp[0] as Vector3) + (sp[1] as Vector3).cross(Vector3.UP) * float([-9, 23, -25][loading % 3])
+				v["load_door"] = sp[3]
 			sp = [lp, sp[1], sp[2]]
 			var r1 := net.route(g[2], sp[0], 60.0)
 			var r2 := net.route(sp[0], home, 60.0)
@@ -1851,20 +1877,31 @@ func _to_sorting(v: Dictionary) -> bool:
 				end_dir = side if along > 0.0 else -side
 				break
 		target = base + end_dir * 7.0
-	var road := net.route(v["pos"], target, 60.0)
+	# Ist die Einfahrt hinter dem Rolltor frei, fährt der erste Zug durchs Tor in die Halle
+	var inside := not gate.is_empty() and slot == 0 and game.gate_bay_free(gate)
+	var n_out := Vector3.ZERO
+	if inside:
+		n_out = -(sp[1] as Vector3)
+		end_dir = -n_out
+		target = door_point(gate) - n_out * 7.0
+	var road := net.route(v["pos"], (door_point(gate) + n_out * 12.0) if inside else target, 60.0)
 	if road.size() < 2:
 		return false
 	var way := []
 	for q: Vector3 in road:
 		way.append(q)
-	if not gate.is_empty() and way.size() >= 2:
+	if inside:
+		# senkrecht auf das Tor zu, dann hinein
+		way.append(door_point(gate) + n_out * 3.0)
+		way.append(target)
+	elif not gate.is_empty() and way.size() >= 2:
 		# Anlauf parallel zur Wand, damit die Wagen gerade vor dem Tor stehen
 		way.insert(way.size() - 1, target - end_dir * 14.0)
 	v["rev"] = false
 	v["vmax"] = GSE_V * 1.3
 	v.erase("then")
 	_go(v, _route(way, v["heading"], end_dir), GSE_V * 1.3)
-	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2])}
+	v["sort"] = {"t": 0.0, "via_hall": bool(sp[2]), "inside": inside}
 	v["sort_slot"] = slot
 	if not gate.is_empty():
 		var key := _door_key(gate, 0)
@@ -1872,6 +1909,35 @@ func _to_sorting(v: Dictionary) -> bool:
 		v["sort_door"] = gate
 	sorting.append(v)
 	return true
+
+
+var chute_users: Array = []   # Abflugzüge, die gerade an einer Make-up-Rutsche laden
+
+
+## Make-up-Rutschen aller Sortierungen mit Strom (Gepäckumschlag: 8).
+func chutes_total() -> int:
+	var n := 0
+	for it: Dictionary in game.items_of("gepaeckanlage"):
+		var h: Dictionary = it.get("hall", {})
+		if h.is_empty() or game.supplied(h, "strom"):
+			n += int(game.opt(it, "rutschen"))
+	for it: Dictionary in game.items_of("gepaeckumschlag"):
+		if game.supplied(it, "strom"):
+			n += 8
+	return n
+
+
+## Darf dieser Zug laden? Sonst wartet er, bis eine Rutsche frei wird.
+func _chute_free(v: Dictionary) -> bool:
+	for o: Dictionary in chute_users.duplicate():
+		if not is_instance_valid(o.get("node")) or not o.has("load_then"):
+			chute_users.erase(o)
+	if v in chute_users:
+		return true
+	if chute_users.size() < chutes_total():
+		chute_users.append(v)
+		return true
+	return false
 
 
 ## Gepäckzüge an der Sortierung: anhalten, Koffer abladen (Ankunft) bzw. aufladen (Abflug).
@@ -1888,10 +1954,25 @@ func _step_sorting(sim: float) -> void:
 			var key := _door_key(gate, 0)
 			if (v["pos"] as Vector3).distance_to(door_point(gate)) < 34.0:
 				door_want[key] = maxf(float(door_want.get(key, 0.0)), clock + 1.5)
+		var st: Dictionary = v["sort"]
 		if bool(v["moving"]):
+			# in die Halle erst, wenn das Tor offen ist
+			if bool(st.get("inside", false)) and not gate.is_empty() and not bool(st.get("out", false)) \
+					and (v["pos"] as Vector3).distance_to(door_point(gate)) < 10.0 \
+					and float(door_open.get(_door_key(gate, 0), 0.0)) < 0.9:
+				v["v"] = 0.0
+				continue
 			_move(v, sim)
 			continue
-		var st: Dictionary = v["sort"]
+		if bool(st.get("out", false)):
+			# wieder draußen: Tor schließt, Zug fährt heim
+			sorting.erase(v)
+			v.erase("sort")
+			if not gate.is_empty():
+				door_want[_door_key(gate, 0)] = clock + 3.0
+				v.erase("sort_door")
+			_send_home(v, "zug")
+			continue
 		st["t"] = float(st["t"]) + sim
 		var n := int(v.get("bags", 0))
 		var want := maxi(0, 24 - int(float(st["t"]) * 1.6))
@@ -1904,15 +1985,24 @@ func _step_sorting(sim: float) -> void:
 				for i in range(n - want):
 					terminal.gate_bag(gate["node"])
 		if want == 0:
-			sorting.erase(v)
-			v.erase("sort")
 			v["sorted"] = true
-			if not gate.is_empty():
-				door_want[_door_key(gate, 0)] = clock + 5.0
-				v.erase("sort_door")
 			if terminal != null and v.has("flight"):
 				# über die Sortierung und das Förderband dauert es noch einen Moment bis zum Band
 				terminal.bags_arrived(int(v["flight"]), 25.0 if bool(st["via_hall"]) else 10.0)
+			if bool(st.get("inside", false)) and not gate.is_empty():
+				# rückwärts aus der Halle, im Bogen zur Seite, damit er vorwärts wegfahren kann
+				var no := Basis(Vector3.UP, float(gate["rot"]) * PI * 0.5) * Vector3(0, 0, 1)
+				var sd := no.cross(Vector3.UP)
+				var dp := door_point(gate)
+				st["out"] = true
+				door_want[_door_key(gate, 0)] = clock + 30.0
+				_go(v, PackedVector3Array([v["pos"], dp - no * 2.0, dp + no * 5.0, dp + no * 9.0 + sd * 3.0, dp + no * 11.0 + sd * 9.0]), 2.2, true)
+				continue
+			sorting.erase(v)
+			v.erase("sort")
+			if not gate.is_empty():
+				door_want[_door_key(gate, 0)] = clock + 5.0
+				v.erase("sort_door")
 			_send_home(v, "zug")
 
 

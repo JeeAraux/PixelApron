@@ -22,6 +22,14 @@ Spielstände und Einstellungen liegen unter `%APPDATA%\Godot\app_userdata\PixelA
 
 Erster spielbarer Prototyp für das Flughafen-Aufbauspiel in Godot 4. Du baust selbst, und der Flughafen läuft:
 
+- **Update 0.19: Gepäckabfertigung**
+  - **Gepäckzüge fahren in die Halle:** Ist hinter dem Rolltor eine 4 × 10 m große Einfahrt frei (gelbe Fahrspur), fährt der erste Zug durchs offene Tor hinein, lädt ab und setzt rückwärts im Bogen wieder hinaus. Weitere Züge warten vor dem Tor.
+  - **Abflugzüge am Tor:** Sie laden neben der Toröffnung, das Tor fährt hoch, und die Koffer laufen sichtbar aus der Sortierung hinaus.
+  - **Make-up-Rutschen:** Die Gepäcksortierung hat 2, 4, 6 oder 8 Rutschen (Bauform). Jeder Abflugzug braucht eine freie Rutsche, sonst wartet er.
+  - **Gepäckdurchleuchtung im Kofferweg:** Kofferbänder schließen an den Schmalseiten an, die Koffer fahren durch den Tunnel. Für Non-Schengen-Flüge zählt sie nur, wenn die Koffer der Schalter wirklich hindurchlaufen.
+  - **Transfergepäck:** 10–25 % der Koffer jedes ankommenden Flugs bleiben in der Sortierung. Abflugzüge nehmen sie mit und laden damit schneller.
+  - **Bandlast:** Ein Kofferband verkraftet die Koffer von 6 Schaltern. Hängen mehr dahinter, stauen sich die Koffer und die Schalter arbeiten langsamer (Hinweis im Infofeld). Wo ein Band seitlich auf ein anderes trifft, steht ein Einschleuser.
+  - **Startflughafen:** Sortierung, Durchleuchtung und Rolltor sind neu angeordnet.
 - **Update 0.18: Runde Kofferbänder, Gepäckband-Anschluss, Rolltore**
   - **Rundungen:** Wo zwei Kofferbänder mit einem Knick aneinanderstoßen, laufen sie in einem gemeinsamen Bogen ineinander. Die Bänder sind jetzt aus einem Stück (Wanne, Gurt, Seitenbleche) und an Knicken auf Gehrung geschnitten; kurze Stücke steigen steiler, damit sie oben am nächsten Band ankommen.
   - **Gepäckband mit Einlauf:** An der linken Schmalseite steht ein Steilförderer mit Rutsche. Dort muss ein Kofferband aus der Sortierung ankommen, sonst arbeitet das Band nicht (Ankommende gehen nur an angeschlossene Bänder). Die Koffer eines Flugs laufen sichtbar von der Sortierung über die Bänder auf ihr Gepäckband. Ältere Spielstände behalten die alte Regel.

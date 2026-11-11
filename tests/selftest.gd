@@ -44,7 +44,7 @@ func run(main: Node) -> void:
 	# 0.9: Bereiche, Türen, Personal, Garagen und Betriebsstraße im Startflughafen
 	check(game.zones_of(term).size() == 3, "Bereiche angelegt (öffentlich, Sicherheit, Personal)")
 	check(game.zone_at(term, Vector2(-67, -20), 0) == "sicherheit" and game.zone_at(term, Vector2(-34, 2.5), 0) == "oeffentlich"
-		and game.zone_at(term, Vector2(96, -20), 0) == "personal", "Gates im Sicherheitsbereich, Check-in öffentlich, Gepäck im Personalbereich")
+		and game.zone_at(term, Vector2(90, -20), 0) == "personal", "Gates im Sicherheitsbereich, Check-in öffentlich, Gepäck im Personalbereich")
 	var doors: Array = game.items_of("tuer")
 	check(doors.size() == 2, "Zwei Personaltüren gesetzt")
 	var cut_walls := 0
@@ -54,7 +54,7 @@ func run(main: Node) -> void:
 				cut_walls += 1
 	check(cut_walls == 2, "Die Türen öffnen ihre Wände (%d Öffnungen)" % cut_walls)
 	var tgrids: Dictionary = tb.grids[(term["node"] as Node).get_instance_id()]
-	var dcell := Vector2i(88, -8)
+	var dcell := Vector2i(84, -8)
 	check((tgrids[0]["dep"] as AStarGrid2D).is_point_solid(dcell) and not (tgrids[0]["staff"] as AStarGrid2D).is_point_solid(dcell),
 		"Personaltür: Fluggäste kommen nicht durch, Mitarbeiter schon")
 	check((tgrids[0]["dep"] as AStarGrid2D).is_point_solid(Vector2i(100, -15)), "Personalbereich ist für Fluggäste gesperrt")
@@ -743,11 +743,12 @@ func run(main: Node) -> void:
 	var desk0: Dictionary = game.items_of("checkin")[0]
 	tb._bag_drop(desk0)
 	check(tb.moving_bags.size() == bags0 + 1, "Koffer startet erst bei der Abgabe am Schalter")
-	for i in range(3000):
+	var my_bag: Dictionary = tb.moving_bags[tb.moving_bags.size() - 1] if tb.moving_bags.size() > bags0 else {}
+	for i in range(4000):
 		tb._bag_step(0.1)
-		if tb.moving_bags.size() == bags0:
+		if not (my_bag in tb.moving_bags):
 			break
-	check(tb.moving_bags.size() == bags0 and not tb.sorter_busy.is_empty(), "Koffer kommt an der Sortierung an, ihr Ring läuft")
+	check(not my_bag.is_empty() and not (my_bag in tb.moving_bags) and not tb.sorter_busy.is_empty(), "Koffer kommt an der Sortierung an, ihr Ring läuft")
 	var kh: Dictionary = game.build_hall(Rect2(-640, 720, 60, 40), false, {"keller": true})
 	game.set_interior_view(true)
 	game.set_view_floor(-1)
@@ -798,13 +799,54 @@ func run(main: Node) -> void:
 	for c: Array in game.facade_cuts(ch):
 		tall_cut = tall_cut or float(c[2]) > 4.0
 	check(tall_cut, "Rolltor öffnet die Fassade")
-	game.build_line("kofferband", [Vector3(-590, 0, 802.5), Vector3(-590, 0, 812), Vector3(-595.5, 0, 812)])
+	game.build_line("kofferband", [Vector3(-592.1, 0, 802.5), Vector3(-592.1, 0, 812), Vector3(-595.5, 0, 812)])
 	check(not rt.is_empty() and game.bag_routes().has((rt["node"] as Node).get_instance_id()), "Rollenbahn hinter dem Rolltor führt per Kofferband zur Sortierung")
 	var rsp: Array = main.ops.sort_spot(Vector3(-590, 0, 780))
 	check(rsp.size() > 3 and is_same(rsp[3], rt), "Gepäckzüge fahren vors Rolltor")
 	game.remove(ch, 1.0)
 	for l: Dictionary in game.lines.duplicate():
 		if l["kind"] == "kofferband" and (l["points"][0] as Vector3).z > 790.0:
+			game.remove(l, 1.0)
+	game.set_interior_view(false)
+	# 0.19: Durchleuchtung im Kofferweg, Einfahrt hinter dem Rolltor, Rutschen, Transfer, Bandlast, Einschleuser
+	var screened := 0
+	for did: int in game.checkins_linked(sh):
+		if game.desk_screened(did):
+			screened += 1
+	check(screened == 6 and tb.xray_ok(sh), "Startterminal: alle Koffer laufen durch die Gepäckdurchleuchtung (%d)" % screened)
+	var srt: Dictionary = game.items_of("rolltor")[0]
+	check(game.gate_bay_free(srt), "Einfahrt hinter dem Rolltor ist frei für Gepäckzüge")
+	var weiche := false
+	for l: Dictionary in game.lines:
+		if l["kind"] == "kofferband":
+			for c: Node in (l["node"] as Node).get_children():
+				weiche = weiche or String(c.name).begins_with("Weiche")
+	check(weiche, "Einschleuser, wo ein Band seitlich auf ein anderes trifft")
+	var pool0: int = tb.transfer_pool
+	tb.bags_arrived(777002, 0.0)
+	check(tb.transfer_pool > pool0, "Transferkoffer bleiben in der Sortierung (%d)" % tb.transfer_pool)
+	var mb1: int = tb.moving_bags.size()
+	tb.gate_bag(srt["node"], true)
+	check(tb.moving_bags.size() == mb1 + 1, "Abflugkoffer laufen aus der Sortierung zum Zug am Tor")
+	var oh: Dictionary = game.build_hall(Rect2(-640, 860, 70, 30))
+	game.set_interior_view(true)
+	var osrt: Dictionary = game.build_item("gepaeckanlage", Vector3(-590, 0, 870), 0)
+	for i in range(7):
+		game.build_item("checkin", Vector3(-634.0 + 6.0 * float(i), 0, 885), 0)
+	game.build_line("kofferband", [Vector3(-594.55, 0, 883.84), Vector3(-590, 0, 883.84)])
+	game.build_line("kofferband", [Vector3(-590, 0, 883.84), Vector3(-590, 0, 873.5)])
+	game.refresh_belts()
+	var odesk: Dictionary = game.checkins_linked(oh)
+	var ofac := 1.0
+	for did: int in odesk:
+		ofac = minf(ofac, game.desk_factor(did))
+	check(odesk.size() == 7 and not game.belts_overloaded().is_empty() and ofac < 1.0, "Sieben Schalter auf einem Band: Band überlastet, Schalter langsamer (%.2f)" % ofac)
+	var ch0: int = main.ops.chutes_total()
+	game.cycle_option(osrt, "rutschen", 1)
+	check(int(game.opt(osrt, "rutschen")) == 6 and ch0 >= 4, "Mehr Make-up-Rutschen an der Sortierung (%d, gesamt %d)" % [int(game.opt(osrt, "rutschen")), ch0])
+	game.remove(oh, 1.0)
+	for l: Dictionary in game.lines.duplicate():
+		if l["kind"] == "kofferband" and (l["points"][0] as Vector3).z > 850.0:
 			game.remove(l, 1.0)
 	game.set_interior_view(false)
 	game.sandbox = false
